@@ -6,10 +6,3 @@ struct ZeusApp: App {
         WindowGroup { RootView() }
     }
 }
-
-struct RootView: View {
-    var body: some View {
-        Text("Zeus")
-            .font(.system(.largeTitle, design: .monospaced))
-    }
-}
