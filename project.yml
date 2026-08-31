@@ -1,0 +1,15 @@
+name: Zeus
+options:
+  bundleIdPrefix: com.zeus
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  Zeus:
+    type: application
+    platform: iOS
+    sources: [Sources/ZeusApp]
+    info:
+      path: Sources/ZeusApp/Info.plist
+      properties:
+        UILaunchScreen: {}
+        CFBundleDisplayName: Zeus
