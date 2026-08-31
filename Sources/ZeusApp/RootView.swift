@@ -37,6 +37,10 @@ struct RootView: View {
     @State private var tab: Tab = .zeus
     @State private var agentState: AgentState = .ambient
 
+    /// :433 — `showToast(text)` sets, then clears after 2800ms.
+    @State private var toast: String?
+    @State private var toastTask: Task<Void, Never>?
+
     /// Seeded from the prototype's initial transcript, :411-412.
     @State private var messages: [Message] = [
         Message(role: .agent,
@@ -54,7 +58,19 @@ struct RootView: View {
                 Divider().overlay(Theme.r(0.25))
                 TabBar(selection: $tab)
             }
+
+            // :511-520 — the toast, top-anchored at 54pt. The prototype
+            // dismisses on a 2800ms timer (`showToast`, :433); same duration
+            // here, driven by a task rather than a scheduler handle.
+            if let toast {
+                ToastBanner(text: toast)
+                    .padding(.top, 54)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(70)
+            }
         }
+        .animation(.easeOut(duration: 0.22), value: toast)
         .preferredColorScheme(.dark)
     }
 
@@ -77,7 +93,7 @@ struct RootView: View {
                 onVoice: { tab = .zeus }
             )
         case .nodes:
-            PlaceholderPane(title: "NODES", detail: "fleet")
+            NodesView(onToast: showToast)
         }
     }
 }
@@ -96,6 +112,46 @@ extension RootView {
     func send(_ text: String) {
         messages.append(Message(role: .user, text: text))
         agentState = .thinking
+    }
+
+    /// :433 — one live toast at a time; a second call replaces the first and
+    /// cancels its dismissal, so the earlier timer cannot clear the later
+    /// message. The prototype's `later()` has the same effect by overwriting
+    /// state; here the cancel is explicit because a Task outlives the value.
+    private func showToast(_ text: String) {
+        toastTask?.cancel()
+        toast = text
+        toastTask = Task {
+            try? await Task.sleep(for: .milliseconds(2800))
+            guard !Task.isCancelled else { return }
+            toast = nil
+        }
+    }
+}
+
+/// :514-519 — accent-bordered pill on a near-opaque surface.
+private struct ToastBanner: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark").font(.system(size: 12, weight: .bold))
+            Text(text)
+                .font(Theme.mono(9.5))
+                .tracking(1.14)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .foregroundStyle(Theme.text)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.surface.opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Theme.r(0.4), lineWidth: Theme.hairline)
+        )
+        .padding(.horizontal, 24)
     }
 }
 
