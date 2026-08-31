@@ -2,9 +2,14 @@ import SwiftUI
 
 /// Igneous Precision — design tokens for the Zeus operator app.
 ///
-/// Every value here is transcribed from the landed prototype
-/// `~/Zeus docs/prototypes/mobile/zeus/ZeusApp.jsx` at ref `817b19d3d`
-/// (hex literals :302-303 and the palette block :26). It is a TRANSCRIPTION,
+/// Every value here is transcribed from the landed prototype at the canonical
+/// git ref `817b19d3d:docs/prototypes/mobile/zeus/ZeusApp.jsx` (925 lines)
+/// (hex literals :302-303 and the palette block :26).
+///
+/// The ref form is deliberate: a worktree path names bytes that can move or be
+/// archived, and a provenance line pointing into a purge candidate dies with it,
+/// taking the reason along. `git show <ref>` reproduces the subject from the
+/// object store for as long as the commit is reachable. It is a TRANSCRIPTION,
 /// not a derivation — if the prototype moves, this file does not follow it
 /// automatically and the two will drift silently. The prototype is the
 /// authority; this is a copy with a known origin.
