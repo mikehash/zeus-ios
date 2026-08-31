@@ -35,6 +35,13 @@ enum Tab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @State private var tab: Tab = .zeus
+    @State private var agentState: AgentState = .ambient
+
+    /// Seeded from the prototype's initial transcript, :411-412.
+    @State private var messages: [Message] = [
+        Message(role: .agent,
+                text: "Operator link established. All systems nominal — Kitchen node quiet. Standing by.")
+    ]
 
     var body: some View {
         ZStack {
@@ -54,10 +61,41 @@ struct RootView: View {
     @ViewBuilder
     private var content: some View {
         switch tab {
-        case .zeus:    PlaceholderPane(title: "ZEUS",    detail: "agent")
-        case .session: PlaceholderPane(title: "SESSION", detail: "transcript")
-        case .nodes:   PlaceholderPane(title: "NODES",   detail: "fleet")
+        case .zeus:
+            PlaceholderPane(title: "ZEUS", detail: "agent")
+        case .session:
+            SessionView(
+                messages: messages,
+                // :661 — the status line is a function of link topology, which
+                // this tree has no source for yet. Fixed at the LINKED arm;
+                // the `remote` ternary is not ported.
+                statusLine: "LINKED · KITCHEN NODE",
+                state: agentState,
+                onSend: send,
+                // :660 — voice hands control back to the ZEUS tab, then runs
+                // the query. The tab switch is the part that is real here.
+                onVoice: { tab = .zeus }
+            )
+        case .nodes:
+            PlaceholderPane(title: "NODES", detail: "fleet")
         }
+    }
+}
+
+// MARK: - Actions
+
+extension RootView {
+    /// `sendChat`, :455-467.
+    ///
+    /// The prototype streams the reply token-by-token off a timer. NO
+    /// TRANSPORT EXISTS in this tree — there is no gateway client, no socket,
+    /// nothing to send to. This appends the user turn and moves the agent
+    /// state to `.thinking`, and stops there deliberately rather than faking
+    /// a canned reply: a stub that answers looks identical to one that works,
+    /// and the empty transcript is the honest signal that the wire is missing.
+    func send(_ text: String) {
+        messages.append(Message(role: .user, text: text))
+        agentState = .thinking
     }
 }
 

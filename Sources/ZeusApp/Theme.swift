@@ -42,6 +42,16 @@ enum Theme {
     /// Accent at partial opacity — the prototype's `r(a)` helper.
     static func r(_ a: Double) -> Color { accent.opacity(a) }
 
+    /// `linear-gradient(160deg, ${ACC}, #c92808)` — the prototype's action
+    /// button fill, used at every send/mic/primary site (:659, :664).
+    /// 160deg in CSS is measured clockwise from "to top", which puts the
+    /// start point near top-leading and the end near bottom-trailing.
+    static let accentGradient = LinearGradient(
+        colors: [accent, accentDeep],
+        startPoint: .init(x: 0.32, y: 0.0),
+        endPoint: .init(x: 0.68, y: 1.0)
+    )
+
     // MARK: - Type
     //
     // The prototype names three families (:299-301): Orbitron (display),
