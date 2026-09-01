@@ -30,15 +30,30 @@ xcodebuild -scheme Zeus \
 
 ### The membership check (use this one)
 
-Ask the *driver input list*, not the build log. The list is what the compiler
-was handed; the log is what it decided to redo.
-
 ```sh
-FL=$(find ~/Library/Developer/Xcode/DerivedData/Zeus-*/Build/Intermediates.noindex \
-       -name 'Zeus.SwiftFileList' -path '*arm64*' | head -1)
-diff <(tr ' ' '\n' < "$FL" | sed 's|.*/||' | grep '\.swift$' | sort) \
-     <(find Sources -name '*.swift' -exec basename {} \; | sort)   # must be empty
+bash scripts/check_membership.sh      # rc 0 pass · 2 VOID · 3 DRIFT
 ```
+
+Asks the *driver input list* — what the compiler was handed — not the build
+log, which is what it decided to redo. Two faults it exists to avoid, both
+measured on this repo:
+
+- **Do not glob DerivedData and `head -1`.** That selected a 6.5h-stale hash
+  whose list held 8 inputs with the file under test absent — a false zero.
+  `xcodebuild -showBuildSettings` emits `OBJROOT` for the invocation you are
+  about to run: a coordinate written by the build system, not a claim about
+  the filesystem written by the reader.
+- **Do not compare against `git ls-files`.** The file list enumerates the
+  WORKING TREE; the index is a different set, and they disagree exactly when
+  something is uncommitted — i.e. every time you add a file. A guard that
+  false-reds on normal work trains you to ignore it. Use
+  `--cached --others --exclude-standard`.
+
+A positive control cannot catch a stale list: a stale artefact contains every
+*old* file, so any control drawn from pre-existing code is alive in it by
+construction. Membership is a property of an element; staleness is a property
+of the set. Only cardinality or recency sees it — hence the count comparison,
+and hence mtime is printed as a corroborator and never as the verdict.
 
 ### Two checks that look right and are not
 

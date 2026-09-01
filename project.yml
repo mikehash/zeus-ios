@@ -13,3 +13,20 @@ targets:
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: Zeus
+  ZeusTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests/ZeusTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Zeus
+schemes:
+  Zeus:
+    build:
+      targets:
+        Zeus: all
+        ZeusTests: [test]
+    test:
+      targets: [ZeusTests]
