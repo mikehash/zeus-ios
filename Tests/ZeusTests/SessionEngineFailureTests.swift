@@ -201,7 +201,14 @@ final class SessionEngineFailureTests: XCTestCase {
         await settle("first turn opened") { engine.messages.count == 2 }
 
         engine.send("second")
-        await settle("second turn opened") { engine.messages.count == 4 }
+        // 🔴 `messages.count == 4` is reached by the SYNCHRONOUS prefix of
+        // `send` — the user append — before the cancelled predecessor's `defer`
+        // has run. Measured: 2 of 6 clean-DerivedData runs read TWO live carets
+        // through that window. The terminal condition must name the thing only
+        // the predecessor's teardown can produce: its caret cleared.
+        await settle("predecessor settled") {
+            engine.messages.count == 4 && !engine.messages[1].streaming
+        }
 
         let streaming = engine.messages.filter { $0.streaming }
         XCTAssertEqual(streaming.count, 1, "two concurrent streams: \(streaming.count) carets live")
