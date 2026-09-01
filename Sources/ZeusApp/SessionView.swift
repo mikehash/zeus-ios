@@ -48,7 +48,7 @@ struct SessionView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            OrbGlyph(diameter: 34)
+            OrbGlyph(diameter: 34, mode: state.orbMode)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("SESSION-01")
@@ -98,7 +98,7 @@ struct SessionView: View {
     private func bubbleRow(_ m: Message) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
             if m.role == .agent {
-                OrbGlyph(diameter: 24).padding(.bottom, 2)
+                OrbGlyph(diameter: 24, mode: .dormant).padding(.bottom, 2)
             }
             bubble(m)
             if m.role == .user { Color.clear.frame(width: 0) }
@@ -221,29 +221,24 @@ private struct BubbleShape: Shape {
     }
 }
 
-/// Placeholder for the prototype's canvas-drawn `DeviceOrb` (:38-296).
+/// The orb, at glyph scale.
 ///
-/// The real orb is ~260 lines of 2D canvas work — arcs whose count varies
-/// with mode, a level-driven radius, per-frame rotation. NONE of that is
-/// implemented here; this is a gradient disc standing in at the two call
-/// sites the session view needs (34pt header, 24pt bubble avatar).
+/// PORTED. This was a gradient-disc placeholder until the `DeviceOrb` renderer
+/// landed; it is now the real renderer at `OrbTuning.glyph` density (10 x 16 =
+/// 187 points), which is the honest ceiling for a 24-34pt disc — a 1855-point
+/// cloud cannot resolve at this size, so drawing it would be cost with no
+/// visible return.
 ///
-/// Stated at the site rather than in a note: anyone reading this file sees
-/// the gap where they would otherwise assume the orb was ported.
+/// The two call sites (34pt session header, 24pt bubble avatar) pass the
+/// agent's live mode through, so the glyph breathes with the same state
+/// machine as a full-size orb rather than being decorative.
 struct OrbGlyph: View {
     let diameter: CGFloat
+    var mode: DeviceOrb.Mode = .dormant
 
     var body: some View {
-        Circle()
-            .fill(
-                RadialGradient(
-                    colors: [Theme.accent2.opacity(0.9), Theme.accentDeep.opacity(0.5)],
-                    center: .init(x: 0.35, y: 0.3),
-                    startRadius: 0,
-                    endRadius: diameter * 0.8
-                )
-            )
-            .overlay(Circle().stroke(Theme.r(0.35), lineWidth: Theme.hairline))
+        DeviceOrb(mode: mode, tuning: .glyph)
             .frame(width: diameter, height: diameter)
+            .accessibilityHidden(true)
     }
 }

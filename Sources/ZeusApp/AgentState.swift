@@ -36,6 +36,26 @@ enum AgentState: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The orb mode this agent state drives. `orbMode` at :473-475.
+    ///
+    /// FOUR STATES MAP ONTO THREE MODES — `listening` and `responding` both
+    /// render as `speaking`. That collapse is in the prototype and is kept
+    /// rather than "corrected": the orb distinguishes *energy*, the badge
+    /// distinguishes *phase*, and they are deliberately not the same alphabet.
+    ///
+    /// Note what is NOT reachable through here: `DeviceOrb.Mode.rage` has no
+    /// agent state that produces it. Since `AgentState` is exhaustive and this
+    /// switch is total over it, `rage` is provably unreachable from the app's
+    /// own state machine — which is PROTOTYPE-AUDIT.md defect ③ stated as a
+    /// property of the code instead of a remark about it.
+    var orbMode: DeviceOrb.Mode {
+        switch self {
+        case .listening, .responding: return .speaking
+        case .thinking:               return .thinking
+        case .ambient:                return .dormant
+        }
+    }
+
     /// Badge colour. `BADGES[state].color` at :333-338, resolving the
     /// prototype's GRN/ACC2/YLW/BLU constants declared at :302-304.
     var badgeColor: Color {
