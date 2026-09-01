@@ -53,7 +53,9 @@ diff <(tr ' ' '\n' < "$FL" | sed 's|.*/||' | grep '\.swift$' | sort) \
   `com.apple.xcode.tools.swift`) — three hits, zero files. A substring match on
   a log is not a file set.
 
-Current: 6 files in the list, 6 on disk, sets identical, `zzznope` control 0.
+Current: 8 files in the list, 8 on disk, sets identical, `zzznope` control 0.
+(`pbxproj` stores **basenames** — grep for `Foo.swift`, not `Sources/ZeusApp/Foo.swift`,
+or every file reports MISSING.)
 
 ## Layout
 
@@ -63,6 +65,8 @@ Sources/ZeusApp/          app sources
   ZeusApp.swift           @main entry
   Theme.swift             design tokens (colors, type ramp, spacing)
   AgentState.swift        agent-state enum + Badge
+  DeviceOrb.swift         the orb renderer — 5 layers, ported from the JSX prototype
+  OrbBench.swift          headless frame-cost harness (CPU geometry + depth sort only)
   RootView.swift          tab shell, toast host
   SessionView.swift       SESSION tab — transcript, composer
   NodesView.swift         NODES tab — fleet, Row/Slider helpers
