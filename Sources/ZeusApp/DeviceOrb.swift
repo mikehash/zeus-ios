@@ -265,12 +265,27 @@ enum OrbRenderer {
         let baseRadius = Double(min(w, h)) * 0.21          // :47 resize()
         let t = s.time
 
-        // :283-284 — the trail fade. The prototype paints 28% black over the
+        // :283-284 — the trail fade. The prototype paints black over the
         // previous frame instead of clearing, which is what produces the motion
         // trails. SwiftUI hands us a cleared context each tick, so the effect
         // is not reproducible by painting black here; it needs a persistent
         // drawable. NOT PORTED, and named so the gap is visible rather than
         // rediscovered as "the Swift orb looks crisper than the prototype".
+        //
+        // The gap covers FOUR sources, not one. At origin/main 817b19d3d the
+        // constant `rgba(0, 0, 0, 0.28)` appears EXACTLY ONCE in each of the
+        // four tracked prototypes — ZeusApp.jsx:283, ZeusCommissioning.jsx:279,
+        // OptimusApp.jsx:282, OptimusOnboarding.jsx:299 — so both Swift apps
+        // will read crisper than both prototype families.
+        //
+        // AND THE TRACKED DESKTOP REFERENCE DISAGREES WITH ALL FOUR:
+        // 817b19d3d:apps/ZeusOptimus/reference/ZeusOrb-desktop.tsx:362 paints
+        // `rgba(0, 0, 0, 0.25)`, not 0.28. That file is the M2 palette source
+        // and is value-identical to the prototypes on all seven palette keys
+        // (point, tipGlowInner, tipGlowOuter, wire, dust, glowStops, arc) —
+        // but NOT on this constant. Sourcing the palette there is free;
+        // sourcing the FADE there would silently ship a 3-point delta. The
+        // seven-key identity does not extend past the seven keys it measured.
 
         drawCentralGlow(s, &ctx, cx: cx, cy: cy, baseRadius: baseRadius, t: t)
         drawWireframe(s, &ctx, cx: cx, cy: cy, baseRadius: baseRadius, t: t)
