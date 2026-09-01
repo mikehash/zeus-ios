@@ -67,6 +67,17 @@ rm -f /tmp/nsg.err
 pos=$(git grep -c -F -e 'import AVFoundation' -- "$SUBJECT" | cut -d: -f2)
 [ "${pos:-0}" -ge 1 ] || { echo "GUARD VOID: POS control dead (import AVFoundation = ${pos:-0})" >&2; exit 2; }
 
+# POS control for $VIEW, and it is NOT symmetry-for-its-own-sake. $SUBJECT was
+# guarded twice (tracked-ness tri-state above, plus this needle); $VIEW was
+# guarded ONCE. Measured: strip the tri-state loop and `git mv` Commissioning.swift
+# and the whole guard exits 0 with all eleven legs green, because leg 8 is the
+# only consumer of $VIEW and a grep over an absent path reports a clean zero.
+# The same mutation against $SUBJECT is caught by the needle above, at rc=2.
+# A path LITERAL needs a liveness needle of its own, or the day the file is
+# renamed the guard censuses nothing and calls it compliance.
+pos_view=$(git grep -c -F -e 'struct CommissioningView' -- "$VIEW" | cut -d: -f2)
+[ "${pos_view:-0}" -ge 1 ] || { echo "GUARD VOID: VIEW POS control dead (struct CommissioningView = ${pos_view:-0})" >&2; exit 2; }
+
 # NEG control — generated at RUNTIME, never a literal.
 # A sentinel written into a tracked script is guaranteed present in the corpus
 # that script greps, so a hardcoded needle is dead on its first commit.
