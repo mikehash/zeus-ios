@@ -60,13 +60,18 @@ OBJROOT=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *OBJROOT = /{print $2; exi
 # ── 2. Locate the driver input list UNDER that coordinate ──────────────────
 # No `head -1`: if more than one arch list exists they must AGREE, and a
 # disagreement is itself the signal. We enumerate and count, never sample.
-mapfile -t LISTS < <(find "$OBJROOT" -name "$SCHEME.SwiftFileList" 2>/dev/null | sort)
+# NOT `mapfile`: it is bash 4, and this file is executable so its SHEBANG picks
+# the interpreter — /bin/bash on a stock mac is 3.2.57. `mapfile` there dies at
+# ENUMERATION with rc=1, i.e. OUTSIDE this script's own contract (0/2/3), so a
+# consumer keying on -eq 3 reads a dead guard as a pass.
+LISTS=()
+while read -r _l; do LISTS+=("$_l"); done < <(find "$OBJROOT" -name "$SCHEME.SwiftFileList" 2>/dev/null | sort)
 [ "${#LISTS[@]}" -ge 1 ] || void "no $SCHEME.SwiftFileList under OBJROOT (target never built here)"
 
 # ── 3. The comparand — working tree, index-free ────────────────────────────
 tree_rc=0
 TREE=$(git ls-files --cached --others --exclude-standard -- "$SRC_DIR" \
-       | grep '[.]swift$' | sed 's|.*/||' | sort -u) || tree_rc=$?
+       | grep '[.]swift$' | sort -u) || tree_rc=$?
 [ "$tree_rc" -eq 0 ] || void "git ls-files rc=$tree_rc"
 TREE_N=$(printf '%s\n' "$TREE" | grep -c '[.]swift$')
 [ "$TREE_N" -gt 0 ] || void "POS control dead: zero .swift files found under $SRC_DIR"
@@ -76,7 +81,15 @@ status=0
 for FL in "${LISTS[@]}"; do
     MT=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$FL")
     ARCH=$(printf '%s' "$FL" | sed -n 's|.*/\([^/]*\)/[^/]*$|\1|p')
-    GOT=$(tr ' ' '\n' < "$FL" | sed 's|.*/||' | grep '[.]swift$' | sort -u)
+    GOT=$(tr ' ' '\n' < "$FL" | grep '[.]swift$' | sed "s|^$ROOT/||" | sort -u)
+    # PATHS, not basenames. `sed 's|.*/||'` collapsed two files sharing a
+    # basename in different directories into one member, so the count
+    # comparison passed over a missing file. Zero members while Sources/ZeusApp
+    # is flat; live the day it grows a subdirectory, and nothing said so.
+    # If a driver path did not sit under ROOT the strip is a no-op and every
+    # comparison below mismatches — VOID rather than report a false DRIFT.
+    STRAY=$(printf '%s\n' "$GOT" | grep -c '^/')
+    [ "$STRAY" -eq 0 ] || void "$STRAY driver input path(s) not under ROOT=$ROOT — cannot normalise"
     GOT_N=$(printf '%s\n' "$GOT" | grep -c '[.]swift$')
 
     printf 'list %-28s inputs=%-3s tree=%-3s mtime=%s\n' "$ARCH" "$GOT_N" "$TREE_N" "$MT"
@@ -88,6 +101,14 @@ for FL in "${LISTS[@]}"; do
 done
 
 # ── 5. Cardinality across lists — the leg that sees staleness ──────────────
+# APERTURE: this leg needs TWO lists to compare, so at n=1 it does not run and
+# the guard's power drops to step 4 alone — which catches a stale list that
+# OMITS a tree file (the case actually hit) but NOT one that is stale and
+# happens to contain every current file. That world passes silently, so at n=1
+# we say so in the output rather than printing a bare OK.
+if [ "${#LISTS[@]}" -le 1 ]; then
+    echo "NOTE: ${#LISTS[@]} list — cardinality leg VACUOUS (needs >1); a stale list containing every current file passes here"
+fi
 if [ "${#LISTS[@]}" -gt 1 ]; then
     counts=$(for FL in "${LISTS[@]}"; do tr ' ' '\n' < "$FL" | grep -c '[.]swift$'; done | sort -u | wc -l | tr -d ' ')
     [ "$counts" -eq 1 ] || drift "arch lists DISAGREE on input count — at least one is stale"
