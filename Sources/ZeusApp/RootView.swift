@@ -35,17 +35,15 @@ enum Tab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @State private var tab: Tab = .zeus
-    @State private var agentState: AgentState = .ambient
 
     /// :433 — `showToast(text)` sets, then clears after 2800ms.
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
 
-    /// Seeded from the prototype's initial transcript, :411-412.
-    @State private var messages: [Message] = [
-        Message(role: .agent,
-                text: "Operator link established. All systems nominal — Kitchen node quiet. Standing by.")
-    ]
+    /// The session loop. RootView READS the transcript and calls `send`; it
+    /// cannot append a message or set an agent state, because neither is
+    /// writable from here. The seed lives in the engine's initialiser.
+    @StateObject private var session = SessionEngine()
 
     var body: some View {
         ZStack {
@@ -81,13 +79,13 @@ struct RootView: View {
             PlaceholderPane(title: "ZEUS", detail: "agent")
         case .session:
             SessionView(
-                messages: messages,
+                messages: session.messages,
                 // :661 — the status line is a function of link topology, which
                 // this tree has no source for yet. Fixed at the LINKED arm;
                 // the `remote` ternary is not ported.
                 statusLine: "LINKED · KITCHEN NODE",
-                state: agentState,
-                onSend: send,
+                state: session.state,
+                onSend: session.send,
                 // :660 — voice hands control back to the ZEUS tab, then runs
                 // the query. The tab switch is the part that is real here.
                 onVoice: { tab = .zeus }
@@ -101,18 +99,20 @@ struct RootView: View {
 // MARK: - Actions
 
 extension RootView {
-    /// `sendChat`, :455-467.
+    /// `sendChat`, :455-467 — now owned by `SessionEngine`.
     ///
-    /// The prototype streams the reply token-by-token off a timer. NO
-    /// TRANSPORT EXISTS in this tree — there is no gateway client, no socket,
-    /// nothing to send to. This appends the user turn and moves the agent
-    /// state to `.thinking`, and stops there deliberately rather than faking
-    /// a canned reply: a stub that answers looks identical to one that works,
-    /// and the empty transcript is the honest signal that the wire is missing.
-    func send(_ text: String) {
-        messages.append(Message(role: .user, text: text))
-        agentState = .thinking
-    }
+    /// The prototype streams a HARDCODED reply off a `setTimeout` ladder. The
+    /// turn lifecycle here is real — user turn, thinking, deltas folded into a
+    /// trailing agent message, caret cleared on every exit — and the only
+    /// missing piece is the sender. `UnconfiguredTransport` fails loudly with
+    /// `NO TRANSPORT` rather than answering, because a stub that answers is
+    /// indistinguishable from a wired build and the first demo would believe
+    /// the wire exists.
+    ///
+    /// RootView has NO transcript-mutating method any more. The previous
+    /// `send` appended to `@State messages` from the view layer; a second
+    /// writer added beside it would have been a compile-clean defect. There
+    /// is now nothing here to write to.
 
     /// :433 — one live toast at a time; a second call replaces the first and
     /// cancels its dismissal, so the earlier timer cannot clear the later
