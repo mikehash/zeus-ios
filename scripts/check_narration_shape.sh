@@ -126,6 +126,31 @@ cap_writes=$(git grep $SCAN -n -e '\bcaption = ' -e '\.caption = ' -- 'Sources/*
     | grep -vc ':[[:space:]]*//')
 pin 'caption assignment sites, whole tree' 2 "$cap_writes"
 
+# 6b. THE AVFOUNDATION SURFACE, not just the synthesizer type. Zeus100's
+#     count-neutral hunt closed the named-symbol routes by accident:
+#     `AVSpeechSynthesizerDelegate` CONTAINS the pinned needle, so conformance
+#     moves leg 2, and `synth.isSpeaking` moves leg 4. The survivor found here
+#     names neither — `guard !AVSpeechSynthesisVoice.speechVoices().isEmpty
+#     else { return }` above the reveal Task makes the caption depend on TTS
+#     AVAILABILITY while legs 1-9 all stay green. It is caught only at the
+#     WIDER needle: AVSpeech* code occurrences are exactly 4 (the declaration,
+#     the utterance, and pickVoice's two), all inside speak() or its helper.
+#     A fifth is a new AVFoundation touch and must be read by a human.
+av_surface=$(git grep -n -F -e 'AVSpeech' -- "$SUBJECT" | grep -vc ':[[:space:]]*//')
+pin 'AVSpeech* code occurrences' 4 "${av_surface:-0}"
+
+# 6c. And all of them sit at or below speak(). The reveal Task runs above it,
+#     so an AVFoundation touch between the declaration and the reveal is a
+#     coupling regardless of which symbol it spells.
+reveal_line=$(git grep -n -F -e 'revealTask = Task' -- "$SUBJECT" | head -1 | cut -d: -f2)
+first_av=$(git grep -n -F -e 'AVSpeech' -- "$SUBJECT" | grep -v ':[[:space:]]*//' \
+    | head -1 | cut -d: -f2)
+[ -n "${reveal_line:-}" ] && [ -n "${first_av:-}" ] || {
+    echo "GUARD VOID: line-order leg could not locate its anchors" >&2; exit 2; }
+av_before_reveal=$(git grep -n -F -e 'AVSpeech' -- "$SUBJECT" | grep -v ':[[:space:]]*//' \
+    | cut -d: -f2 | awk -v r="$reveal_line" 'NR>1 && $1<r' | wc -l | tr -d ' ')
+pin 'AVSpeech touches between decl and reveal' 0 "${av_before_reveal:-0}"
+
 # 7. No await on the synthesizer, anywhere. This is the property that makes
 #    the reveal Task independent of TTS: awaiting the synthesizer is the one
 #    edit that would make a hung or unavailable voice engine stall captions.
