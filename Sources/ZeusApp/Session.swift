@@ -28,11 +28,21 @@ enum TransportError: LocalizedError, Equatable {
     /// words in the transcript.
     case unconfigured
 
+    /// A gateway WAS supplied and could not be used. Distinct from
+    /// `.unconfigured` on purpose: "you gave me nothing" and "you gave me
+    /// something I can't use" are different operator actions, and collapsing
+    /// them sends the reader to check the wrong thing. Carries the config's own
+    /// summary so the transcript quotes the operand instead of describing it.
+    case misconfigured(detail: String)
+
     var errorDescription: String? {
         switch self {
         case .unconfigured:
             return "NO TRANSPORT — this build has no gateway client. "
                  + "The session loop is live; nothing is listening."
+        case let .misconfigured(detail):
+            return "BAD GATEWAY CONFIG — \(detail). "
+                 + "A gateway was supplied and could not be used."
         }
     }
 }
@@ -49,6 +59,43 @@ enum TransportError: LocalizedError, Equatable {
 struct UnconfiguredTransport: SessionTransport {
     func stream(prompt: String) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { $0.finish(throwing: TransportError.unconfigured) }
+    }
+}
+
+/// A gateway was supplied and rejected. Fails with the config's own summary so
+/// the transcript names the operand — `ZEUS_GATEWAY_URL="ftp://x" rejected:
+/// scheme is not http or https` is actionable; "connection failed" is not.
+struct MisconfiguredTransport: SessionTransport {
+    let detail: String
+    func stream(prompt: String) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { $0.finish(throwing: TransportError.misconfigured(detail: detail)) }
+    }
+}
+
+/// Selects the transport for a resolved config.
+///
+/// EXHAUSTIVE over `GatewayConfig` by `switch` with no `default`, so a fourth
+/// config case cannot be added without this function failing to compile. A
+/// `default` here would silently route a new case to the absent arm — the
+/// compiler holds the mapping instead of a comment.
+///
+/// `.resolved` currently routes to `.misconfigured` with an explicit reason,
+/// because **the HTTP client does not exist in this tree yet.** That is the
+/// honest arm: a config that resolves but has no client behind it must not
+/// report success, and it must not report `NO TRANSPORT` either — neither
+/// sentence is true. It says the client is missing, and this line is the single
+/// site the real client lands at.
+func makeTransport(for config: GatewayConfig) -> SessionTransport {
+    switch config {
+    case .absent:
+        return UnconfiguredTransport()
+    case let .malformed(raw, reason):
+        return MisconfiguredTransport(
+            detail: "\(GatewayConfig.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)")
+    case let .resolved(endpoint):
+        return MisconfiguredTransport(
+            detail: "\(endpoint.url.absoluteString) resolved, but this build "
+                  + "has no HTTP client (M5 in progress)")
     }
 }
 

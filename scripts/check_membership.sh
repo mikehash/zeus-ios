@@ -47,8 +47,24 @@ void() { echo "VOID: $*"; exit 2; }
 drift() { echo "DRIFT: $*"; exit 3; }
 
 # ── 1. Ask the build system for its own coordinate ─────────────────────────
+#
+# 🔴 THE COORDINATE IS INVOCATION-SCOPED, NOT PROJECT-SCOPED. A bare
+# -showBuildSettings answers about the DEFAULT DerivedData. If the build being
+# audited ran under -derivedDataPath, this resolves a DIFFERENT OBJROOT and the
+# guard reports NOT COMPILED for files that were compiled perfectly well —
+# measured: it flagged GatewayConfig.swift while the real list read 12/12 with
+# the file present. That is a FALSE DRIFT, the exact failure mode this guard was
+# written to replace, reintroduced one layer up: the tool answers about itself,
+# but only about the invocation you actually gave it.
+#
+# So the derived-data path is a PARAMETER. Pass the same one the build used.
+DERIVED="${1:-}"
+DD_ARGS=()
+[ -n "$DERIVED" ] && DD_ARGS=(-derivedDataPath "$DERIVED")
+
 settings_rc=0
 settings=$(xcodebuild -scheme "$SCHEME" -destination "$DEST" \
+                      "${DD_ARGS[@]}" \
                       -configuration Debug -showBuildSettings 2>/tmp/membership.err) \
     || settings_rc=$?
 [ "$settings_rc" -eq 0 ] || void "showBuildSettings rc=$settings_rc ($(wc -c </tmp/membership.err) B stderr)"
