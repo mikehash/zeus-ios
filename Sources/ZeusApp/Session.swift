@@ -35,6 +35,23 @@ enum TransportError: LocalizedError, Equatable {
     /// summary so the transcript quotes the operand instead of describing it.
     case misconfigured(detail: String)
 
+    /// The gateway was configured and could not be reached at all — DNS,
+    /// refused connection, TLS, timeout. Distinct from `.httpStatus`: nothing
+    /// answered. Names the host because "the request failed" sends the reader
+    /// to the wrong layer.
+    case unreachable(host: String, detail: String)
+
+    /// Something answered and refused. A 401 and a 502 are different operator
+    /// actions (fix the token vs. fix the gateway), so the code is carried
+    /// rather than folded into a sentence.
+    case httpStatus(code: Int, body: String)
+
+    /// Something answered with 2xx and the body was not a usable reply. This
+    /// is the arm that catches a *successful* request that produced no answer
+    /// — the case that would otherwise render as an empty agent bubble and
+    /// read as a silent reply.
+    case malformedResponse(detail: String)
+
     var errorDescription: String? {
         switch self {
         case .unconfigured:
@@ -43,6 +60,15 @@ enum TransportError: LocalizedError, Equatable {
         case let .misconfigured(detail):
             return "BAD GATEWAY CONFIG — \(detail). "
                  + "A gateway was supplied and could not be used."
+        case let .unreachable(host, detail):
+            return "GATEWAY UNREACHABLE — \(host): \(detail). "
+                 + "Nothing answered; the request did not reach a server."
+        case let .httpStatus(code, body):
+            return "GATEWAY REFUSED — HTTP \(code): \(body). "
+                 + "A server answered and rejected the request."
+        case let .malformedResponse(detail):
+            return "BAD GATEWAY RESPONSE — \(detail). "
+                 + "The request succeeded and the body was not a usable reply."
         }
     }
 }
@@ -79,12 +105,16 @@ struct MisconfiguredTransport: SessionTransport {
 /// `default` here would silently route a new case to the absent arm — the
 /// compiler holds the mapping instead of a comment.
 ///
-/// `.resolved` currently routes to `.misconfigured` with an explicit reason,
-/// because **the HTTP client does not exist in this tree yet.** That is the
-/// honest arm: a config that resolves but has no client behind it must not
-/// report success, and it must not report `NO TRANSPORT` either — neither
-/// sentence is true. It says the client is missing, and this line is the single
-/// site the real client lands at.
+/// `.resolved` returns an `HTTPTransport` — the real wire. It previously
+/// returned a `MisconfiguredTransport` saying "no HTTP client in this build";
+/// that sentence was true then and is false now, and it is deleted rather than
+/// left standing, because a doc/code pair that drifts is only detectable while
+/// one side still moves.
+///
+/// Note what `makeTransport` still does NOT do: it does not probe the endpoint.
+/// A transport is *constructed* here, not connected — reachability is a
+/// property of a request, not of a config, and pretending otherwise would put a
+/// network call on the app's launch path.
 func makeTransport(for config: GatewayConfig) -> SessionTransport {
     switch config {
     case .absent:
@@ -93,9 +123,7 @@ func makeTransport(for config: GatewayConfig) -> SessionTransport {
         return MisconfiguredTransport(
             detail: "\(GatewayConfig.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)")
     case let .resolved(endpoint):
-        return MisconfiguredTransport(
-            detail: "\(endpoint.url.absoluteString) resolved, but this build "
-                  + "has no HTTP client (M5 in progress)")
+        return HTTPTransport(endpoint: endpoint)
     }
 }
 

@@ -123,45 +123,76 @@ final class GatewayConfigTests: XCTestCase {
 
     // MARK: - Transport selection
 
-    /// The three arms must produce three DISTINGUISHABLE errors. Asserted
-    /// pairwise-unequal rather than each-matches-a-string: a refactor that
-    /// collapsed two arms into one message would still satisfy three separate
-    /// `contains` assertions, and would not satisfy this.
+    /// The three arms must be DISTINGUISHABLE. Asserted pairwise-unequal
+    /// rather than each-matches-a-string: a refactor that collapsed two arms
+    /// into one message would still satisfy three separate `contains`
+    /// assertions, and would not satisfy this.
+    ///
+    /// 🔴 CORRECTED AFTER THE WIRE LANDED. This leg used to drain all three
+    /// transports. Once `.resolved` became a real `HTTPTransport`, the third
+    /// drain opened a socket to `a.b` and the "error" it compared was a DNS
+    /// failure — the leg still PASSED, for a reason that had nothing to do with
+    /// config arms, and would have gone red on an airplane or green against a
+    /// host that happened to resolve. A passing test whose subject has silently
+    /// been replaced is worse than a failing one.
+    ///
+    /// The two unwired arms are still compared by MESSAGE; the wired arm is
+    /// compared by TYPE, because its error is a property of a network rather
+    /// than of this tree.
     func testThreeConfigArmsProduceDistinctErrors() async {
         let absent = await firstError(makeTransport(for: .absent))
         let malformed = await firstError(makeTransport(
             for: .malformed(raw: "ftp://x", reason: .unsupportedScheme)))
-        let resolved = await firstError(makeTransport(
-            for: GatewayConfig.resolve(from: [k: "http://a.b"])))
 
         XCTAssertNotEqual(absent, malformed)
-        XCTAssertNotEqual(malformed, resolved)
-        XCTAssertNotEqual(absent, resolved)
+
+        // Third arm: distinct by construction — a different type entirely.
+        let resolved = makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"]))
+        XCTAssertTrue(resolved is HTTPTransport)
+        XCTAssertFalse(makeTransport(for: .absent) is HTTPTransport)
     }
 
-    /// The absent arm — and ONLY the absent arm — says NO TRANSPORT. A resolved
-    /// config with no client behind it must not claim the wire is unconfigured;
-    /// it isn't, and the operator would go re-set a variable that is already set.
+    /// The absent arm — and ONLY the absent arm — says NO TRANSPORT.
+    ///
+    /// HISTORY, kept because the drift is the point: this leg used to also
+    /// assert the resolved arm said `"no HTTP client"`. That sentence was TRUE
+    /// at `2596074a` and became FALSE the moment `HTTPTransport` landed, and
+    /// this test is what caught it — it failed on the first gate after the cut
+    /// rather than passing against a world that no longer existed. The claim is
+    /// corrected here rather than deleted, because the *distinctness* it
+    /// guards still matters: a resolved config must never report the wire as
+    /// unconfigured, whatever the resolved arm goes on to do.
+    ///
+    /// The resolved arm is deliberately NOT drained here. It is now a real HTTP
+    /// client, and draining it would open a socket — a unit test that performs
+    /// network I/O fails for reasons that have nothing to do with its subject.
+    /// Transport SELECTION is asserted structurally instead.
     func testOnlyAbsentSaysNoTransport() async {
         let absent = await firstError(makeTransport(for: .absent))
-        let resolved = await firstError(makeTransport(
-            for: GatewayConfig.resolve(from: [k: "http://a.b"])))
+        let malformed = await firstError(makeTransport(
+            for: .malformed(raw: "ftp://x", reason: .unsupportedScheme)))
 
         XCTAssertTrue(absent.contains("NO TRANSPORT"))
-        XCTAssertFalse(resolved.contains("NO TRANSPORT"),
-                       "a resolved config must not report the wire as absent")
-        XCTAssertTrue(resolved.contains("no HTTP client"),
-                      "the resolved-but-unwired arm must name the missing client")
+        XCTAssertFalse(malformed.contains("NO TRANSPORT"),
+                       "a malformed config must not report the wire as absent")
+
+        // The resolved arm is a real client — asserted by type, not by drain.
+        XCTAssertTrue(
+            makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"])) is HTTPTransport,
+            "a resolved config must select the HTTP client")
     }
 
-    /// Every transport in this tree fails. Stated as a leg rather than a comment
-    /// so the day one of them succeeds, this fails and forces the claim to be
-    /// re-examined instead of quietly becoming false.
-    func testNoTransportInThisTreeEverYieldsAValue() async {
+    /// The two NON-WIRED transports in this tree always fail and never yield.
+    ///
+    /// Scope narrowed from "every transport" when the wire landed: `.resolved`
+    /// is excluded because it now reaches the network, and its behaviour is a
+    /// property of a server rather than of this tree. The old name claimed a
+    /// universal it can no longer measure — a claim whose subject has left the
+    /// building is worse than no claim, because it reads as coverage.
+    func testUnwiredTransportsNeverYieldAValue() async {
         for config: GatewayConfig in [
             .absent,
-            .malformed(raw: "x", reason: .notAURL),
-            GatewayConfig.resolve(from: [k: "http://a.b"])
+            .malformed(raw: "x", reason: .notAURL)
         ] {
             var yielded: [String] = []
             var threw = false
