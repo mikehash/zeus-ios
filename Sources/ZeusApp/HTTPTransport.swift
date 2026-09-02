@@ -17,9 +17,15 @@ import Foundation
 /// "arrived in one piece" from "arrived in one piece, then diced", and the
 /// second spelling makes the transcript claim a property the wire does not have.
 ///
-/// The engine above accumulates deltas, so a one-delta stream and an N-delta
-/// stream are the same code path. When the SSE route lands, only this file
-/// changes.
+/// The engine above folds frames, so a one-frame stream and an N-frame stream
+/// are the same code path FOR PROSE. The rest of that sentence used to read
+/// "when the SSE route lands, only this file changes" — and its own successor
+/// commit refuted it: `eec3baac` typed the element and touched FIVE files
+/// (Session.swift, SessionFrame.swift, HTTPTransport.swift, and two test
+/// files), because the fifth site was a CONSUMER accumulating the stream into
+/// a typed array, which no census of conformers can see. The prediction was
+/// true when written, false one commit later, and still sitting here as prose.
+/// SSE lands as a SECOND CONFORMER to `SessionTransport`, not as an edit here.
 struct HTTPTransport: SessionTransport {
 
     let endpoint: GatewayConfig.Endpoint
@@ -83,7 +89,8 @@ struct HTTPTransport: SessionTransport {
                     // `.token` frame and finish. Not chopped into timed fake
                     // deltas — that is the prototype's `setTimeout` word-walk
                     // one layer lower. The engine accumulates, so a 1-frame and
-                    // an N-frame stream are the same code path.
+                    // an N-frame stream are the same code path FOR PROSE. Telemetry
+                    // frames are routed by type, not folded — see SessionFrame.
                     continuation.yield(.token(text))
                     continuation.finish()
                 } catch is CancellationError {

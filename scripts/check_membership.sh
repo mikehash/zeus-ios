@@ -64,7 +64,7 @@ DD_ARGS=()
 
 settings_rc=0
 settings=$(xcodebuild -scheme "$SCHEME" -destination "$DEST" \
-                      "${DD_ARGS[@]}" \
+                      ${DD_ARGS[@]+"${DD_ARGS[@]}"} \
                       -configuration Debug -showBuildSettings 2>/tmp/membership.err) \
     || settings_rc=$?
 [ "$settings_rc" -eq 0 ] || void "showBuildSettings rc=$settings_rc ($(wc -c </tmp/membership.err) B stderr)"
