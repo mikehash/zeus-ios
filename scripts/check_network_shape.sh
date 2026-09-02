@@ -21,6 +21,17 @@
 #      naming it are fine — that is what documented the property).
 #   2. URLSession has at least one production site in HTTPTransport.swift.
 #
+# NEEDLE BOUNDARIES (2026-09-02, Zeus100's mutant). The first cut of this
+# guard counted a bare substring, so `URLSessionX_MUT` matched and the guard
+# read GREEN with the client renamed away. I added a RIGHT boundary and
+# published it. Zeus100 then ran the mirrored mutant — `MyURLSession` — and it
+# SURVIVED: a right boundary with no left one still matches the suffix of a
+# prefixed identifier. Every real URLSession was gone from the client and the
+# `>= 1` prod leg stayed green. The needle now carries BOTH boundaries,
+# `(^|[^A-Za-z0-9_])URLSession([^A-Za-z0-9_]|$)`, which also fixes the
+# false-RED direction: a test naming `FakeURLSessionStub` is a different class
+# and no longer trips a guard about this one.
+#
 # Comment stripping is deliberately conservative: only whole-line // and ///
 # forms are dropped. A trailing comment after code still counts, which can only
 # produce a FALSE POSITIVE (a refusal), never a false clear.
@@ -45,7 +56,7 @@ code_hits() { # $1=needle  $2..=files
   needle="$1"; shift
   n=0
   for f in "$@"; do
-    c=$(sed -e 's;^[[:space:]]*//.*$;;' "$f" | grep -cE "${needle}([^A-Za-z0-9_]|\$)")
+    c=$(sed -e 's;^[[:space:]]*//.*$;;' "$f" | grep -cE "(^|[^A-Za-z0-9_])${needle}([^A-Za-z0-9_]|$)")
     n=$(( n + c ))
   done
   printf '%s' "$n"
