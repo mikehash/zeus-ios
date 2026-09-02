@@ -15,11 +15,15 @@ import Foundation
 /// Nothing below it exists in this tree yet, and `UnconfiguredTransport` says
 /// so out loud rather than answering.
 protocol SessionTransport: Sendable {
-    /// One agent turn. Each element is a *delta*, not a snapshot — the engine
-    /// accumulates. Throwing terminates the turn; the accumulated text so far
-    /// is kept, because a half-arrived answer is data and discarding it would
-    /// be a second failure on top of the first.
-    func stream(prompt: String) -> AsyncThrowingStream<String, Error>
+    /// One agent turn. Each element is a *frame*, not a snapshot — the engine
+    /// folds prose and records telemetry separately. Throwing terminates the
+    /// turn; the accumulated text so far is kept, because a half-arrived answer
+    /// is data and discarding it would be a second failure on top of the first.
+    ///
+    /// The element type was `String` until the frame cut. It is `SessionFrame`
+    /// because four of the gateway's seven in-band names are NOT prose, and a
+    /// prose channel can only render them as agent speech. See `SessionFrame`.
+    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error>
 }
 
 enum TransportError: LocalizedError, Equatable {
@@ -52,6 +56,12 @@ enum TransportError: LocalizedError, Equatable {
     /// read as a silent reply.
     case malformedResponse(detail: String)
 
+    /// The AGENT failed, in band, mid-turn — an `error` frame on a healthy
+    /// socket. Not a transport fault: the wire worked and the server is telling
+    /// us the turn went wrong. Mapping this onto `.httpStatus` or `.unreachable`
+    /// would send the operator to check the network for a model failure.
+    case agentFailed(reason: String)
+
     var errorDescription: String? {
         switch self {
         case .unconfigured:
@@ -60,6 +70,9 @@ enum TransportError: LocalizedError, Equatable {
         case let .misconfigured(detail):
             return "BAD GATEWAY CONFIG — \(detail). "
                  + "A gateway was supplied and could not be used."
+        case let .agentFailed(reason):
+            return "AGENT ERROR — \(reason). "
+                 + "The wire is healthy; the turn itself failed."
         case let .unreachable(host, detail):
             return "GATEWAY UNREACHABLE — \(host): \(detail). "
                  + "Nothing answered; the request did not reach a server."
@@ -83,7 +96,7 @@ enum TransportError: LocalizedError, Equatable {
 /// it exercises the engine's error path on every send — so the path that is
 /// hardest to reach in a wired build is the one that runs by default here.
 struct UnconfiguredTransport: SessionTransport {
-    func stream(prompt: String) -> AsyncThrowingStream<String, Error> {
+    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { $0.finish(throwing: TransportError.unconfigured) }
     }
 }
@@ -93,7 +106,7 @@ struct UnconfiguredTransport: SessionTransport {
 /// scheme is not http or https` is actionable; "connection failed" is not.
 struct MisconfiguredTransport: SessionTransport {
     let detail: String
-    func stream(prompt: String) -> AsyncThrowingStream<String, Error> {
+    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { $0.finish(throwing: TransportError.misconfigured(detail: detail)) }
     }
 }
@@ -161,6 +174,10 @@ final class SessionEngine: ObservableObject {
     @Published private(set) var messages: [Message]
     @Published private(set) var state: AgentState = .ambient
 
+    /// Non-prose frames, in arrival order. Separate from `messages` by
+    /// construction: the transcript is what was SAID, this is what was DONE.
+    @Published private(set) var activity: [SessionActivity] = []
+
     private let transport: SessionTransport
     private var turn: Task<Void, Never>?
 
@@ -207,10 +224,10 @@ final class SessionEngine: ObservableObject {
         }
 
         do {
-            for try await delta in transport.stream(prompt: prompt) {
+            for try await frame in transport.stream(prompt: prompt) {
                 if Task.isCancelled { return }
                 if state != .responding { state = .responding }
-                accumulate(delta, into: slot)           // invariant 1
+                absorb(frame, into: slot)               // invariant 1
             }
         } catch {
             fail(error, at: slot)
@@ -219,13 +236,37 @@ final class SessionEngine: ObservableObject {
 
     // MARK: - Transcript mutation
 
-    /// THE ONLY SITE THAT FOLDS A DELTA INTO THE TRANSCRIPT. See invariant 1.
+    /// THE ONLY SITE THAT ROUTES A FRAME. See invariant 1.
+    ///
+    /// Routing is decided by `SessionFrame.transcriptText` — i.e. by the TYPE,
+    /// not by a reader of this function. A frame that carries prose is folded;
+    /// every other frame is recorded as activity and NEVER touches the
+    /// transcript. Before the frame cut this body was a bare `+=`, which meant
+    /// tool telemetry rendered as agent speech.
+    ///
+    /// `.failure` is folded into the transcript AS WELL as recorded, because an
+    /// in-band agent error is the turn's outcome and a transcript that ends
+    /// mid-sentence with the failure only in a side channel reads as the model
+    /// choosing silence.
+    private func absorb(_ frame: SessionFrame, into slot: Int) {
+        activity.append(SessionActivity(frame))
+
+        if let text = frame.transcriptText {
+            accumulate(text, into: slot)
+            return
+        }
+        if case let .failure(reason) = frame {
+            fail(TransportError.agentFailed(reason: reason), at: slot)
+        }
+    }
+
+    /// THE ONLY SITE THAT FOLDS PROSE INTO THE TRANSCRIPT.
     /// Bounds-checked because the slot is captured before the await: a caller
     /// that truncates the transcript mid-turn must not crash the app, and a
     /// silent no-op is the correct behaviour for a turn whose slot is gone.
-    private func accumulate(_ delta: String, into slot: Int) {
+    private func accumulate(_ text: String, into slot: Int) {
         guard messages.indices.contains(slot) else { return }
-        messages[slot].text += delta
+        messages[slot].text += text
     }
 
     /// Terminal state for a failed turn. The accumulated text is KEPT and the

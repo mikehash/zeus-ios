@@ -194,7 +194,7 @@ final class GatewayConfigTests: XCTestCase {
             .absent,
             .malformed(raw: "x", reason: .notAURL)
         ] {
-            var yielded: [String] = []
+            var yielded: [SessionFrame] = []
             var threw = false
             do {
                 for try await delta in makeTransport(for: config).stream(prompt: "p") {

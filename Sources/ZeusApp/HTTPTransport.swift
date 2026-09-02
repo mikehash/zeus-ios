@@ -74,12 +74,17 @@ struct HTTPTransport: SessionTransport {
         base.appendingPathComponent("v1").appendingPathComponent("chat")
     }
 
-    func stream(prompt: String) -> AsyncThrowingStream<String, Error> {
+    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let text = try await send(prompt)
-                    continuation.yield(text)
+                    // `/v1/chat` is NON-streaming: one whole reply, so one
+                    // `.token` frame and finish. Not chopped into timed fake
+                    // deltas — that is the prototype's `setTimeout` word-walk
+                    // one layer lower. The engine accumulates, so a 1-frame and
+                    // an N-frame stream are the same code path.
+                    continuation.yield(.token(text))
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish()

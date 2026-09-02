@@ -17,13 +17,13 @@ import XCTest
 
 /// Yields the given deltas, then finishes — cleanly or by throwing.
 private struct ScriptedTransport: SessionTransport {
-    let deltas: [String]
+    let frames: [SessionFrame]
     let thrown: Error?
 
-    func stream(prompt: String) -> AsyncThrowingStream<String, Error> {
+    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { continuation in
             Task {
-                for d in deltas {
+                for d in frames {
                     continuation.yield(d)
                     await Task.yield()
                 }
@@ -36,10 +36,10 @@ private struct ScriptedTransport: SessionTransport {
 /// Never finishes. The only way out of a turn on this transport is cancellation,
 /// so it is the instrument that proves the `defer` runs on the cancel path.
 private struct HangingTransport: SessionTransport {
-    func stream(prompt: String) -> AsyncThrowingStream<String, Error> {
+    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { continuation in
             Task {
-                continuation.yield("partial")
+                continuation.yield(.token("partial"))
                 // Deliberately never finished.
             }
         }
@@ -131,7 +131,7 @@ final class SessionEngineFailureTests: XCTestCase {
     /// unconfigured leg above can never reach.
     func testMidstreamFailureKeepsAccumulatedTextAndAppendsReason() async {
         let engine = SessionEngine(
-            transport: ScriptedTransport(deltas: ["All ", "systems "], thrown: TestError.midstream),
+            transport: ScriptedTransport(frames: [.token("All "), .token("systems ")], thrown: TestError.midstream),
             seed: [])
         engine.send("status")
 
@@ -154,7 +154,7 @@ final class SessionEngineFailureTests: XCTestCase {
         await awaitTurn(bare, slots: 2)
 
         let partial = SessionEngine(
-            transport: ScriptedTransport(deltas: ["text"], thrown: TransportError.unconfigured),
+            transport: ScriptedTransport(frames: [.token("text")], thrown: TransportError.unconfigured),
             seed: [])
         partial.send("x")
         await awaitTurn(partial, slots: 2)
@@ -169,7 +169,7 @@ final class SessionEngineFailureTests: XCTestCase {
     /// engine that fails unconditionally.
     func testCleanStreamCompletesWithoutError() async {
         let engine = SessionEngine(
-            transport: ScriptedTransport(deltas: ["nominal"], thrown: nil), seed: [])
+            transport: ScriptedTransport(frames: [.token("nominal")], thrown: nil), seed: [])
         engine.send("status")
 
         await awaitTurn(engine, slots: 2)
@@ -236,5 +236,119 @@ final class SessionEngineFailureTests: XCTestCase {
         await awaitTurn(engine, slots: 2)
 
         XCTAssertEqual(engine.messages.first?.text, "status", "prompt must be trimmed, not raw")
+    }
+}
+
+// MARK: - Frame routing
+//
+// THESE ARMS ARE NEW AND THE PRE-EXISTING 49 LEGS ARE BLIND TO THEM BY
+// CONSTRUCTION. Every leg above asserts the TEXT path, so together they prove
+// the frame cut PRESERVED prose and say exactly nothing about telemetry.
+// 49/49 is not coverage of the enum; these legs are.
+
+@MainActor
+final class SessionFrameRoutingTests: XCTestCase {
+
+    private func drain(_ engine: SessionEngine) async {
+        for _ in 0..<200 {
+            await Task.yield()
+            if engine.state == .ambient && engine.messages.last?.streaming == false { return }
+        }
+    }
+
+    /// The defect the frame cut exists to prevent: a tool invocation rendered
+    /// as agent speech. Before the cut the fold was a bare `+=`, so EVERY frame
+    /// became transcript text.
+    func testTelemetryFramesNeverEnterTheTranscript() async {
+        let engine = SessionEngine(
+            transport: ScriptedTransport(frames: [
+                .toolStart(name: "shell"),
+                .iteration(2),
+                .toolEnd(name: "shell", ok: true),
+                .token("done."),
+            ], thrown: nil), seed: [])
+        engine.send("go")
+        await drain(engine)
+
+        let text = engine.messages.last?.text ?? ""
+        XCTAssertEqual(text, "done.", "telemetry leaked into the transcript")
+        XCTAssertFalse(text.contains("shell"), "tool name rendered as agent speech")
+        XCTAssertFalse(text.contains("iteration"), "progress frame rendered as speech")
+    }
+
+    /// The other half: telemetry is not discarded either. Dropping it would
+    /// also pass the leg above, so both directions are asserted.
+    func testTelemetryFramesAreRecordedAsActivity() async {
+        let engine = SessionEngine(
+            transport: ScriptedTransport(frames: [
+                .toolStart(name: "shell"),
+                .toolEnd(name: "shell", ok: false),
+                .token("x"),
+            ], thrown: nil), seed: [])
+        engine.send("go")
+        await drain(engine)
+
+        XCTAssertEqual(engine.activity.count, 3, "activity dropped frames")
+        XCTAssertEqual(engine.activity.map(\.frame),
+                       [.toolStart(name: "shell"),
+                        .toolEnd(name: "shell", ok: false),
+                        .token("x")],
+                       "activity did not preserve arrival order or identity")
+    }
+
+    /// A failed tool must be distinguishable from a successful one. Collapsing
+    /// `ok` would make both render identically to the operator.
+    func testToolFailureIsDistinguishableFromToolSuccess() {
+        let good = SessionActivity(.toolEnd(name: "shell", ok: true)).label
+        let bad  = SessionActivity(.toolEnd(name: "shell", ok: false)).label
+        XCTAssertNotEqual(good, bad, "a failed tool reads identically to a successful one")
+    }
+
+    /// An in-band `error` frame is the turn's outcome — it must reach the
+    /// transcript, not only the side channel, or the reply ends mid-sentence
+    /// and reads as the model choosing silence.
+    func testInBandErrorFrameSurfacesInTheTranscript() async {
+        let engine = SessionEngine(
+            transport: ScriptedTransport(frames: [
+                .token("partial "),
+                .failure("model refused"),
+            ], thrown: nil), seed: [])
+        engine.send("go")
+        await drain(engine)
+
+        let text = engine.messages.last?.text ?? ""
+        XCTAssertTrue(text.hasPrefix("partial "), "accumulated prose discarded")
+        XCTAssertTrue(text.contains("model refused"), "agent error not surfaced")
+        XCTAssertTrue(text.contains("AGENT ERROR"), "agent failure not named as such")
+        XCTAssertEqual(engine.messages.last?.streaming, false, "caret left spinning")
+    }
+
+    /// An agent failure and a transport failure are different repairs. If these
+    /// two sentences were equal the operator would check the network for a
+    /// model fault.
+    func testAgentFailureIsNotATransportFailure() {
+        let agent = TransportError.agentFailed(reason: "boom").errorDescription ?? ""
+        let wire  = TransportError.unreachable(host: "h", detail: "boom").errorDescription ?? ""
+        XCTAssertNotEqual(agent, wire)
+        XCTAssertTrue(agent.contains("wire is healthy"), "agent error blames the wire")
+    }
+
+    /// `.thinking` is prose but not ANSWER prose — it belongs to state, not to
+    /// the transcript body.
+    func testThinkingIsNotTranscriptText() {
+        XCTAssertNil(SessionFrame.thinking("reasoning").transcriptText)
+        XCTAssertEqual(SessionFrame.token("hi").transcriptText, "hi")
+    }
+
+    /// All seven wire names have a representation. A count, so an eighth name
+    /// arriving from the gateway has somewhere to fail loudly.
+    func testAllSevenWireNamesHaveDistinctLabels() {
+        let all: [SessionFrame] = [
+            .token("a"), .thinking("b"), .toolStart(name: "c"),
+            .toolEnd(name: "d", ok: true), .iteration(1), .done, .failure("e"),
+        ]
+        let labels = Set(all.map { SessionActivity($0).label })
+        XCTAssertEqual(all.count, 7, "the gateway emits seven in-band names")
+        XCTAssertEqual(labels.count, 7, "two frames render identically")
     }
 }
