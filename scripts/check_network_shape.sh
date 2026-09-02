@@ -52,11 +52,42 @@ for p in "$TESTS_DIR" "$PROD"; do
 done
 
 # Strip whole-line // and /// comments, then count a needle across files.
-code_hits() { # $1=needle  $2..=files
+# code_hits — count CODE-LINE matches of $1 across files $2..
+#
+# LOAD-BEARING SHAPE, do not simplify (2026-09-02, Zeus100's isolation).
+# `grep -c` exits 1 on NO MATCH, and the clean tree IS the no-match world on
+# the test arm — a zero here is the SUCCESS case, not a failure. This body used
+# to sit behind a bare `c=$(sed … | grep -c …)`, which survived only because
+# every call site wraps it in `VAR=$(code_hits …)`: an outer command
+# substitution does not inherit errexit in bash < 4.4 / without
+# `shopt -s inherit_errexit`. Zeus100 proved the immunity is POSITIONAL, not
+# structural — the identical statement written at top level dies under
+# `set -euo pipefail`, and inlining this body at its two call sites (the edit a
+# reader makes to shorten the script) would make the hardening lethal on a
+# CLEAN tree.
+#
+# So the rc is no longer LUCK. Streams are separated, the producer's rc is
+# asserted ALONE, and grep's rc is classified THREE ways rather than tested for
+# zero: 0 = hits, 1 = honest zero, anything else = INSTRUMENT FAULT (rc 2).
+# A dead producer can therefore never present as a clean count. Verified under
+# bash 3.2.57 and 5.3.15, with and without `shopt -s inherit_errexit`, both
+# nested and at top level.
+code_hits() { # $1=needle  $2..=files -> prints count; returns 2 on instrument fault
   needle="$1"; shift
   n=0
   for f in "$@"; do
-    c=$(sed -e 's;^[[:space:]]*//.*$;;' "$f" | grep -cE "(^|[^A-Za-z0-9_])${needle}([^A-Za-z0-9_]|$)")
+    tmp="${TMPDIR:-/tmp}/ch.$$.$n"
+    sed -e 's;^[[:space:]]*//.*$;;' "$f" > "$tmp"; sedrc=$?
+    if [ "$sedrc" -ne 0 ]; then
+      echo "INSTRUMENT: sed rc=$sedrc on $f" >&2; rm -f "$tmp"; return 2
+    fi
+    greprc=0
+    c=$(grep -cE "(^|[^A-Za-z0-9_])${needle}([^A-Za-z0-9_]|$)" "$tmp") || greprc=$?
+    rm -f "$tmp"
+    case "$greprc" in
+      0|1) : ;;                                  # hits / honest zero
+      *) echo "INSTRUMENT: grep rc=$greprc on $f" >&2; return 2 ;;
+    esac
     n=$(( n + c ))
   done
   printf '%s' "$n"
@@ -73,11 +104,18 @@ done < <(find "$TESTS_DIR" -name '*.swift' -type f | sort)
 # POSITIVE CONTROL — a needle known present in every XCTest file. If this reads
 # zero the stripper ate the input and every zero below is meaningless rather
 # than clean.
-POS=$(code_hits 'XCTestCase' "${TEST_FILES[@]}")
+# Each call checks code_hits' OWN rc before reading its value. An instrument
+# fault inside the helper (rc 2) otherwise arrives here as an EMPTY string, and
+# an empty string fails the POS-ctl integer test — exiting 2 by the wrong route,
+# with a message blaming the corpus for a fault in the stripper.
+chrc=0; POS=$(code_hits 'XCTestCase' "${TEST_FILES[@]}") || chrc=$?
+[ "$chrc" -eq 0 ] || { echo "INSTRUMENT: code_hits faulted (rc=$chrc) on the positive control"; exit 2; }
 [ "$POS" -ge 1 ] || { echo "INSTRUMENT: positive control XCTestCase = 0 across ${#TEST_FILES[@]} files"; exit 2; }
 
-TEST_URLSESSION=$(code_hits 'URLSession' "${TEST_FILES[@]}")
-PROD_URLSESSION=$(code_hits 'URLSession' "$PROD")
+chrc=0; TEST_URLSESSION=$(code_hits 'URLSession' "${TEST_FILES[@]}") || chrc=$?
+[ "$chrc" -eq 0 ] || { echo "INSTRUMENT: code_hits faulted (rc=$chrc) on the test arm"; exit 2; }
+chrc=0; PROD_URLSESSION=$(code_hits 'URLSession' "$PROD") || chrc=$?
+[ "$chrc" -eq 0 ] || { echo "INSTRUMENT: code_hits faulted (rc=$chrc) on the prod arm"; exit 2; }
 
 echo "files=${#TEST_FILES[@]}  POSctl(XCTestCase)=$POS"
 echo "tests URLSession (code lines) = $TEST_URLSESSION   expected 0"
