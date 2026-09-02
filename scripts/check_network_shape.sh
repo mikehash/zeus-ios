@@ -32,9 +32,19 @@
 # false-RED direction: a test naming `FakeURLSessionStub` is a different class
 # and no longer trips a guard about this one.
 #
-# Comment stripping is deliberately conservative: only whole-line // and ///
-# forms are dropped. A trailing comment after code still counts, which can only
-# produce a FALSE POSITIVE (a refusal), never a false clear.
+# Comment stripping, and the bound I got WRONG first (2026-09-02, Zeus100).
+# The header used to say a trailing comment "can only produce a FALSE POSITIVE
+# (a refusal), never a false clear", as though the direction made it harmless.
+# It does not. His fixture was `let z = 1  // we deliberately avoid URLSession
+# here` -- the guard reddening on a comment DOCUMENTING ITS OWN PROPERTY, which
+# is exactly the reasoning that made me exempt whole-line `///` one commit
+# earlier. A guard that fires on its own documentation gets deleted within a
+# week, and the direction of the error does not change that.
+#
+# NOTE THE AXIS: the previous two repairs both moved the NEEDLE (right
+# boundary, then left). This one moves the STRIPPER. Six mutation arms varied
+# the needle and none of them could have found this, because they all fed the
+# stripper the same shape of input.
 #
 # Exit codes
 #   0  shape holds
@@ -76,8 +86,40 @@ code_hits() { # $1=needle  $2..=files -> prints count; returns 2 on instrument f
   needle="$1"; shift
   n=0
   for f in "$@"; do
+    # BLOCK-COMMENT GATE. `/* */` spans lines and nests; a line-oriented
+    # stripper cannot honour it, so this NAMES the bound and refuses rather
+    # than half-parsing. Corpus has zero block-comment openers today
+    # (measured). If one appears this exits 2 -- INSTRUMENT, not BROKEN --
+    # because the fault is in the stripper's reach, not the tree's network
+    # shape, and the two must not share an exit code.
+    bcrc=0
+    bc=$(grep -cE '/\*' "$f") || bcrc=$?
+    case "$bcrc" in
+      0|1) : ;;
+      *) echo "INSTRUMENT: grep rc=$bcrc scanning for block comments in $f" >&2; return 2 ;;
+    esac
+    if [ "$bc" -ne 0 ]; then
+      echo "INSTRUMENT: $f contains $bc block-comment opener(s). This stripper is" >&2
+      echo "            line-oriented and does not parse /* */; it refuses rather" >&2
+      echo "            than half-parse. Remove the block comment, or give the" >&2
+      echo "            stripper a real lexer." >&2
+      return 2
+    fi
     tmp="${TMPDIR:-/tmp}/ch.$$.$n"
-    sed -e 's;^[[:space:]]*//.*$;;' "$f" > "$tmp"; sedrc=$?
+    # Comment stripping, TWO forms stripped and ONE refused (2026-09-02,
+    # Zeus100's M-TRAILING / M-BLOCK arms).
+    #   1. whole-line //  and ///            -> dropped (was the only form)
+    #   2. TRAILING // on a line with no `"` -> dropped
+    #   3. /* */ block                       -> REFUSED at the gate above, not
+    #                                           parsed. A stripper that
+    #                                           half-parses a grammar lies in a
+    #                                           direction nobody audits.
+    # The `no "` condition is the exact bound and it is LOAD-BEARING: with a
+    # quote on the line the `//` may sit inside a string literal (a URL), and
+    # dropping the tail would eat real code -- a FALSE CLEAR. Deleting the
+    # `/"/!` turns `let u = "http://x/URLSession"` from RED to GREEN; that
+    # mutation was run.
+    sed -e 's;^[[:space:]]*//.*$;;' -e '/"/!s;//.*$;;' "$f" > "$tmp"; sedrc=$?
     if [ "$sedrc" -ne 0 ]; then
       echo "INSTRUMENT: sed rc=$sedrc on $f" >&2; rm -f "$tmp"; return 2
     fi
