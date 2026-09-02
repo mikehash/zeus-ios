@@ -127,6 +127,88 @@ final class SSEDecoderTests: XCTestCase {
     /// terminator search takes the EARLIEST match rather than the first
     /// spelling it looks for — searching `\r\n\r\n` first would swallow the LF
     /// event whole and emit one merged frame.
+    /// THE EIGHT-CELL MATRIX. SSE's line terminator is CR, LF, or CRLF, so a
+    /// blank line is any TWO of them. That is EIGHT ordered pairs, not nine:
+    /// CR-then-LF is excluded because those two bytes ARE one CRLF line-end,
+    /// not two line-ends. (My own first table published nine and counted it as
+    /// a miss; it is not a class member at all — it belongs in the NEG control
+    /// below, where a scan that treats any CR or LF as a blank line gets
+    /// caught.) The shipped scan at `69cb1454` matched THREE of the eight. The
+    /// five misses each returned nil forever —
+    /// buffer grows, zero events, reads as a hang at the phone. One leg per
+    /// cell, because a loop over the nine would report "some cell failed" and
+    /// the whole point is WHICH.
+    private func decodeOne(_ tail: String, file: StaticString = #filePath, line: UInt = #line) -> [SSEEvent] {
+        var reader = SSEFrameReader()
+        return reader.feed("data: x" + tail)
+    }
+
+    func testTerminatorLFthenLF()   { assertOneEvent(decodeOne("\n\n")) }
+    func testTerminatorLFthenCR()   { assertOneEvent(decodeOne("\n\r")) }
+    func testTerminatorLFthenCRLF() { assertOneEvent(decodeOne("\n\r\n")) }
+    func testTerminatorCRthenCR()   { assertOneEvent(decodeOne("\r\r")) }
+    func testTerminatorCRthenCRLF() { assertOneEvent(decodeOne("\r\r\n")) }
+    func testTerminatorCRLFthenLF()   { assertOneEvent(decodeOne("\r\n\n")) }
+    func testTerminatorCRLFthenCR()   { assertOneEvent(decodeOne("\r\n\r")) }
+    func testTerminatorCRLFthenCRLF() { assertOneEvent(decodeOne("\r\n\r\n")) }
+
+    /// NEG control for the matrix: a bare CRLF is ONE line-end, not two, so it
+    /// must NOT terminate. Without this, a scan that treated any CR or LF as a
+    /// blank line would pass all nine cells above and be catastrophically
+    /// wrong — it would cut every event in half at its first line break.
+    func testBareCRLFIsOneLineEndAndDoesNotTerminate() {
+        var reader = SSEFrameReader()
+        XCTAssertEqual(reader.feed("data: x\r\n").count, 0)
+        XCTAssertEqual(reader.feed("data: x\n").count, 0)
+        XCTAssertEqual(reader.feed("data: x\r").count, 0)
+    }
+
+    /// The block handed to `parseBlock` must carry NO residual CR. At
+    /// `69cb1454` the `\r\n\n` cell matched one byte late and left a trailing
+    /// CR in the block, survivable only because the per-line trim ran. This
+    /// pins the scan itself, so deleting the trim as "redundant" cannot
+    /// silently ship a `\r` into a payload.
+    func testNoTerminatorSpellingLeavesAResidualCRInThePayload() {
+        for tail in ["\n\n", "\n\r", "\n\r\n", "\r\r", "\r\r\n",
+                     "\r\n\n", "\r\n\r", "\r\n\r\n"] {
+            var reader = SSEFrameReader()
+            let events = reader.feed("data: x" + tail)
+            XCTAssertEqual(events.first?.data, "x",
+                           "residual byte for tail \(Array(tail.unicodeScalars))")
+        }
+    }
+
+    /// CR-DELIMITED FIELDS. Repairing the terminator scan alone would have
+    /// moved the defect rather than removed it: `String.split(separator: "\n")`
+    /// cannot cut a CRLF (one grapheme) and never sees a bare CR at all, so a
+    /// CR-delimited block collapses to a single garbage "line". Two fields,
+    /// separated by each spelling.
+    func testFieldsSeparatedByEveryLineEndSpelling() {
+        for sep in ["\n", "\r\n", "\r"] {
+            var reader = SSEFrameReader()
+            let events = reader.feed("event: ping\(sep)data: x\(sep)\(sep)")
+            XCTAssertEqual(events.count, 1, "sep \(Array(sep.unicodeScalars))")
+            XCTAssertEqual(events.first?.data, "x", "sep \(Array(sep.unicodeScalars))")
+            XCTAssertEqual(events.first?.name, "ping", "sep \(Array(sep.unicodeScalars))")
+        }
+    }
+
+    /// Multi-line `data:` rejoin must ALWAYS use `\n`, whatever the wire's
+    /// line-end was — the rejoin character is the payload's, not the
+    /// transport's.
+    func testRejoinUsesLFRegardlessOfWireLineEnd() {
+        for sep in ["\n", "\r\n", "\r"] {
+            var reader = SSEFrameReader()
+            let events = reader.feed("data: a\(sep)data: b\(sep)\(sep)")
+            XCTAssertEqual(events.first?.data, "a\nb", "sep \(Array(sep.unicodeScalars))")
+        }
+    }
+
+    private func assertOneEvent(_ events: [SSEEvent], file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(events.count, 1, "expected exactly one event", file: file, line: line)
+        XCTAssertEqual(events.first?.data, "x", file: file, line: line)
+    }
+
     func testMixedLineEndingsCutAtTheEarliestTerminator() {
         var reader = SSEFrameReader()
         let events = reader.feed("data: a\n\ndata: b\r\n\r\n")

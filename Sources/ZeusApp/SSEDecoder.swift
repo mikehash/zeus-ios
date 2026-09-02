@@ -103,24 +103,82 @@ struct SSEFrameReader {
         return [event]
     }
 
-    /// The EARLIEST blank-line terminator, in either spelling (`\n\n` or
-    /// `\r\n\r\n`). Earliest and not first-found: a buffer holding an LF event
-    /// followed by a CRLF one must cut at the LF, and searching one spelling
-    /// alone would cut past a whole event.
+    /// The EARLIEST blank-line terminator, in ANY legal spelling.
+    ///
+    /// ## Why this is a line-end RUN and not a set of literals
+    ///
+    /// SSE's line terminator is CR, LF, **or** CRLF — three independent
+    /// spellings — and a blank line is any TWO of them back to back. That is
+    /// NINE ordered pairs, not two. The previous form enumerated `\n\n` and
+    /// `\r\n\r\n` and matched 3 of the 9: the third (`\r\n\n`) fell out as an
+    /// accident of scanning left to right, not by intent. The six misses each
+    /// return nil forever, so the buffer grows without bound and NO event is
+    /// ever emitted — the identical hang the grapheme bug caused, from a
+    /// different cause. `\n\r\n` is legal and was one of the misses.
+    ///
+    /// So this does not enumerate terminators at all: it consumes one line-end
+    /// (CRLF greedily, else a bare CR or LF) and asks whether another follows
+    /// immediately. All nine pairs are covered BY CONSTRUCTION and the function
+    /// cannot be short by a spelling.
+    ///
+    /// The returned range spans BOTH line-ends, so the block handed to
+    /// `parseBlock` never carries a residual `\r`. The previous form matched
+    /// `\r\n\n` at an offset one byte late and left a trailing CR in the block,
+    /// which was harmless only because `trimmingTrailingCR()` ran per line —
+    /// an undeclared coupling between the scan and the trim. It is gone: the
+    /// trim is now defence in depth, not load-bearing.
     static func terminator(in bytes: [UInt8]) -> Range<Int>? {
-        let LF: UInt8 = 0x0A, CR: UInt8 = 0x0D
         var i = 0
         while i < bytes.count {
-            if bytes[i] == LF, i + 1 < bytes.count, bytes[i + 1] == LF {
-                return i..<(i + 2)
-            }
-            if bytes[i] == CR, i + 3 < bytes.count,
-               bytes[i + 1] == LF, bytes[i + 2] == CR, bytes[i + 3] == LF {
-                return i..<(i + 4)
+            guard let first = Self.lineEnd(in: bytes, at: i) else { i += 1; continue }
+            if let second = Self.lineEnd(in: bytes, at: first), second > first {
+                return i..<second
             }
             i += 1
         }
         return nil
+    }
+
+    /// End index of the line-end starting at `i`, or nil if there isn't one.
+    /// CRLF is consumed GREEDILY — those two bytes are ONE line-end, not two,
+    /// which is why `\r\n` alone is not a blank line.
+    private static func lineEnd(in bytes: [UInt8], at i: Int) -> Int? {
+        let LF: UInt8 = 0x0A, CR: UInt8 = 0x0D
+        guard i < bytes.count else { return nil }
+        if bytes[i] == CR {
+            return (i + 1 < bytes.count && bytes[i + 1] == LF) ? i + 2 : i + 1
+        }
+        return bytes[i] == LF ? i + 1 : nil
+    }
+
+    /// Split a block into lines on ANY legal line-end (CRLF, CR, or LF).
+    ///
+    /// `String.split(separator: "\n")` CANNOT do this. In Swift `"\r\n"` is a
+    /// SINGLE `Character`, so a CRLF never matches the `"\n"` separator and a
+    /// CR-delimited block collapses to ONE line whose "field name" is the whole
+    /// block. That is the same grapheme fault the byte buffer exists to avoid,
+    /// one layer in: repairing the terminator scan alone would have MOVED the
+    /// defect from "no events ever" to "one garbage event", not removed it.
+    /// Scalars, never Characters.
+    static func splitLines(_ block: String) -> [String] {
+        let scalars = Array(block.unicodeScalars)
+        var out: [String] = []
+        var cur = String.UnicodeScalarView()
+        var i = 0
+        while i < scalars.count {
+            let c = scalars[i]
+            if c == "\r" {
+                out.append(String(cur)); cur = String.UnicodeScalarView()
+                i += (i + 1 < scalars.count && scalars[i + 1] == "\n") ? 2 : 1
+            } else if c == "\n" {
+                out.append(String(cur)); cur = String.UnicodeScalarView()
+                i += 1
+            } else {
+                cur.append(c); i += 1
+            }
+        }
+        out.append(String(cur))
+        return out
     }
 
     /// Parse one already-delimited block. `nil` for a block with no fields at
@@ -131,8 +189,12 @@ struct SSEFrameReader {
         var name: String?
         var sawField = false
 
-        for rawLine in block.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(rawLine).trimmingTrailingCR()
+        for rawLine in Self.splitLines(block) {
+            // Defence in depth only. The terminator scan now spans both
+            // line-ends, so no block reaches here carrying a residual CR;
+            // before the line-end-run repair this trim was LOAD-BEARING for
+            // the `\r\n\n` case and nothing said so.
+            let line = rawLine.trimmingTrailingCR()
             if line.isEmpty { continue }
 
             // A line beginning `:` is a comment. This is the keepalive.
