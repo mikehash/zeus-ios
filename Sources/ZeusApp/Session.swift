@@ -255,6 +255,10 @@ final class SessionEngine: ObservableObject {
             accumulate(text, into: slot)
             return
         }
+        if case let .done(text) = frame {
+            replace(with: text, at: slot)
+            return
+        }
         if case let .failure(reason) = frame {
             fail(TransportError.agentFailed(reason: reason), at: slot)
         }
@@ -267,6 +271,54 @@ final class SessionEngine: ObservableObject {
     private func accumulate(_ text: String, into slot: Int) {
         guard messages.indices.contains(slot) else { return }
         messages[slot].text += text
+    }
+
+    /// THE ONLY SITE THAT REPLACES THE TRANSCRIPT. `done` carries the whole
+    /// reply, so it is SET, never appended — one unbranched rule covering both
+    /// producer paths:
+    ///
+    ///   streaming turn  — replace over the accumulated tokens. On the two
+    ///                     emitters where the tokens and the return value are
+    ///                     one pass apart (`agent_loop.rs:1344`, `:1448`) this
+    ///                     is a NO-OP; on the third (`:2538`, whose reply is
+    ///                     read from `response.content`, not folded) it is a
+    ///                     REPAIR. Replacing cannot double, so it is safe
+    ///                     whether or not they agree.
+    ///   no-token turn   — replace over empty = the full reply. The
+    ///                     empty-transcript bug cannot occur.
+    ///
+    /// The rule is NOT "discard `done.text` if any token arrived". That form
+    /// is refuted by `agent_loop.rs:2543`, where a 90s idle BREAKS the token
+    /// loop by design while the JoinHandle resolves with the complete text —
+    /// tokens arrived, partial, and discarding the authority would keep the
+    /// truncation. Replace is the only spelling correct on that path.
+    ///
+    /// TWO TIMEOUTS AT TWO LAYERS, and only one of them reaches this method:
+    ///
+    ///   `agent_loop.rs:2531`  90s, HARDCODED, per-CHUNK idle bound. Breaks the
+    ///                         token loop; `:2553` still awaits the JoinHandle
+    ///                         and `:2570` builds the reply from
+    ///                         `response.content`, so the agent returns Ok.
+    ///                         That reaches `gateway.rs:4688` — `Done(Ok(whole
+    ///                         text))` with PARTIAL tokens on the wire. This is
+    ///                         the REPAIR case, and it arrives HERE.
+    ///   `gateway.rs:4690`     config `timeout_secs`, WHOLE-HANDLER bound.
+    ///                         Returns `Done(Err(...))`, which
+    ///                         `chat_handlers.rs:543` renders as `event:error`
+    ///                         with NO text key. That arrives at `fail`, never
+    ///                         here — the accumulated tokens are the sole
+    ///                         carrier of the partial reply on that wire, so
+    ///                         replacing would delete what the user watched
+    ///                         arrive.
+    ///
+    /// The branch is on the Result the wire already carries, NOT on "did tokens
+    /// arrive" — that form keeps the truncation on the `:2543` path.
+    ///
+    /// An empty `text` is still a replacement, deliberately: a server that
+    /// returns an empty reply is reporting an empty reply.
+    private func replace(with text: String, at slot: Int) {
+        guard messages.indices.contains(slot) else { return }
+        messages[slot].text = text
     }
 
     /// Terminal state for a failed turn. The accumulated text is KEPT and the

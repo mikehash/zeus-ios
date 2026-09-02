@@ -53,17 +53,40 @@ enum SessionFrame: Equatable, Sendable {
     /// `tool_start` — the agent invoked a tool.
     case toolStart(name: String)
 
-    /// `tool_end` — the invocation returned. `ok` distinguishes a tool that
-    /// answered from one that failed; collapsing them would make a failed
-    /// tool call indistinguishable from a successful one in the operator's
-    /// view, which is the entire reason to surface telemetry at all.
-    case toolEnd(name: String, ok: Bool)
+    /// `tool_end` — the invocation returned, carrying the tool's output.
+    ///
+    /// This arm READ `ok: Bool` until this commit, and that field was
+    /// FABRICATED. The wire is `{"event":"tool_end","tool":name,"output":output}`
+    /// and the producer is `StreamChunk::ToolEnd { name: String, output: String }`
+    /// (`zeus-core/src/inbox.rs:101` at `2dc487bde`) — there is no boolean
+    /// anywhere upstream. The old doc comment justified the field on the
+    /// grounds that "collapsing them would make a failed tool call
+    /// indistinguishable from a successful one", asserting a distinction the
+    /// producer does not make. A decoder could only have satisfied `ok` by
+    /// hardcoding `true` (a constant wearing a type) or sniffing `output` for
+    /// error-looking text (a guess wearing a Bool).
+    ///
+    /// It survived 56/56 because every existing leg CONSTRUCTS the frame in
+    /// Swift. No test had ever seen a payload.
+    case toolEnd(name: String, output: String)
 
     /// `iter` — agent loop iteration counter. Progress, not content.
     case iteration(Int)
 
-    /// `done` — the turn completed normally. Terminal.
-    case done
+    /// `done` — the turn completed normally, carrying THE WHOLE REPLY. Terminal.
+    ///
+    /// This arm carried NO payload until this commit, which silently discarded
+    /// `done.text`. The wire is `{"event":"done","text":text}` and the text is
+    /// the handler's return value — the whole-turn authority, not a fold of the
+    /// tokens (`inbox.rs:574`, `gateway.rs:4700` at `2dc487bde`; two producers,
+    /// both sending the cook's return).
+    ///
+    /// Discarding it is correct BY ACCIDENT on a streaming turn, where the
+    /// tokens carry the same bytes, and catastrophic on a turn where no token
+    /// streamed: the transcript would be EMPTY on a success. That turn is not
+    /// hypothetical — `inbox.rs:1098` asserts it, panicking if a `Token`
+    /// arrives before the `Done`.
+    case done(String)
 
     /// `error` — the AGENT failed, in band, mid-turn. Distinct from a thrown
     /// transport error: the socket is healthy and the server is telling us the
@@ -79,6 +102,10 @@ enum SessionFrame: Equatable, Sendable {
         case let .token(text):
             return text
         case .thinking, .toolStart, .toolEnd, .iteration, .done, .failure:
+            // `.done` is prose and is deliberately NOT here: it does not
+            // ACCUMULATE, it REPLACES. Routing it through this property would
+            // append the whole reply beneath the tokens that already spelled
+            // it — the doubling. See `SessionEngine.absorb`.
             return nil
         }
     }
@@ -104,9 +131,9 @@ struct SessionActivity: Equatable, Identifiable, Sendable {
         case let .token(text):        return text
         case let .thinking(text):     return text
         case let .toolStart(name):    return "→ \(name)"
-        case let .toolEnd(name, ok):  return ok ? "✓ \(name)" : "✗ \(name)"
+        case let .toolEnd(name, out): return "← \(name): \(out)"
         case let .iteration(n):       return "iteration \(n)"
-        case .done:                   return "done"
+        case .done:                   return "done"   // text lives in the transcript, not here
         case let .failure(reason):    return "agent error: \(reason)"
         }
     }

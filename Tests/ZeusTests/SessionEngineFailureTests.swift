@@ -264,7 +264,7 @@ final class SessionFrameRoutingTests: XCTestCase {
             transport: ScriptedTransport(frames: [
                 .toolStart(name: "shell"),
                 .iteration(2),
-                .toolEnd(name: "shell", ok: true),
+                .toolEnd(name: "shell", output: "ok"),
                 .token("done."),
             ], thrown: nil), seed: [])
         engine.send("go")
@@ -282,7 +282,7 @@ final class SessionFrameRoutingTests: XCTestCase {
         let engine = SessionEngine(
             transport: ScriptedTransport(frames: [
                 .toolStart(name: "shell"),
-                .toolEnd(name: "shell", ok: false),
+                .toolEnd(name: "shell", output: "exit 1"),
                 .token("x"),
             ], thrown: nil), seed: [])
         engine.send("go")
@@ -291,7 +291,7 @@ final class SessionFrameRoutingTests: XCTestCase {
         XCTAssertEqual(engine.activity.count, 3, "activity dropped frames")
         XCTAssertEqual(engine.activity.map(\.frame),
                        [.toolStart(name: "shell"),
-                        .toolEnd(name: "shell", ok: false),
+                        .toolEnd(name: "shell", output: "exit 1"),
                         .token("x")],
                        "activity did not preserve arrival order or identity")
     }
@@ -299,8 +299,8 @@ final class SessionFrameRoutingTests: XCTestCase {
     /// A failed tool must be distinguishable from a successful one. Collapsing
     /// `ok` would make both render identically to the operator.
     func testToolFailureIsDistinguishableFromToolSuccess() {
-        let good = SessionActivity(.toolEnd(name: "shell", ok: true)).label
-        let bad  = SessionActivity(.toolEnd(name: "shell", ok: false)).label
+        let good = SessionActivity(.toolEnd(name: "shell", output: "ok")).label
+        let bad  = SessionActivity(.toolEnd(name: "shell", output: "exit 1")).label
         XCTAssertNotEqual(good, bad, "a failed tool reads identically to a successful one")
     }
 
@@ -340,12 +340,81 @@ final class SessionFrameRoutingTests: XCTestCase {
         XCTAssertEqual(SessionFrame.token("hi").transcriptText, "hi")
     }
 
+    // MARK: - `done` is the whole-turn authority (①·b)
+
+    /// The streaming path. `done.text` REPLACES the accumulated tokens, so a
+    /// producer that folds the same bytes yields a NO-OP — not a doubling.
+    /// This is the leg that fails if `done` is ever appended.
+    func testDoneReplacesRatherThanAppendsOnTheStreamingPath() async {
+        let engine = SessionEngine(
+            transport: ScriptedTransport(frames: [
+                .token("hello "), .token("world"), .done("hello world"),
+            ], thrown: nil), seed: [])
+        engine.send("go")
+        await drain(engine)
+
+        XCTAssertEqual(engine.messages.last?.text, "hello world",
+                       "done.text was appended to the tokens instead of replacing them")
+    }
+
+    /// The no-token path — ASSERTED UPSTREAM, not hypothetical: `inbox.rs:1098`
+    /// panics if a `Token` arrives before the `Done`. Discarding `done.text`
+    /// here leaves the transcript EMPTY on a successful turn.
+    func testDoneCarriesTheReplyWhenNoTokenStreamed() async {
+        let engine = SessionEngine(
+            transport: ScriptedTransport(frames: [
+                .done("the entire reply"),
+            ], thrown: nil), seed: [])
+        engine.send("go")
+        await drain(engine)
+
+        XCTAssertEqual(engine.messages.last?.text, "the entire reply",
+                       "done.text discarded — transcript empty on a successful turn")
+    }
+
+    /// The `agent_loop.rs:2538` divergence, where the tokens and the return
+    /// value come from DIFFERENT producers, and the `:2543` stall — the 90s
+    /// per-CHUNK idle bound, which breaks the token loop by design while the
+    /// JoinHandle resolves with the COMPLETE text and the agent returns Ok.
+    /// That is `gateway.rs:4688`, not the `:4690` whole-handler timeout: the
+    /// two are different bounds at different layers and only this one lands in
+    /// the Ok arm. Replace is a REPAIR here; the rule "discard done.text if any
+    /// token arrived" would keep the truncation.
+    func testDoneRepairsATruncatedTokenStream() async {
+        let engine = SessionEngine(
+            transport: ScriptedTransport(frames: [
+                .token("partial"), .done("partial answer, completed"),
+            ], thrown: nil), seed: [])
+        engine.send("go")
+        await drain(engine)
+
+        XCTAssertEqual(engine.messages.last?.text, "partial answer, completed",
+                       "a stalled token stream was not repaired by the authority")
+    }
+
+    /// `.done` must NOT be routed through `transcriptText`: that property is
+    /// the ACCUMULATE path, and accumulating the authority is the doubling.
+    /// Asserted against `.token` in the same call so a dead property cannot
+    /// pass this leg vacuously.
+    func testDoneIsNotAccumulatedProse() {
+        XCTAssertNil(SessionFrame.done("whole reply").transcriptText)
+        XCTAssertEqual(SessionFrame.token("hi").transcriptText, "hi")
+    }
+
+    /// `tool_end` carries the wire's `output`, not a fabricated `ok`. Pins the
+    /// payload to the bytes rather than to a Swift-constructed boolean.
+    func testToolEndSurfacesTheOutputItWasGiven() {
+        let label = SessionActivity(.toolEnd(name: "shell", output: "exit 1")).label
+        XCTAssertTrue(label.contains("exit 1"), "tool output dropped from the activity")
+        XCTAssertTrue(label.contains("shell"), "tool name dropped from the activity")
+    }
+
     /// All seven wire names have a representation. A count, so an eighth name
     /// arriving from the gateway has somewhere to fail loudly.
     func testAllSevenWireNamesHaveDistinctLabels() {
         let all: [SessionFrame] = [
             .token("a"), .thinking("b"), .toolStart(name: "c"),
-            .toolEnd(name: "d", ok: true), .iteration(1), .done, .failure("e"),
+            .toolEnd(name: "d", output: "out"), .iteration(1), .done("f"), .failure("e"),
         ]
         let labels = Set(all.map { SessionActivity($0).label })
         XCTAssertEqual(all.count, 7, "the gateway emits seven in-band names")
