@@ -43,11 +43,11 @@ struct RootView: View {
     /// The session loop. RootView READS the transcript and calls `send`; it
     /// cannot append a message or set an agent state, because neither is
     /// writable from here. The seed lives in the engine's initialiser.
-    // Transport is SELECTED from config at construction, not hardcoded. The
-    // selection is exhaustive over `GatewayConfig` (see `makeTransport`), so
-    // this call site cannot silently miss a config case.
-    @StateObject private var session = SessionEngine(
-        transport: makeTransport(for: GatewayConfig.resolve()))
+    // No transport argument. The engine's DEFAULT factory resolves config and
+    // builds a transport per turn, handing it the engine-owned session id — so
+    // there is no production call site here to drift out of step with the
+    // seam. A call site that does not exist cannot be forgotten during an edit.
+    @StateObject private var session = SessionEngine()
 
     var body: some View {
         ZStack {

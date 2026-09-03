@@ -128,7 +128,15 @@ struct MisconfiguredTransport: SessionTransport {
 /// A transport is *constructed* here, not connected — reachability is a
 /// property of a request, not of a config, and pretending otherwise would put a
 /// network call on the app's launch path.
-func makeTransport(for config: GatewayConfig) -> SessionTransport {
+///
+/// `sessionID` is threaded in rather than constructed here. Two of the three
+/// arms DISCARD it — `.absent` and `.malformed` return conformers that never
+/// reach a wire and have no id to carry — so the signature over-promises, and
+/// says so here rather than letting a reader infer all three thread context.
+/// The parameter is still required on all three: the caller owning the box is
+/// the whole point, and an arm-specific overload would put the decision back
+/// where it cannot be checked.
+func makeTransport(for config: GatewayConfig, sessionID: SessionIDBox) -> SessionTransport {
     switch config {
     case .absent:
         return UnconfiguredTransport()
@@ -136,7 +144,7 @@ func makeTransport(for config: GatewayConfig) -> SessionTransport {
         return MisconfiguredTransport(
             detail: "\(GatewayConfig.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)")
     case let .resolved(endpoint):
-        return HTTPTransport(endpoint: endpoint)
+        return HTTPTransport(endpoint: endpoint, sessionID: sessionID)
     }
 }
 
@@ -178,18 +186,47 @@ final class SessionEngine: ObservableObject {
     /// construction: the transcript is what was SAID, this is what was DONE.
     @Published private(set) var activity: [SessionActivity] = []
 
-    private let transport: SessionTransport
+    /// Builds a transport for ONE turn. Injected as a factory, not an
+    /// instance, so config is read per turn instead of frozen at launch —
+    /// and so the engine, which outlives every transport, is the thing that
+    /// owns the identity that must outlive them too.
+    private let makeTransport: (SessionIDBox) -> SessionTransport
+
+    /// THE session id for this engine's lifetime. Constructed once, here,
+    /// and handed to every transport the factory builds. See SessionIDBox.
+    private let sessionID = SessionIDBox()
+
     private var turn: Task<Void, Never>?
 
     /// Seeded from the prototype's initial transcript, :411-412.
-    init(transport: SessionTransport = UnconfiguredTransport(),
+    ///
+    /// The `makeTransport` DEFAULT is the opposite case to `HTTPTransport`'s
+    /// non-defaulted `sessionID:`, and the discriminator is one question: does
+    /// the default expression MANUFACTURE identity state, or RECEIVE it? A
+    /// `sessionID: SessionIDBox()` default manufactures — the defect. This one
+    /// receives `box` and only picks a construction strategy, and it lets the
+    /// single production call site vanish entirely (RootView now writes
+    /// `SessionEngine()`), and a vanished call site cannot drift.
+    init(makeTransport: @escaping (SessionIDBox) -> SessionTransport
+            = { box in Zeus.makeTransport(for: GatewayConfig.resolve(), sessionID: box) },
          seed: [Message] = [
             Message(role: .agent,
                     text: "Operator link established. All systems nominal — "
                         + "Kitchen node quiet. Standing by.")
          ]) {
-        self.transport = transport
+        self.makeTransport = makeTransport
         self.messages = seed
+    }
+
+    /// Convenience seam for the 15 failure legs that inject a fixed conformer
+    /// and have no interest in identity. Wraps it as a factory that ignores
+    /// the box, so the injection point stays one shape.
+    convenience init(transport: SessionTransport, seed: [Message]) {
+        self.init(makeTransport: { _ in transport }, seed: seed)
+    }
+
+    convenience init(transport: SessionTransport) {
+        self.init(makeTransport: { _ in transport })
     }
 
     /// Begin a turn. Empty and whitespace-only prompts are refused here rather
@@ -224,7 +261,7 @@ final class SessionEngine: ObservableObject {
         }
 
         do {
-            for try await frame in transport.stream(prompt: prompt) {
+            for try await frame in makeTransport(self.sessionID).stream(prompt: prompt) {
                 if Task.isCancelled { return }
                 if state != .responding { state = .responding }
                 absorb(frame, into: slot)               // invariant 1

@@ -237,6 +237,99 @@ final class SessionEngineFailureTests: XCTestCase {
 
         XCTAssertEqual(engine.messages.first?.text, "status", "prompt must be trimmed, not raw")
     }
+
+    // MARK: Session identity outlives the transport
+
+    /// Records every box the engine hands to its factory.
+    ///
+    /// `@unchecked Sendable` is REQUIRED, and not as house style: `Session.swift`
+    /// declares `protocol SessionTransport: Sendable`, so every conformer is
+    /// `Sendable`, and a `Sendable` struct's stored properties must be too. A
+    /// plain `final class` holding `var seen` is not — measured on this
+    /// toolchain: warning under `-swift-version 5`, ERROR under 6, and NO
+    /// tracked file in this repo pins the language mode. `@unchecked` is clean
+    /// under both.
+    ///
+    /// Not `static`: global mutable state needs a reset prologue that a future
+    /// leg forgets, and a forgotten reset is silent.
+    private final class BoxRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seen: [SessionIDBox] = []
+
+        func record(_ box: SessionIDBox) {
+            lock.lock(); defer { lock.unlock() }
+            seen.append(box)
+        }
+
+        var count: Int { lock.lock(); defer { lock.unlock() }; return seen.count }
+
+        func box(_ i: Int) -> SessionIDBox {
+            lock.lock(); defer { lock.unlock() }; return seen[i]
+        }
+    }
+
+    private struct BoxRecordingTransport: SessionTransport {
+        let reply: String
+
+        func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+            AsyncThrowingStream { continuation in
+                continuation.yield(.token(reply))
+                continuation.finish()
+            }
+        }
+    }
+
+    /// ONE box outlives MANY transports — the invariant the factory seam exists
+    /// to establish.
+    ///
+    /// 🔴 Two asserts, and the count is NOT optional. With `count == 1`,
+    /// `seen[0] === seen[0]` passes trivially — a guard whose first observation
+    /// cannot fail. The floor is what makes the identity assert mean anything.
+    ///
+    /// 🔴 The wait names BOTH carets, not `awaitTurn(slots: 4)`. `awaitTurn`'s
+    /// predicate reads `messages.last`, which at count 4 is turn TWO's caret,
+    /// and `state` is one shared field cleared by turn two's `defer`. Nothing
+    /// in it ever names `messages[1]` — so an orphaned turn-one caret passes it
+    /// green. `slots: 4` is a complete terminal condition for turn two and says
+    /// nothing about turn one. Two turns require two carets named.
+    ///
+    /// FALSIFICATION: mutate `makeTransport(self.sessionID)` at the engine's
+    /// call of the injected closure (Session.swift, the `for try await` line)
+    /// to `makeTransport(SessionIDBox())`. The floor stays GREEN and the
+    /// identity assert goes RED. Mutating inside the DEFAULT closure instead is
+    /// the near-miss: this leg injects its own closure and never traverses the
+    /// default, so that mutant survives and falsely accuses a correct leg.
+    func testOneSessionBoxOutlivesEveryTransport() async {
+        let rec = BoxRecorder()
+        let engine = SessionEngine(
+            makeTransport: { box in
+                rec.record(box)
+                return BoxRecordingTransport(reply: "ok")
+            },
+            seed: [])
+
+        engine.send("first")
+        await settle("turn one settles",
+                     { engine.messages.count == 2
+                         && !engine.messages[1].streaming
+                         && engine.state == .ambient })
+
+        engine.send("second")
+        await settle("turn two settles, both carets cleared",
+                     { engine.messages.count == 4
+                         && !engine.messages[1].streaming
+                         && !engine.messages[3].streaming
+                         && engine.state == .ambient })
+
+        XCTAssertEqual(rec.count, 2,
+            "VACUITY FLOOR: the factory must have been called once per turn. "
+            + "count != 2 means this leg is not measuring two turns, and the "
+            + "identity assert below is unreadable in either colour.")
+        XCTAssertTrue(rec.box(0) === rec.box(1),
+            "the engine must hand the SAME box to every transport it builds — "
+            + "a fresh box per turn omits session_id from the request, which is "
+            + "byte-identical to a legitimate first turn: silent amnesia.")
+    }
 }
 
 // MARK: - Frame routing

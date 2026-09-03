@@ -230,7 +230,8 @@ final class HTTPTransportTests: XCTestCase {
     /// failed before this cut, and it is the one that fails if the arm is ever
     /// reverted to a stub.
     func testResolvedConfigYieldsHTTPTransport() {
-        let transport = makeTransport(for: .resolved(endpoint("http://10.0.0.5:8080")))
+        let transport = makeTransport(for: .resolved(endpoint("http://10.0.0.5:8080")),
+                                  sessionID: SessionIDBox())
         XCTAssertTrue(transport is HTTPTransport,
                       "resolved config must produce the real client, got \(type(of: transport))")
     }
@@ -239,16 +240,17 @@ final class HTTPTransportTests: XCTestCase {
     /// leg above is satisfied by a `makeTransport` that returns
     /// `HTTPTransport` unconditionally.
     func testAbsentAndMalformedDoNotYieldHTTPTransport() {
-        XCTAssertFalse(makeTransport(for: .absent) is HTTPTransport)
+        XCTAssertFalse(makeTransport(for: .absent, sessionID: SessionIDBox()) is HTTPTransport)
         let bad = GatewayConfig.malformed(raw: "ftp://x", reason: .unsupportedScheme)
-        XCTAssertFalse(makeTransport(for: bad) is HTTPTransport)
+        XCTAssertFalse(makeTransport(for: bad, sessionID: SessionIDBox()) is HTTPTransport)
     }
 
     /// The token reaches the transport. A dropped token produces a 401 that
     /// reads like a *wrong* credential rather than a missing one.
     func testEndpointTokenIsCarriedIntoTheTransport() throws {
         let transport = try XCTUnwrap(
-            makeTransport(for: .resolved(endpoint("http://h:1", token: "abc")))
+            makeTransport(for: .resolved(endpoint("http://h:1", token: "abc")),
+                          sessionID: SessionIDBox())
                 as? HTTPTransport)
         XCTAssertEqual(transport.endpoint.token, "abc")
     }
@@ -256,7 +258,7 @@ final class HTTPTransportTests: XCTestCase {
     // MARK: - Session id box
 
     func testSessionIDBoxStartsEmptyAndTakesFirstValue() {
-        let box = HTTPTransport.SessionIDBox()
+        let box = SessionIDBox()
         XCTAssertNil(box.current)
         box.set("s1")
         XCTAssertEqual(box.current, "s1")
@@ -266,7 +268,7 @@ final class HTTPTransportTests: XCTestCase {
     /// the next turn would silently start a new server-side session and the
     /// transcript would keep scrolling as if context were intact.
     func testSessionIDBoxIgnoresNilAndEmpty() {
-        let box = HTTPTransport.SessionIDBox("s1")
+        let box = SessionIDBox("s1")
         box.set(nil)
         XCTAssertEqual(box.current, "s1")
         box.set("")

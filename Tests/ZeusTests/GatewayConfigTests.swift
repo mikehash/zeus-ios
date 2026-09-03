@@ -140,16 +140,18 @@ final class GatewayConfigTests: XCTestCase {
     /// compared by TYPE, because its error is a property of a network rather
     /// than of this tree.
     func testThreeConfigArmsProduceDistinctErrors() async {
-        let absent = await firstError(makeTransport(for: .absent))
+        let absent = await firstError(makeTransport(for: .absent, sessionID: SessionIDBox()))
         let malformed = await firstError(makeTransport(
-            for: .malformed(raw: "ftp://x", reason: .unsupportedScheme)))
+            for: .malformed(raw: "ftp://x", reason: .unsupportedScheme),
+            sessionID: SessionIDBox()))
 
         XCTAssertNotEqual(absent, malformed)
 
         // Third arm: distinct by construction — a different type entirely.
-        let resolved = makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"]))
+        let resolved = makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"]),
+                          sessionID: SessionIDBox())
         XCTAssertTrue(resolved is HTTPTransport)
-        XCTAssertFalse(makeTransport(for: .absent) is HTTPTransport)
+        XCTAssertFalse(makeTransport(for: .absent, sessionID: SessionIDBox()) is HTTPTransport)
     }
 
     /// The absent arm — and ONLY the absent arm — says NO TRANSPORT.
@@ -168,9 +170,10 @@ final class GatewayConfigTests: XCTestCase {
     /// network I/O fails for reasons that have nothing to do with its subject.
     /// Transport SELECTION is asserted structurally instead.
     func testOnlyAbsentSaysNoTransport() async {
-        let absent = await firstError(makeTransport(for: .absent))
+        let absent = await firstError(makeTransport(for: .absent, sessionID: SessionIDBox()))
         let malformed = await firstError(makeTransport(
-            for: .malformed(raw: "ftp://x", reason: .unsupportedScheme)))
+            for: .malformed(raw: "ftp://x", reason: .unsupportedScheme),
+            sessionID: SessionIDBox()))
 
         XCTAssertTrue(absent.contains("NO TRANSPORT"))
         XCTAssertFalse(malformed.contains("NO TRANSPORT"),
@@ -178,7 +181,8 @@ final class GatewayConfigTests: XCTestCase {
 
         // The resolved arm is a real client — asserted by type, not by drain.
         XCTAssertTrue(
-            makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"])) is HTTPTransport,
+            makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"]),
+                          sessionID: SessionIDBox()) is HTTPTransport,
             "a resolved config must select the HTTP client")
     }
 
@@ -197,7 +201,7 @@ final class GatewayConfigTests: XCTestCase {
             var yielded: [SessionFrame] = []
             var threw = false
             do {
-                for try await delta in makeTransport(for: config).stream(prompt: "p") {
+                for try await delta in makeTransport(for: config, sessionID: SessionIDBox()).stream(prompt: "p") {
                     yielded.append(delta)
                 }
             } catch {

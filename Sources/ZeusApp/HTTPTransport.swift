@@ -26,6 +26,45 @@ import Foundation
 /// a typed array, which no census of conformers can see. The prediction was
 /// true when written, false one commit later, and still sitting here as prose.
 /// SSE lands as a SECOND CONFORMER to `SessionTransport`, not as an edit here.
+/// Holds the gateway-assigned session id between turns.
+///
+/// FILE SCOPE, not nested in `HTTPTransport`: the engine owns one of these and
+/// hands it to whatever transport its factory builds, so the type must be
+/// nameable without naming a concrete conformer. Nested, `SessionEngine.init`
+/// would have to spell `HTTPTransport.SessionIDBox` — the abstract holder
+/// learning one arm's name, which is exactly the coupling the existential
+/// `SessionTransport` exists to prevent.
+///
+/// A class, not a `var` on the struct, because `SessionTransport` refines
+/// `Sendable` (Session.swift:17) and a `Sendable` struct cannot hold mutable
+/// value state. Reference semantics are also the point: ONE box outlives MANY
+/// transports. The engine constructs a transport per turn; if the id lived in
+/// the transport, every turn would open a fresh session and the gateway could
+/// not tell "new conversation" from "client lost the id" — the request is
+/// byte-identical either way, because `encodeBody` OMITS the key when nil.
+/// Silent amnesia, no error, no red test.
+///
+/// Locked rather than actor-isolated so the read stays synchronous inside the
+/// request builder — an `await` there would let a second turn observe a
+/// half-updated id.
+final class SessionIDBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: String?
+
+    init(_ initial: String? = nil) { value = initial }
+
+    var current: String? {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+
+    func set(_ new: String?) {
+        guard let new, !new.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        value = new
+    }
+}
+
 struct HTTPTransport: SessionTransport {
 
     let endpoint: GatewayConfig.Endpoint
@@ -34,40 +73,22 @@ struct HTTPTransport: SessionTransport {
     /// Carried across turns so the gateway threads context. `nil` until the
     /// first reply names one. This is a `let` holding a reference type on
     /// purpose — the transport is `Sendable` and must not grow mutable value
-    /// state that two concurrent turns could race on.
+    /// state that two concurrent turns could race on. Injected, never
+    /// defaulted: ONE box outlives MANY transports, and the thing that must
+    /// persist is held by the thing that persists (the engine).
     let sessionID: SessionIDBox
 
+    /// `sessionID` carries NO default, deliberately. A defaulted
+    /// `= SessionIDBox()` reconstructs the defect one frame out — a fresh box
+    /// per construction, at a site that runs per turn — and does so invisibly,
+    /// because a census of call sites cannot see a parameter nobody passes.
+    /// Required, the compiler enumerates every site instead.
     init(endpoint: GatewayConfig.Endpoint,
          session: URLSession = .shared,
-         sessionID: SessionIDBox = SessionIDBox()) {
+         sessionID: SessionIDBox) {
         self.endpoint = endpoint
         self.session = session
         self.sessionID = sessionID
-    }
-
-    /// Holds the gateway-assigned session id between turns.
-    ///
-    /// A class, not a `var` on the struct, because `SessionTransport` is
-    /// `Sendable` and the engine holds one transport for the app's lifetime.
-    /// Locked rather than actor-isolated so the read stays synchronous inside
-    /// the request builder — an `await` there would let a second turn observe
-    /// a half-updated id.
-    final class SessionIDBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value: String?
-
-        init(_ initial: String? = nil) { value = initial }
-
-        var current: String? {
-            lock.lock(); defer { lock.unlock() }
-            return value
-        }
-
-        func set(_ new: String?) {
-            guard let new, !new.isEmpty else { return }
-            lock.lock(); defer { lock.unlock() }
-            value = new
-        }
     }
 
     // MARK: - Wire
