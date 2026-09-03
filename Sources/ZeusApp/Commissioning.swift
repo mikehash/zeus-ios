@@ -77,7 +77,8 @@ struct CommissioningView: View {
     let onComplete: (Commission) -> Void
 
     @StateObject private var narrator = Narrator()
-    @State private var step: CommissioningStep = .welcome
+    /// Seeded from `-zeusStep` in DEBUG only; `.welcome` otherwise.
+    @State private var step: CommissioningStep = LaunchArgs.initialStep
     @State private var commission = Commission()
     @State private var authed = false
     @State private var scanning = false
@@ -101,7 +102,13 @@ struct CommissioningView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { narrator.narrate(step.narration) }
+        .onAppear {
+            // Mute BEFORE the first narrate, not after: `voiceOn`'s didSet
+            // stops an in-flight utterance, so muting second would still
+            // let the orb enter `.speaking` for a frame the shutter can see.
+            if LaunchArgs.muteVoice { narrator.voiceOn = false }
+            narrator.narrate(step.narration)
+        }
         .onChange(of: step) { _, new in narrator.narrate(new.narration) }
         .onDisappear { narrator.stop() }
     }

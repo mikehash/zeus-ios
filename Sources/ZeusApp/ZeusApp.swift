@@ -8,7 +8,9 @@ struct ZeusApp: App {
     ///
     /// This is state, not navigation: the console is not "behind" the flow,
     /// it is unreachable without the value the flow produces.
-    @State private var commission: Commission?
+    /// Seeded from `-zeusSeedCommission` in DEBUG only; `nil` in every
+    /// release build and in any debug launch that does not pass the flag.
+    @State private var commission: Commission? = LaunchArgs.seededCommission
 
     var body: some Scene {
         WindowGroup {

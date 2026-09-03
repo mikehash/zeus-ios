@@ -34,7 +34,7 @@ enum Tab: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
-    @State private var tab: Tab = .zeus
+    @State private var tab: Tab = LaunchArgs.initialTab
 
     /// :433 — `showToast(text)` sets, then clears after 2800ms.
     @State private var toast: String?
