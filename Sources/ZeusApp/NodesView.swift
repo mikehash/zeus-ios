@@ -31,7 +31,17 @@ struct NodesView: View {
     /// nothing outside the pane can currently change it. Deliberately kept
     /// as real state (not a constant) so the offline arm is reachable and
     /// reviewable, which a hardcoded `true` would make dead code.
-    @State private var nodeOnline = true
+    /// Link state, MEASURED. Was `@State private var nodeOnline = true` — a
+    /// view-local literal whose own comment admitted *"nothing outside this
+    /// view can do yet"*. It is now a parameter, so this view cannot claim a
+    /// link it did not observe: there is no writable source of truth here to
+    /// diverge from the probe.
+    let link: LinkState
+
+    /// Derived once. Every site below reads THIS rather than re-switching, so
+    /// the pill, the tint, the subtitle and the disabled state cannot disagree
+    /// about whether the node is up.
+    private var nodeOnline: Bool { link.isLinked }
     @State private var muted = false
     @State private var volume: Double = 0.62
     @State private var brightness: Double = 0.40
@@ -122,24 +132,25 @@ struct NodesView: View {
                         .font(Theme.display(11, .bold))
                         .tracking(2.2)
                         .foregroundStyle(Theme.text)
-                    Text(nodeOnline
-                         ? "kitchen · lan · gateway 0.9"
-                         : "unreachable · last seen t-12min")
+                    // Was two literals — "kitchen · lan · gateway 0.9" and
+                    // "unreachable · last seen t-12min". The second invented a
+                    // last-seen time nothing recorded. Both arms now render
+                    // the probe's own words.
+                    Text(link.subtitle)
                         .font(Theme.mono(9))
                         .tracking(0.9)
                         .foregroundStyle(Theme.w(0.35))
                 }
                 Spacer(minLength: 0)
-                Badge(text: nodeOnline ? "LINKED" : "REMOTE",
-                      color: nodeOnline ? Theme.ok : Theme.warn)
+                Badge(text: link.badgeText, color: link.badgeColor)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 6)
 
             if !nodeOnline {
-                // :713 — the offline explainer. Reachable only by toggling
-                // `nodeOnline`, which nothing outside this view can do yet.
+                // :713 — the offline explainer. Now reachable: the probe
+                // drives it. Previously dead code behind a `true` literal.
                 Text("NODE AUTONOMOUS AT HOME · SAME AGENT, SAME MEMORY · MNEMOSYNE RECONCILES ON NEXT LINK")
                     .font(Theme.mono(9.5))
                     .tracking(0.38)

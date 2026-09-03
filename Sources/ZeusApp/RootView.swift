@@ -49,6 +49,11 @@ struct RootView: View {
     // seam. A call site that does not exist cannot be forgotten during an edit.
     @StateObject private var session = SessionEngine()
 
+    /// Link state, MEASURED — the source `statusLine` did not have. The
+    /// monitor resolves config once at construction and polls `/health`; both
+    /// consuming sites read its verdict rather than a literal.
+    @StateObject private var link = LinkMonitor()
+
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
@@ -74,6 +79,10 @@ struct RootView: View {
         }
         .animation(.easeOut(duration: 0.22), value: toast)
         .preferredColorScheme(.dark)
+        // `start()` is idempotent by design: `.task` re-fires on view identity
+        // changes, and two poll loops would halve the effective interval with
+        // nothing in the UI to show it.
+        .task { link.start() }
     }
 
     @ViewBuilder
@@ -84,10 +93,12 @@ struct RootView: View {
         case .session:
             SessionView(
                 messages: session.messages,
-                // :661 — the status line is a function of link topology, which
-                // this tree has no source for yet. Fixed at the LINKED arm;
-                // the `remote` ternary is not ported.
-                statusLine: "LINKED · KITCHEN NODE",
+                // :661 — the status line is a function of link topology.
+                // It WAS the literal "LINKED · KITCHEN NODE", which read
+                // LINKED with no gateway configured, none reachable, and none
+                // answering. It is now the probe's verdict; the `remote`
+                // ternary the prototype had is subsumed by `LinkState`.
+                statusLine: link.state.statusLine,
                 state: session.state,
                 onSend: session.send,
                 // :660 — voice hands control back to the ZEUS tab, then runs
@@ -95,7 +106,7 @@ struct RootView: View {
                 onVoice: { tab = .zeus }
             )
         case .nodes:
-            NodesView(onToast: showToast)
+            NodesView(link: link.state, onToast: showToast)
         }
     }
 }
