@@ -104,6 +104,9 @@ struct RootView: View {
                 // ternary the prototype had is subsumed by `LinkState`.
                 statusLine: link.state.statusLine,
                 state: session.state,
+                // The gateway-named id, mirrored off the engine. The header
+                // printed the literal "SESSION-01" while this value existed.
+                sessionID: session.sessionLabel,
                 onSend: session.send,
                 // :660 — voice hands control back to the ZEUS tab, then runs
                 // the query. The tab switch is the part that is real here.

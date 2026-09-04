@@ -27,6 +27,10 @@ struct SessionView: View {
     let messages: [Message]
     let statusLine: String
     let state: AgentState
+    /// The gateway-named session id, or `nil` before the first reply names
+    /// one. Not defaulted to a string: a default here would reintroduce the
+    /// exact defect this field removes.
+    var sessionID: String? = nil
     var onSend: (String) -> Void = { _ in }
     var onVoice: () -> Void = {}
 
@@ -34,6 +38,19 @@ struct SessionView: View {
 
     private var trimmed: String {
         input.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The header identifier, derived — never a literal.
+    ///
+    /// Three states, and the middle one is the point: before any turn the
+    /// gateway has named nothing, so there IS no session id, and the honest
+    /// render is an absence. A placeholder number would have the shape of
+    /// data. Truncated to the first 8 characters because gateway ids are
+    /// UUID-length and the row is 11pt tracked at 0.24em — the full value
+    /// would push the status line out of the row.
+    static func sessionTitle(for id: String?) -> String {
+        guard let id, !id.isEmpty else { return "SESSION · —" }
+        return "SESSION · " + id.prefix(8).uppercased()
     }
 
     var body: some View {
@@ -51,7 +68,7 @@ struct SessionView: View {
             OrbGlyph(diameter: 34, mode: state.orbMode)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("SESSION-01")
+                Text(SessionView.sessionTitle(for: sessionID))
                     .font(Theme.display(11, .bold))
                     .tracking(2.64)                       // 0.24em at 11pt
                     .foregroundStyle(Theme.text)

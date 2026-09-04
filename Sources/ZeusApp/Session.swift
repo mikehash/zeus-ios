@@ -196,6 +196,22 @@ final class SessionEngine: ObservableObject {
     /// and handed to every transport the factory builds. See SessionIDBox.
     private let sessionID = SessionIDBox()
 
+    /// The gateway-named session id, mirrored for display. `nil` until the
+    /// first reply names one — and rendered as an em dash, never as a
+    /// fabricated number. The header printed the literal `"SESSION-01"` for
+    /// three commits while this value existed one field away: the box is
+    /// `private` and had no reader, so the true id was not hidden, it was
+    /// ignored. Mirrored rather than read through, because `SessionIDBox` is
+    /// lock-guarded and not observable — SwiftUI cannot know it changed.
+    @Published private(set) var sessionLabel: String?
+
+    /// Called at the one site that can learn an id: after a turn's stream
+    /// ends. Reading the box mid-stream would race the transport's write.
+    private func syncSessionLabel() {
+        let current = sessionID.current
+        if current != sessionLabel { sessionLabel = current }
+    }
+
     private var turn: Task<Void, Never>?
 
     /// Seeded from the prototype's initial transcript, :411-412.
@@ -258,6 +274,7 @@ final class SessionEngine: ObservableObject {
         defer {
             settle(slot)
             state = .ambient
+            syncSessionLabel()
         }
 
         do {
