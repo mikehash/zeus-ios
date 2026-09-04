@@ -1,5 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!--
+  🔴 THIS FILE IS DELIBERATELY EMPTY. Empty is the HONEST state, not an
+  unfinished one, and the distinction is not recoverable from five lines of
+  boilerplate — hence this comment.
+
+  NO `aps-environment` KEY. Claiming it would assert a capability no
+  provisioning profile behind this build can back. Adding the key requires ALL
+  of: a paid Apple Developer team, an App ID with the Push Notifications
+  capability enabled, and a provisioning profile issued against that App ID.
+  Without those three, the entitlement is a fabrication the code signer may
+  accept and APNs will never honour.
+
+  CONSEQUENCE, and it is load-bearing: with no `aps-environment`, iOS may
+  return `.authorized` from the permission sheet and then never deliver a
+  device token. That is why `PushState.authorizedAwaitingToken` is a real
+  STEADY state rather than a transient — on this build it is where the app
+  permanently lives. `isSubscribed` is true for `.registered` alone, because
+  a token is the only fact backed by something the app was HANDED rather
+  than a permission it was GRANTED.
+
+  So: do not "fix" this file by adding the key. Doing so re-enters the exact
+  fabrication the push layer exists to prevent, through the door built to
+  keep it out. Get the team and the profile first; the key comes last.
+
+  CARRIER NOTE: this file is hand-written and tracked. project.yml points at
+  it BY PATH (`entitlements: path:`) with no inline `properties:` block —
+  precisely so `xcodegen generate` cannot rewrite it and destroy this
+  comment the way it destroys anything written into the generated Info.plist.
+-->
 <dict/>
 </plist>
