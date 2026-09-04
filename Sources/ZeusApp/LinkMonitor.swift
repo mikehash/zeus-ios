@@ -260,6 +260,42 @@ final class LinkMonitor: ObservableObject {
         pollTask = nil
     }
 
+    /// Background transition: stop polling AND invalidate the verdict.
+    ///
+    /// 🔴 The invalidation is the load-bearing half, and stopping alone would
+    /// be the `t-12min` defect wearing a different costume. A suspended app
+    /// keeps its last rendered frame; iOS shows it in the app switcher and
+    /// again for the instant before the first foreground frame draws. So a
+    /// monitor that merely stops polling leaves `LINKED · 12MS` on screen
+    /// across a suspend of arbitrary length — minutes, hours, a flight — and
+    /// that reading is *stale by construction*: no probe has run since it was
+    /// taken, and the app has no way to know whether it is still true.
+    ///
+    /// A measurement that outlives the process's ability to re-take it is
+    /// indistinguishable, on screen, from a fresh one. `.probing` is the only
+    /// honest state to hold in the background: it says "no current verdict"
+    /// rather than asserting a remembered one.
+    ///
+    /// Unconfigured is exempt — it is not a measurement, it is the absence of
+    /// a target, and it cannot go stale because nothing was ever probed.
+    func suspend() {
+        stop()
+        if case .unconfigured = state { return }
+        state = .probing
+    }
+
+    /// Foreground transition: probe immediately, then resume the interval.
+    ///
+    /// The immediate probe is not an optimisation — it is what bounds the
+    /// window in which `.probing` is displayed. Calling `start()` alone would
+    /// also probe first (the loop's body probes before it sleeps), so this is
+    /// deliberately the same shape; `resume` exists as a named seam so the
+    /// scene-phase call site reads as a lifecycle event rather than as an
+    /// incidental `start()`.
+    func resume() {
+        start()
+    }
+
     /// One probe, awaited. The test seam and the pull-to-refresh path: it
     /// returns only after the verdict has been published, so a caller can
     /// assert on `state` without a settle loop.

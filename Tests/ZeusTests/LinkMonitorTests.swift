@@ -185,4 +185,98 @@ final class LinkMonitorTests: XCTestCase {
         XCTAssertEqual(fallback, "unreachable")
         XCTAssertFalse(fallback.contains("."))
     }
+
+    // MARK: - Background behaviour
+
+    /// The suspend invariant: **a verdict may not outlive the app's ability to
+    /// re-take it.**
+    ///
+    /// iOS keeps the last rendered frame for the app switcher and for the
+    /// instant before the first foreground frame draws, so a monitor that only
+    /// stopped polling would show `LINKED · 12MS` after an arbitrarily long
+    /// suspend — a measurement with nothing behind it, which is the `t-12min`
+    /// defect exactly.
+    func testSuspendInvalidatesTheVerdictNotJustThePolling() async {
+        let probe = ScriptedProbe(.linked(host: "192.168.1.100", ms: 12))
+        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .seconds(60))
+
+        await monitor.probeOnce()
+        // VACUITY FLOOR: without a real LINKED verdict first, the assertion
+        // below passes over a monitor that was never linked at all.
+        XCTAssertTrue(monitor.state.isLinked, "never became linked — leg is vacuous")
+
+        monitor.suspend()
+
+        XCTAssertFalse(monitor.state.isLinked,
+                       "a LINKED verdict survived backgrounding")
+        XCTAssertEqual(monitor.state, .probing)
+        XCTAssertEqual(monitor.state.badgeText, "LINKING")
+    }
+
+    /// Suspend must also stop the loop. Invalidating without stopping would
+    /// leave a `Task.sleep` cycle scheduled in a process the OS is about to
+    /// freeze and eventually kill.
+    func testSuspendStopsPolling() async throws {
+        let probe = ScriptedProbe(.linked(host: "h", ms: 3))
+        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .milliseconds(20))
+
+        monitor.start()
+        try await Task.sleep(for: .milliseconds(60))
+        let atSuspend = probe.calls
+        XCTAssertGreaterThanOrEqual(atSuspend, 1, "never polled — leg is vacuous")
+
+        monitor.suspend()
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(probe.calls, atSuspend, "polling continued after suspend()")
+    }
+
+    /// Unconfigured is exempt: it is not a measurement, it is the absence of a
+    /// target. Downgrading it to `.probing` would tell the operator the app is
+    /// looking for a gateway it has no address for.
+    func testSuspendLeavesUnconfiguredAlone() {
+        let monitor = LinkMonitor(config: .absent, probe: ScriptedProbe(.probing))
+        XCTAssertEqual(monitor.state, .unconfigured)
+
+        monitor.suspend()
+
+        XCTAssertEqual(monitor.state, .unconfigured,
+                       "an unconfigured gateway was reported as LINKING")
+    }
+
+    /// Resume re-establishes a live verdict, so the `.probing` window that
+    /// `suspend` opens is bounded by the first foreground probe.
+    func testResumeProbesAndPublishesAFreshVerdict() async throws {
+        let probe = ScriptedProbe(.linked(host: "192.168.1.100", ms: 7))
+        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .seconds(60))
+
+        monitor.suspend()
+        XCTAssertFalse(monitor.state.isLinked, "not suspended — leg is vacuous")
+
+        monitor.resume()
+        try await Task.sleep(for: .milliseconds(120))
+
+        XCTAssertTrue(monitor.state.isLinked, "resume did not re-measure")
+        XCTAssertEqual(monitor.state, .linked(host: "192.168.1.100", ms: 7))
+    }
+
+    /// Resume after suspend must not stack loops. `suspend` clears the task
+    /// handle, so a resume that re-entered without clearing would double the
+    /// poll rate invisibly — the same defect `start()`'s idempotence guards.
+    func testSuspendResumeDoesNotStackTwoPollLoops() async throws {
+        let probe = ScriptedProbe(.linked(host: "h", ms: 1))
+        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .milliseconds(40))
+
+        monitor.start()
+        monitor.suspend()
+        monitor.resume()
+        monitor.resume()          // second resume must be a no-op
+        try await Task.sleep(for: .milliseconds(130))
+        monitor.stop()
+
+        // One loop at 40ms over ~130ms is 3-4 probes; two stacked loops would
+        // be 6-8. The bound is generous on the low side and still separates
+        // the two worlds.
+        XCTAssertGreaterThanOrEqual(probe.calls, 2, "never polled — leg is vacuous")
+        XCTAssertLessThanOrEqual(probe.calls, 5, "two poll loops are running")
+    }
 }

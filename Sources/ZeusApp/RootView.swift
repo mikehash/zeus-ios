@@ -36,6 +36,12 @@ enum Tab: String, CaseIterable, Identifiable {
 struct RootView: View {
     @State private var tab: Tab = LaunchArgs.initialTab
 
+    /// Background behaviour. Read here rather than in `ZeusApp` because the
+    /// scene phase is only actionable where the observers live, and both of
+    /// them — the link monitor and the session engine — are owned by this
+    /// view.
+    @Environment(\.scenePhase) private var scenePhase
+
     /// :433 — `showToast(text)` sets, then clears after 2800ms.
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
@@ -83,6 +89,27 @@ struct RootView: View {
         // changes, and two poll loops would halve the effective interval with
         // nothing in the UI to show it.
         .task { link.start() }
+        // Background behaviour. Three phases, and only `.active` and
+        // `.background` are acted on:
+        //
+        //   * `.background` — suspend. Polling stops (a `Task.sleep` loop in a
+        //     suspended process is not paused, it is a wake the OS will
+        //     eventually kill) AND the verdict is invalidated, because the
+        //     rendered frame outlives the app's ability to re-measure it.
+        //   * `.active`     — resume: probe now, then poll.
+        //   * `.inactive`   — DELIBERATELY IGNORED. It fires for the app
+        //     switcher, a system alert, a notification pull-down, and control
+        //     centre — transient states the app returns from in under a
+        //     second. Treating them as backgrounding would flap the pill to
+        //     LINKING every time the user swiped down for a notification.
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background: link.suspend()
+            case .active:     link.resume()
+            case .inactive:   break
+            @unknown default: break
+            }
+        }
     }
 
     @ViewBuilder
