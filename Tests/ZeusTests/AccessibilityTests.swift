@@ -317,8 +317,10 @@ final class DynamicTypeTests: XCTestCase {
     /// AX5 happen to render the same", which is indistinguishable from a
     /// platform clamp unless the map is known to be injective.
     ///
-    /// Same scope caveat as the style bridge: the ENUMERATED ladder only. The
-    /// `@unknown default` arm is unreachable from here.
+    /// SCOPE, stated here rather than referred elsewhere: the ENUMERATED ladder
+    /// only. This leg iterates a hand-written list, so the `@unknown default`
+    /// arm is UNREACHABLE FROM HERE. A cross-reference is not a caveat — it
+    /// breaks the moment the comment it points at is edited.
     func testContentSizeCategoryBridgeIsInjective() {
         let ladder: [DynamicTypeSize] = [
             .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
@@ -341,5 +343,58 @@ final class DynamicTypeTests: XCTestCase {
             "the badge outgrew body copy at AX5: \(badge) vs \(body)")
         XCTAssertGreaterThan(badge, 8.5,
             "VACUITY FLOOR: the badge did not scale at all")
+    }
+}
+
+// MARK: - Clip budget
+//
+// The two sites this guards are not observable in-process: a `lineLimit` and a
+// `frame(minHeight:)` are laid-out properties of a `body`, so what is asserted
+// here is the DERIVATION lifted out of them — the same move as `scaledSize`.
+// Whether the laid-out `Text` actually clips is a screenshot claim, and this
+// file makes none.
+final class ClipBudgetTests: XCTestCase {
+
+    /// The whole point of the helper: the budget must DIFFER across the two
+    /// regimes. A helper that returned `base` unconditionally is what the sites
+    /// had before, and it passes every "does it render" check ever written.
+    func testTheBudgetGrowsAtAccessibilitySizes() {
+        XCTAssertGreaterThan(Theme.lineLimit(2, accessibilitySize: true),
+                             Theme.lineLimit(2, accessibilitySize: false),
+            "the clip budget is constant across the regimes — the sites are back "
+            + "to a fixed lineLimit and nothing here can tell")
+    }
+
+    /// VACUITY FLOOR for the leg above: the default-size arm must be UNCHANGED.
+    /// A helper that doubled everywhere would satisfy "grows" while silently
+    /// redesigning every card at default size, which no leg here would catch.
+    func testDefaultSizeIsUntouched() {
+        XCTAssertEqual(Theme.lineLimit(2, accessibilitySize: false), 2)
+        XCTAssertEqual(Theme.lineLimit(1, accessibilitySize: false), 1)
+    }
+
+    /// Monotone in the base, so a site asking for more lines never gets fewer.
+    /// Constant functions are monotone, hence the strict floor above.
+    func testTheBudgetIsMonotoneInTheBase() {
+        for regime in [true, false] {
+            let budgets = (1...4).map { Theme.lineLimit($0, accessibilitySize: regime) }
+            XCTAssertEqual(budgets, budgets.sorted(),
+                "budget not monotone in the base at accessibilitySize=\(regime): \(budgets)")
+        }
+    }
+
+    /// The reason `controlSize` moved from `height:` to `minHeight:`. 44pt is
+    /// Apple's touch-target FLOOR — a row pinned to exactly it cannot grow to
+    /// hold scaled type, so the guard is that body copy at AX5 has stopped
+    /// fitting inside it. If this ever goes RED, the fixed frame was harmless
+    /// and the two `minHeight` edits were unnecessary.
+    func testBodyCopyAtAX5NoLongerFitsAFixedControlRow() {
+        let line = Theme.scaledSize(17, relativeTo: .body, for: .accessibility5)
+        XCTAssertGreaterThan(line * 2, Theme.controlSize,
+            "two scaled lines still fit a 44pt row at AX5: \(line)")
+        XCTAssertLessThan(Theme.scaledSize(17, relativeTo: .body, for: .large),
+                          Theme.controlSize,
+            "VACUITY FLOOR: body copy overflows the row at DEFAULT size too, so "
+            + "the leg above is not about accessibility sizes at all")
     }
 }

@@ -228,7 +228,10 @@ struct SessionView: View {
             .foregroundStyle(Theme.text)
             .textFieldStyle(.plain)
             .padding(.horizontal, 14)
-            .frame(height: Theme.controlSize)
+            // Same reason as the resume bar: 44pt is the touch-target FLOOR.
+            // A composer pinned to it clips the caret line at AX5 — and this is
+            // the field the user types into, so the clip is on their own words.
+            .frame(minHeight: Theme.controlSize)
             .background(Theme.w(0.04))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.corner)

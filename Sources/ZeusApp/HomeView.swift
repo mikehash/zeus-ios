@@ -17,6 +17,7 @@ import SwiftUI
 /// SHAPE of data and is read as a measurement.
 struct HomeView: View {
     @Environment(\.commission) private var commission
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Link topology. The same monitor the pill and NODES read, so three
     /// surfaces cannot disagree about whether the gateway answers.
@@ -193,7 +194,10 @@ struct HomeView: View {
             }
             .foregroundStyle(Theme.onAccent)
             .padding(.horizontal, 16)
-            .frame(height: Theme.controlSize)
+            // `minHeight`, not `height`: 44pt is the TOUCH-TARGET FLOOR, not a
+            // ceiling. A fixed frame under scaled type is a clip that shrinking
+            // cannot rescue, because the row cannot grow to hold the line.
+            .frame(minHeight: Theme.controlSize)
             .frame(maxWidth: .infinity)
             .background(Theme.accentGradient)
             .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
@@ -249,7 +253,10 @@ struct HomeView: View {
                         Text(item.label)
                             .font(Theme.mono(10))
                             .foregroundStyle(Theme.w(0.7))
-                            .lineLimit(2)
+                            // Two lines is a budget calibrated at default size;
+                            // the same label needs more of them once the type
+                            // scales, so the budget scales with it.
+                            .lineLimit(Theme.lineLimit(2, accessibilitySize: dynamicTypeSize.isAccessibilitySize))
                             .truncationMode(.tail)
                     }
                 }
@@ -280,6 +287,8 @@ struct HomeView: View {
 /// card has room to say which host and why, and "why" is the difference
 /// between an operator fixing their config and an operator filing a bug.
 struct LinkCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let state: LinkState
     let onRetry: () -> Void
 
@@ -298,7 +307,7 @@ struct LinkCard: View {
                 Text(state.subtitle)
                     .font(Theme.mono(9))
                     .foregroundStyle(Theme.w(0.55))
-                    .lineLimit(2)
+                    .lineLimit(Theme.lineLimit(2, accessibilitySize: dynamicTypeSize.isAccessibilitySize))
                     .fixedSize(horizontal: false, vertical: true)
             }
 

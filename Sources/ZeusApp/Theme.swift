@@ -170,6 +170,17 @@ enum Theme {
         }
     }
 
+    /// Line limits are a CLIP BUDGET, and a budget calibrated at default size
+    /// is wrong once the type scales: the same string needs more lines at AX5,
+    /// so a fixed `lineLimit(2)` starts losing words at exactly the size the
+    /// setting was turned up to avoid squinting at them.
+    ///
+    /// Takes a `Bool`, not a `DynamicTypeSize`, on purpose — this needs no
+    /// third bridge, so it cannot acquire an `@unknown default` arm of its own.
+    static func lineLimit(_ base: Int, accessibilitySize: Bool) -> Int {
+        accessibilitySize ? base * 2 : base
+    }
+
     // MARK: - Metrics
     // Transcribed from the prototype's button/bar geometry (:911-919).
 
