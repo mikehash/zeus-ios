@@ -230,6 +230,10 @@ private struct ToastBanner: View {
                 .font(Theme.mono(9.5))
                 .tracking(1.14)
                 .lineLimit(1)
+                // A toast is transient and unrepeatable — a clipped one cannot
+                // be re-read, so shrinking beats truncating here more than
+                // anywhere else in the app.
+                .minimumScaleFactor(0.7)
                 .truncationMode(.tail)
         }
         .foregroundStyle(Theme.text)

@@ -183,6 +183,12 @@ struct HomeView: View {
                     .font(Theme.mono(9))
                     .foregroundStyle(Theme.onAccent.opacity(0.7))
                     .lineLimit(1)
+                    // Paired with `truncationMode` deliberately: shrink first,
+                    // clip only when shrinking is exhausted. Now that Theme
+                    // scales, a fixed frame plus tail-truncation alone loses
+                    // characters off the END of the last line at AX5 — the
+                    // most recent words, which is the half a reader wants.
+                    .minimumScaleFactor(0.7)
                     .truncationMode(.tail)
             }
             .foregroundStyle(Theme.onAccent)

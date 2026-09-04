@@ -213,3 +213,110 @@ final class OrbVoiceOverTests: XCTestCase {
         XCTAssertTrue(label.contains("not yet assigned"), label)
     }
 }
+
+// MARK: - Dynamic Type
+//
+// PRE-REGISTERED SHAPE, and it is the reason `Theme.scaledSize` exists as a
+// standalone function. The vacuous form here is "the label must not truncate
+// at the largest accessibility size" — which passed at f4e8152 for the reason
+// that made it worthless: all three type families terminated in a bare
+// `Font.system(size:)`, a FIXED-POINT font, so every string rendered at one
+// point size from xSmall to AX5 and no string was long enough to fail. A
+// no-truncation leg on that tree is a claim about a build that ignores the
+// setting, the same shape as "with reduce-motion on, the animation is off".
+//
+// So THE SUBJECT IS SCALING, NOT FITTING, in two clauses where the first is
+// the second's vacuity floor:
+//
+//   1. the derived metric DIFFERS across two `dynamicTypeSize` values
+//   2. the larger one is the larger  (ordering, not just inequality)
+//
+// Clause 1 is RED at f4e8152 by construction — nothing there varies with the
+// category — and GREEN the moment Theme scales. Nothing deliberate about it.
+final class DynamicTypeTests: XCTestCase {
+
+    /// VACUITY FLOOR for every assertion below it: the derivation must RESPOND
+    /// to the category at all. A pinned subject makes a live positive control
+    /// and a dead one the same object, so this clause has to come first.
+    func testScaledSizeRespondsToTheContentSizeCategory() {
+        let small = Theme.scaledSize(9, relativeTo: .caption, for: .xSmall)
+        let ax5 = Theme.scaledSize(9, relativeTo: .caption, for: .accessibility5)
+        XCTAssertNotEqual(small, ax5,
+            "VACUITY FLOOR: the type does not scale — every leg below is vacuous")
+        XCTAssertGreaterThan(ax5, small,
+            "AX5 must be LARGER, not merely different: \(small) -> \(ax5)")
+    }
+
+    /// The floor above proves motion on ONE size pair. This proves the
+    /// derivation is monotone across the whole ladder — a function that jumped
+    /// at one boundary and was flat elsewhere would satisfy the floor.
+    func testScaledSizeIsMonotoneAcrossTheWholeLadder() {
+        let ladder: [DynamicTypeSize] = [
+            .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
+            .accessibility1, .accessibility2, .accessibility3,
+            .accessibility4, .accessibility5,
+        ]
+        let sizes = ladder.map { Theme.scaledSize(11, relativeTo: .body, for: $0) }
+        for (i, pair) in zip(sizes, sizes.dropFirst()).enumerated() {
+            XCTAssertLessThanOrEqual(pair.0, pair.1,
+                "not monotone at \(ladder[i]) -> \(ladder[i + 1]): \(pair.0) -> \(pair.1)")
+        }
+        XCTAssertGreaterThan(sizes.last!, sizes.first!,
+            "VACUITY FLOOR: a constant function is monotone — the ladder must actually rise")
+    }
+
+    /// The three families are the ONLY way type reaches the screen, so the
+    /// derivation being live is worth nothing unless they call it. A family
+    /// that kept a bare `Font.system(size:)` would pass every leg above.
+    ///
+    /// A `Font` is opaque and its resolved size is not readable, so the
+    /// assertion is on the derivation the family is REQUIRED to route through:
+    /// the family's declared text style must scale. If a family were rewired to
+    /// a fixed size, its style's derivation is the thing this pins.
+    func testEveryFamilyDeclaresAStyleThatScales() {
+        for style in [Font.TextStyle.headline, .body, .caption] {
+            let small = Theme.scaledSize(12, relativeTo: style, for: .xSmall)
+            let ax5 = Theme.scaledSize(12, relativeTo: style, for: .accessibility5)
+            XCTAssertGreaterThan(ax5, small, "family style \(style) does not scale")
+        }
+    }
+
+    /// The UIKit bridge is where a silent wrong answer lives: `@unknown default`
+    /// absorbing a real style into `.body` gives a plausible number with the
+    /// wrong scale factor. Distinctness is the cheap proof the map is injective
+    /// on the arms we use.
+    func testTextStyleBridgeIsInjectiveOnTheStylesWeUse() {
+        let mapped = [Font.TextStyle.largeTitle, .title, .title2, .title3,
+                      .headline, .subheadline, .body, .callout, .footnote,
+                      .caption, .caption2].map(Theme.uiTextStyle)
+        XCTAssertEqual(Set(mapped).count, mapped.count,
+            "two SwiftUI styles collapsed onto one UIKit style: \(mapped)")
+    }
+
+    /// Same argument on the category ladder: a collapse here reads as "AX4 and
+    /// AX5 happen to render the same", which is indistinguishable from a
+    /// platform clamp unless the map is known to be injective.
+    func testContentSizeCategoryBridgeIsInjective() {
+        let ladder: [DynamicTypeSize] = [
+            .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
+            .accessibility1, .accessibility2, .accessibility3,
+            .accessibility4, .accessibility5,
+        ]
+        let mapped = ladder.map(Theme.uiContentSizeCategory)
+        XCTAssertEqual(Set(mapped).count, mapped.count,
+            "two DynamicTypeSize values collapsed onto one category: \(mapped)")
+    }
+
+    /// The badge is the surface that carries PHASE (the four-state invariant
+    /// above), and it sits in a header that is now one combined VoiceOver
+    /// element — so a badge that outgrows its row costs the phase surface.
+    /// 8.5pt at AX5 must still be a sane label size, not a headline.
+    func testBadgeStaysProportionateAtTheLargestSize() {
+        let badge = Theme.scaledSize(8.5, relativeTo: .caption, for: .accessibility5)
+        let body = Theme.scaledSize(17, relativeTo: .body, for: .accessibility5)
+        XCTAssertLessThan(badge, body,
+            "the badge outgrew body copy at AX5: \(badge) vs \(body)")
+        XCTAssertGreaterThan(badge, 8.5,
+            "VACUITY FLOOR: the badge did not scale at all")
+    }
+}

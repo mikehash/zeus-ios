@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Igneous Precision — design tokens for the Zeus operator app.
 ///
@@ -69,20 +70,104 @@ enum Theme {
     // rather than Orbitron, and it will look wrong beside the prototype.
     // Fixing it is a separate cut: add the files, add UIAppFonts, then
     // swap the three `Font.system` calls below for `Font.custom`.
+    //
+    // SCALING IS A SEPARATE AXIS FROM TYPEFACE, and the block above is
+    // ONLY about typeface. Until this cut, all three families terminated
+    // in a bare `Font.system(size:)` — a FIXED-POINT font that does not
+    // respond to the accessibility text-size setting at all. Every type
+    // site in the app rendered identically at xSmall and at AX5, so
+    // "the label must not truncate at the largest size" was vacuously
+    // true: there was no largest size. The three families now route
+    // through `scaledSize` below, which is the whole of the scaling
+    // behaviour and the only thing a test can interrogate.
+
+    /// The Dynamic Type derivation, lifted OUT of the font constructors so it
+    /// is assertable.
+    ///
+    /// A SwiftUI `Font` is opaque: there is no `scaledValue` readable off
+    /// `Theme.mono(9)`, and the size it resolves to is observable only in a
+    /// render — which a `bundle.unit-test` target cannot perform. The same
+    /// shape as `accessibilityValue`: what is derived INSIDE a `body` is
+    /// guardable only by screenshot. So the derivation is a pure function of
+    /// (size, style, category) and the families call it. A leg asserting on
+    /// this function is asserting on the thing that actually scales the text,
+    /// not on a parallel copy of it.
+    ///
+    /// - Parameter dynamicTypeSize: `nil` means "resolve against the ambient
+    ///   trait collection", which is what production wants — SwiftUI sets
+    ///   `UITraitCollection.current` while evaluating a `body`. Tests pass an
+    ///   explicit category so the function is deterministic off-render.
+    static func scaledSize(_ size: CGFloat,
+                           relativeTo style: Font.TextStyle = .body,
+                           for dynamicTypeSize: DynamicTypeSize? = nil) -> CGFloat {
+        let metrics = UIFontMetrics(forTextStyle: uiTextStyle(style))
+        guard let dynamicTypeSize else { return metrics.scaledValue(for: size) }
+        return metrics.scaledValue(
+            for: size,
+            compatibleWith: UITraitCollection(
+                preferredContentSizeCategory: uiContentSizeCategory(dynamicTypeSize)))
+    }
 
     /// Wordmark, badges, tab labels. Orbitron when vendored.
-    static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
-        .system(size: size, weight: weight, design: .rounded)
+    static func display(_ size: CGFloat,
+                        _ weight: Font.Weight = .semibold,
+                        relativeTo style: Font.TextStyle = .headline) -> Font {
+        .system(size: scaledSize(size, relativeTo: style), weight: weight, design: .rounded)
     }
 
     /// Body copy. Rajdhani when vendored.
-    static func body(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .default)
+    static func body(_ size: CGFloat,
+                     _ weight: Font.Weight = .regular,
+                     relativeTo style: Font.TextStyle = .body) -> Font {
+        .system(size: scaledSize(size, relativeTo: style), weight: weight, design: .default)
     }
 
     /// Data, meta, status lines. JetBrains Mono when vendored.
-    static func mono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .monospaced)
+    static func mono(_ size: CGFloat,
+                     _ weight: Font.Weight = .regular,
+                     relativeTo style: Font.TextStyle = .caption) -> Font {
+        .system(size: scaledSize(size, relativeTo: style), weight: weight, design: .monospaced)
+    }
+
+    // The two bridges below exist because `UIFontMetrics` is the only pure,
+    // off-render Dynamic Type calculator on the platform and it speaks UIKit.
+    // They are exhaustive on purpose: a `default` arm would silently absorb a
+    // future text style into `.body` and the scale factor would be wrong with
+    // nothing to notice it.
+
+    static func uiTextStyle(_ style: Font.TextStyle) -> UIFont.TextStyle {
+        switch style {
+        case .largeTitle:  return .largeTitle
+        case .title:       return .title1
+        case .title2:      return .title2
+        case .title3:      return .title3
+        case .headline:    return .headline
+        case .subheadline: return .subheadline
+        case .body:        return .body
+        case .callout:     return .callout
+        case .footnote:    return .footnote
+        case .caption:     return .caption1
+        case .caption2:    return .caption2
+        @unknown default:  return .body
+        }
+    }
+
+    static func uiContentSizeCategory(_ size: DynamicTypeSize) -> UIContentSizeCategory {
+        switch size {
+        case .xSmall:               return .extraSmall
+        case .small:                return .small
+        case .medium:               return .medium
+        case .large:                return .large
+        case .xLarge:               return .extraLarge
+        case .xxLarge:              return .extraExtraLarge
+        case .xxxLarge:             return .extraExtraExtraLarge
+        case .accessibility1:       return .accessibilityMedium
+        case .accessibility2:       return .accessibilityLarge
+        case .accessibility3:       return .accessibilityExtraLarge
+        case .accessibility4:       return .accessibilityExtraExtraLarge
+        case .accessibility5:       return .accessibilityExtraExtraExtraLarge
+        @unknown default:           return .large
+        }
     }
 
     // MARK: - Metrics
