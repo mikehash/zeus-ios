@@ -9,6 +9,10 @@ targets:
     platform: iOS
     sources: [Sources/ZeusApp]
     info:
+      # AUTHORITATIVE SOURCE for Sources/ZeusApp/Info.plist. That file is
+      # generated whole from the properties below on every `xcodegen
+      # generate`; edits made directly to the plist are discarded. Add keys
+      # here, never there.
       path: Sources/ZeusApp/Info.plist
       properties:
         UILaunchScreen: {}

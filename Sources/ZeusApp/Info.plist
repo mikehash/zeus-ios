@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  GENERATED FILE — DO NOT EDIT.
+
+  xcodegen writes this whole file from the `targets.Zeus.info.properties`
+  block in project.yml on every `xcodegen generate`. MEASURED, not assumed:
+  a value mutated here is gone after the next generate, and this comment is
+  destroyed along with it (the rewrite is whole-file, not key-wise). Edit
+  project.yml instead — it is the authoritative source for every key below,
+  including the CFBundleURLTypes block that makes the OS route `zeus://`
+  to this app.
+-->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
