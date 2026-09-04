@@ -299,6 +299,12 @@ final class DynamicTypeTests: XCTestCase {
     /// absorbing a real style into `.body` gives a plausible number with the
     /// wrong scale factor. Distinctness is the cheap proof the map is injective
     /// on the arms we use.
+    ///
+    /// SCOPE: the ENUMERATED styles only. This leg iterates a hand-written list,
+    /// so the `@unknown default` arm named above is UNREACHABLE FROM HERE — the
+    /// comment introduces that arm to say what is at stake, not to claim it.
+    /// That arm is guarded by a compiler warning, and nothing gates warnings on
+    /// this repo.
     func testTextStyleBridgeIsInjectiveOnTheStylesWeUse() {
         let mapped = [Font.TextStyle.largeTitle, .title, .title2, .title3,
                       .headline, .subheadline, .body, .callout, .footnote,
