@@ -20,6 +20,40 @@ import SwiftUI
 /// BUILD-PLAN.md. `OrbTuning` exposes the two knobs that dominate the cost so
 /// the density is a measured decision rather than an inherited one — see
 /// `OrbBench` for the harness that times a frame without a display attached.
+/// Whether the orb's simulation advances, as a value that can only be built
+/// from BOTH inputs.
+///
+/// A structural guard for a coordinate the harness cannot reach. The stillness
+/// argument is passed inside a SwiftUI `body`; a body is not observable
+/// in-process and this project has one unit-test target and no
+/// `XCUIApplication`, so no leg can assert on what `:58` actually receives.
+/// While that argument was a `Bool`, dropping the reduce-motion read there
+/// compiled and left the whole suite green.
+///
+/// Production gets exactly ONE initialiser, and it demands both reads. This
+/// does not make the wrong behaviour inexpressible — `OrbStillness(frozen:
+/// frozen, reduceMotion: false)` is legal — it makes the wrong behaviour
+/// something a person has to WRITE rather than something an edit can leave
+/// behind. That is the whole gain and it is enough.
+///
+/// Fixtures (`.still` / `.moving`) live in the TEST target under
+/// `@testable import`, deliberately. A production-visible static would let a
+/// call site write `frozen: .moving` and the naive mutant returns wearing a
+/// new costume.
+struct OrbStillness: Equatable, Sendable {
+    /// True when the simulation must hold a still frame.
+    let isStill: Bool
+
+    /// The only way production can build one.
+    ///
+    /// `frozen` is the caller's explicit request; `reduceMotion` is the
+    /// system setting. OR-ed, so an explicit freeze is never overridden by a
+    /// user who has motion switched ON.
+    init(frozen: Bool, reduceMotion: Bool) {
+        self.isStill = frozen || reduceMotion
+    }
+}
+
 struct DeviceOrb: View {
 
     /// The four states the prototype's `applyMode` switch enumerates (:90-107).
@@ -50,12 +84,25 @@ struct DeviceOrb: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The value the simulation actually receives.
-    var isStill: Bool { frozen || reduceMotion }
+    ///
+    /// Typed rather than `Bool` because this argument is passed inside a
+    /// SwiftUI `body`, which is not observable in-process: no leg in this
+    /// bundle can watch `:58`. Substituting the caller's raw `frozen` there
+    /// compiles as a `Bool` and leaves all tests green — the setting is simply
+    /// never honoured, and a reduce-motion user gets the animated orb.
+    ///
+    /// `OrbStillness` does NOT make "ignore the setting" inexpressible —
+    /// `OrbStillness(frozen: frozen, reduceMotion: false)` compiles fine. What
+    /// it buys is that the wrong edit must now be WRITTEN rather than left
+    /// over: the naive substitution is a type error, not a silent green.
+    var stillness: OrbStillness {
+        OrbStillness(frozen: frozen, reduceMotion: reduceMotion)
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isStill)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: stillness.isStill)) { timeline in
             Canvas(opaque: false, rendersAsynchronously: false) { ctx, size in
-                sim.advance(to: timeline.date, mode: mode, level: level, frozen: isStill)
+                sim.advance(to: timeline.date, mode: mode, level: level, stillness: stillness)
                 OrbRenderer.draw(sim.state, in: &ctx, size: size, tuning: tuning)
             }
         }
@@ -181,7 +228,7 @@ final class OrbSimulation: ObservableObject {
     /// are per-STEP, not per-second, so feeding a real elapsed time would change
     /// every transition rate. The clock is used only to detect that a tick
     /// happened, never to scale it.
-    func advance(to date: Date, mode: DeviceOrb.Mode, level: Double, frozen: Bool) {
+    func advance(to date: Date, mode: DeviceOrb.Mode, level: Double, stillness: OrbStillness) {
         if !seeded {
             state.time = Double.random(in: 0..<100)   // :67
             state.particles = Self.makeParticles(OrbTuning.verbatim.particleCount)
@@ -189,7 +236,7 @@ final class OrbSimulation: ObservableObject {
             state.mode = mode
             seeded = true
         }
-        if frozen {
+        if stillness.isStill {
             Self.snap(&state, to: mode, level: level)
             lastDate = date
             return

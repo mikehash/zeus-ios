@@ -2,6 +2,20 @@ import XCTest
 import SwiftUI
 @testable import Zeus
 
+/// Test-only fixtures for `OrbStillness`.
+///
+/// They live HERE, not in production, deliberately. `OrbStillness` exists so
+/// that dropping the reduce-motion read at `DeviceOrb.swift:105` is a compile
+/// error rather than a silent green; a production-visible `.moving` would let
+/// a call site write `stillness: .moving` and reinstate the exact mutant the
+/// type was introduced to kill — same defect, new costume.
+extension OrbStillness {
+    /// Motion suppressed.
+    static let still = OrbStillness(frozen: true, reduceMotion: false)
+    /// Motion running.
+    static let moving = OrbStillness(frozen: false, reduceMotion: false)
+}
+
 /// Accessibility floors for the orb and the session header.
 ///
 /// PRE-REGISTERED SHAPE. The vacuous form of a reduce-motion test is "with the
@@ -27,12 +41,12 @@ final class OrbReduceMotionTests: XCTestCase {
 
     /// Run one still frame for a mode and return the resulting state.
     ///
-    /// Through `advance(frozen: true)`, not by calling `snap` directly: the
+    /// Through `advance(stillness: .still)`, not by calling `snap` directly: the
     /// production path is what must be still-correct, and a helper that
     /// bypassed it would guard a function nothing renders.
     private func stillState(_ mode: DeviceOrb.Mode, level: Double = 0) -> OrbState {
         let sim = OrbSimulation()
-        sim.advance(to: Date(), mode: mode, level: level, frozen: true)
+        sim.advance(to: Date(), mode: mode, level: level, stillness: .still)
         return sim.state
     }
 
@@ -110,7 +124,7 @@ final class OrbReduceMotionTests: XCTestCase {
     /// path lerps 6% of the way; the still path arrives.
     func testOneAnimatedTickDoesNotReachTheTargetButTheStillFrameDoes() {
         let animated = OrbSimulation()
-        animated.advance(to: Date(), mode: .speaking, level: 0, frozen: false)
+        animated.advance(to: Date(), mode: .speaking, level: 0, stillness: .moving)
 
         let t = OrbModeTargets.targets(for: .speaking)
         XCTAssertNotEqual(animated.state.glow, t.glow, accuracy: 0.01,
@@ -123,11 +137,11 @@ final class OrbReduceMotionTests: XCTestCase {
     /// motionless orb must not drift, or "still" is just "slow".
     func testStillFramesDoNotDrift() {
         let sim = OrbSimulation()
-        sim.advance(to: Date(), mode: .thinking, level: 0, frozen: true)
+        sim.advance(to: Date(), mode: .thinking, level: 0, stillness: .still)
         let first = sim.state
         for i in 1...10 {
             sim.advance(to: Date().addingTimeInterval(Double(i)), mode: .thinking,
-                        level: 0, frozen: true)
+                        level: 0, stillness: .still)
         }
         XCTAssertEqual(sim.state.glow, first.glow, accuracy: 0)
         XCTAssertEqual(sim.state.time, first.time, accuracy: 0,
@@ -139,9 +153,9 @@ final class OrbReduceMotionTests: XCTestCase {
     /// above — each of them builds a fresh simulation.
     func testModeChangeIsHonouredWithoutMotion() {
         let sim = OrbSimulation()
-        sim.advance(to: Date(), mode: .dormant, level: 0, frozen: true)
+        sim.advance(to: Date(), mode: .dormant, level: 0, stillness: .still)
         let before = sim.state.glow
-        sim.advance(to: Date().addingTimeInterval(1), mode: .speaking, level: 0, frozen: true)
+        sim.advance(to: Date().addingTimeInterval(1), mode: .speaking, level: 0, stillness: .still)
         XCTAssertNotEqual(sim.state.glow, before, accuracy: 0,
             "a still orb must still TRACK the agent — one simulation, two modes")
         XCTAssertEqual(sim.state.glow, OrbModeTargets.targets(for: .speaking).glow,
@@ -296,6 +310,9 @@ final class DynamicTypeTests: XCTestCase {
     /// Same argument on the category ladder: a collapse here reads as "AX4 and
     /// AX5 happen to render the same", which is indistinguishable from a
     /// platform clamp unless the map is known to be injective.
+    ///
+    /// Same scope caveat as the style bridge: the ENUMERATED ladder only. The
+    /// `@unknown default` arm is unreachable from here.
     func testContentSizeCategoryBridgeIsInjective() {
         let ladder: [DynamicTypeSize] = [
             .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
