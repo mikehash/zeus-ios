@@ -388,6 +388,16 @@ final class ClipBudgetTests: XCTestCase {
     /// hold scaled type, so the guard is that body copy at AX5 has stopped
     /// fitting inside it. If this ever goes RED, the fixed frame was harmless
     /// and the two `minHeight` edits were unnecessary.
+    ///
+    /// WHAT THE METRIC ACTUALLY IS, so nobody reads more into it than it holds:
+    /// `scaledSize` returns a font POINT SIZE, not a laid-out line height. A
+    /// rendered line is TALLER than its point size (leading, ascender/descender),
+    /// so `line * 2` UNDERSTATES the height two lines occupy. The inequality is
+    /// therefore conservative in the safe direction — if the understated figure
+    /// already overflows 44pt, the real one does too — but it is arithmetic on
+    /// Apple's scale ladder, NOT a measurement of a laid-out `Text`. Nothing in
+    /// this bundle can produce the latter: there is no UI-test target, and a
+    /// `body` is not observable in-process.
     func testBodyCopyAtAX5NoLongerFitsAFixedControlRow() {
         let line = Theme.scaledSize(17, relativeTo: .body, for: .accessibility5)
         XCTAssertGreaterThan(line * 2, Theme.controlSize,

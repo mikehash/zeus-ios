@@ -131,9 +131,23 @@ enum Theme {
 
     // The two bridges below exist because `UIFontMetrics` is the only pure,
     // off-render Dynamic Type calculator on the platform and it speaks UIKit.
-    // They are exhaustive on purpose: a `default` arm would silently absorb a
-    // future text style into `.body` and the scale factor would be wrong with
-    // nothing to notice it.
+    //
+    // Both are written out case by case rather than with a `default` arm, so
+    // that a future SwiftUI text style or size class is a COMPILER WARNING here
+    // instead of arriving silently. The `@unknown default` arms then decide
+    // what happens if that warning is ever ignored, and the choice is ABSORB —
+    // fall back to `.body` / `.large` — not `fatalError`.
+    //
+    // The trade, deliberately: absorbing is WASTEFUL, trapping is FATAL. A
+    // future OS's new style routed through `.body` gives one string a wrong
+    // scale factor, and no user can tell. A `fatalError` on that same arm is a
+    // crash on an OS version nobody on this project can test against, on the
+    // user's device, for a cosmetic miss. Same trade taken at `paused:` in
+    // `DeviceOrb`: wrong there is wasteful, not wrong.
+    //
+    // This is a product call, not a measurement. It is revisitable the day
+    // there is CI gating warnings on this repo — until then the warning is a
+    // comment, and these arms are what actually stands behind it.
 
     static func uiTextStyle(_ style: Font.TextStyle) -> UIFont.TextStyle {
         switch style {
