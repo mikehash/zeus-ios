@@ -89,7 +89,11 @@ struct RootView: View {
     private var content: some View {
         switch tab {
         case .zeus:
-            PlaceholderPane(title: "ZEUS", detail: "agent")
+            // NOT a placeholder any more. `LaunchArgs.initialTab` returns
+            // `.zeus` unconditionally in release, so this is the cold-start
+            // destination for every commissioned operator on every launch —
+            // which is why it ships with restore rather than behind it.
+            HomeView(link: link, session: session, onOpenSession: { tab = .session })
         case .session:
             SessionView(
                 messages: session.messages,
@@ -198,23 +202,5 @@ private struct TabBar: View {
             }
         }
         .background(Theme.surface)
-    }
-}
-
-private struct PlaceholderPane: View {
-    let title: String
-    let detail: String
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text(title)
-                .font(Theme.display(28))
-                .tracking(Theme.displayTracking)
-                .foregroundStyle(Theme.text)
-            Text(detail)
-                .font(Theme.mono(11))
-                .tracking(1.0)
-                .foregroundStyle(Theme.w(0.5))
-        }
     }
 }
