@@ -40,15 +40,47 @@ struct DeviceOrb: View {
     var frozen: Bool = false
     var tuning: OrbTuning = .phone
 
+    /// True when the system asks for reduced motion.
+    ///
+    /// Read HERE rather than at the call sites so the setting cannot be honoured
+    /// in one place and missed in another: every `DeviceOrb` in the app inherits
+    /// it from the environment by construction. The caller's own `frozen` is
+    /// OR-ed with it — an explicit freeze must never be overridden by a user
+    /// who has motion switched ON.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The value the simulation actually receives.
+    var isStill: Bool { frozen || reduceMotion }
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: frozen)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isStill)) { timeline in
             Canvas(opaque: false, rendersAsynchronously: false) { ctx, size in
-                sim.advance(to: timeline.date, mode: mode, level: level, frozen: frozen)
+                sim.advance(to: timeline.date, mode: mode, level: level, frozen: isStill)
                 OrbRenderer.draw(sim.state, in: &ctx, size: size, tuning: tuning)
             }
         }
         .accessibilityLabel("Zeus orb")
-        .accessibilityValue(mode.rawValue)
+        .accessibilityValue(Self.accessibilityValue(for: mode))
+    }
+
+    /// What VoiceOver says the orb is doing.
+    ///
+    /// A `static func` over the mode, not a computed property on the view, for
+    /// the reason the six HomeView derivations were lifted: a SwiftUI body is
+    /// not observable in-process, so anything derived inside one is guardable
+    /// only by screenshot. Lifted, it is a pure function three legs can pin.
+    ///
+    /// NOT `mode.rawValue`. "dormant" and "speaking" are the RENDERER's
+    /// vocabulary — energy levels of a shape — and announcing them tells a
+    /// screen-reader user what the picture looks like rather than what the
+    /// agent is doing. The strings below name the activity.
+    static func accessibilityValue(for mode: Mode) -> String {
+        switch mode {
+        case .dormant:  return "idle"
+        case .thinking: return "thinking"
+        case .speaking: return "active"
+        case .rage:     return "overloaded"
+        }
     }
 
     /// The simulation is a reference type on purpose: `Canvas`'s closure runs on
@@ -157,7 +189,11 @@ final class OrbSimulation: ObservableObject {
             state.mode = mode
             seeded = true
         }
-        guard !frozen else { lastDate = date; return }
+        if frozen {
+            Self.snap(&state, to: mode, level: level)
+            lastDate = date
+            return
+        }
         guard lastDate != date else { return }
         lastDate = date
 
@@ -184,6 +220,46 @@ final class OrbSimulation: ObservableObject {
         for i in state.particles.indices {
             state.particles[i].orbitAngle += state.particles[i].speed * rotSpeed
         }
+    }
+
+    /// Place the simulation AT the mode's targets in one step, with no clock.
+    ///
+    /// This is the reduce-motion arm, and it is a SPECIFICATION rather than a
+    /// guard: at the parent commit nothing in this app read
+    /// `accessibilityReduceMotion` at all, so there is no prior behaviour here
+    /// to preserve — only a decision about what a motionless orb must still say.
+    ///
+    /// WHY NOT SIMPLY HOLD THE CLOCK. Freezing at entry leaves `OrbState` on
+    /// its DEFAULTS (glow 0.4, spikeIntensity 0.35, speakWave 0), which never
+    /// came from `targets(for:)`. Mode reaches the renderer at exactly two
+    /// coordinates and both are dead in that configuration:
+    ///
+    ///   * `speakNoise` (drawOrbPoints) is scaled by `speakWave * 0.4 +
+    ///     level * 0.5`, and both terms are 0 — `OrbGlyph` passes no level.
+    ///   * the energy-arc count is gated by `guard s.glow >= 0.5`, and the
+    ///     default glow is 0.4, so arcs never draw.
+    ///
+    /// A frozen-at-defaults orb therefore renders ONE picture for every mode:
+    /// motion removed AND meaning removed. Snapping to targets keeps the second
+    /// channel alive — glow 0.38 / 0.60 / 0.90 and arcs 0 / 2 / 5 across
+    /// dormant / thinking / speaking — so `Mode` stays recoverable from a still
+    /// frame. That recoverability is asserted directly in
+    /// `DeviceOrbReduceMotionTests`; it is not left to this comment.
+    ///
+    /// `speakWave` is set to its steady value rather than lerped for the same
+    /// reason: it is the only other mode-carrying term, and a zero here would
+    /// erase the speaking mode's surface displacement.
+    static func snap(_ state: inout OrbState, to mode: DeviceOrb.Mode, level: Double) {
+        state.mode = mode
+        state.targets = .targets(for: mode)
+        state.level = level
+        state.spikeIntensity = state.targets.spikeIntensity
+        state.glow = state.targets.glow
+        state.pulseSpeed = state.targets.pulseSpeed
+        state.rotation = state.targets.rotation
+        // The animated arm oscillates this about 0.6 (:278-282); the still
+        // frame takes the centre of that oscillation, not an endpoint.
+        state.speakWave = (mode == .speaking) ? 0.6 : 0
     }
 
     static func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }

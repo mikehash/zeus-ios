@@ -117,6 +117,41 @@ struct SessionView: View {
         .padding(.horizontal, 20)
         .padding(.top, 6)
         .padding(.bottom, 10)
+        // ONE element, not four. Unmerged, VoiceOver reads the orb, the title,
+        // the status line and the badge as separate stops — four swipes to
+        // learn one thing. `.combine` concatenates the children's labels in
+        // layout order, which is why the value below is applied to the group
+        // and not to any child.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(SessionView.headerAccessibilityLabel(
+            sessionID: sessionID, status: statusLine, state: state))
+    }
+
+    /// The whole header as one spoken string.
+    ///
+    /// PHASE IS RECOVERABLE FROM THIS. `state.badgeText` is four distinct
+    /// strings over the four `AgentState` cases, so the label differs across
+    /// every state — that difference is what makes "reads the engine phase"
+    /// measurable rather than aspirational, and it is asserted directly rather
+    /// than described here.
+    ///
+    /// The badge and the status line are both carried because they answer
+    /// different questions: phase (what the agent is doing) and topology (can
+    /// we reach the gateway). Collapsing them would be the four-state link
+    /// probe folding down to two, one surface over — `NOMINAL` beside
+    /// `UNREACHABLE` is not a contradiction, it is two facts.
+    ///
+    /// The orb contributes nothing: it is `.accessibilityHidden(true)` at its
+    /// call site, so `.combine` skips it. That is deliberate — the orb renders
+    /// the same energy the badge names, and announcing both would say one
+    /// thing twice.
+    static func headerAccessibilityLabel(sessionID: String?,
+                                         status: String,
+                                         state: AgentState) -> String {
+        let title = sessionTitle(for: sessionID)
+            .replacingOccurrences(of: "·", with: "")
+            .replacingOccurrences(of: "—", with: "not yet assigned")
+        return "\(title.trimmingCharacters(in: .whitespaces)), \(status), \(state.badgeText)"
     }
 
     // MARK: - Transcript (:879-898)
