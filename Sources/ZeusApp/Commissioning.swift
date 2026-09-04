@@ -53,8 +53,24 @@ enum CommissioningStep: String, CaseIterable {
 }
 
 /// What commissioning produces. The whole point of the flow is this value.
-struct Commission: Equatable {
-    enum Route: String { case managed, byok }
+///
+/// `Codable` is declared here rather than beside `CommissionStore` because
+/// Swift synthesises `init(from:)` / `encode(to:)` only in the file that
+/// declares the type; an extension elsewhere fails with two errors naming
+/// synthesis, which point at the conformance and not at the file scope that
+/// actually causes it.
+///
+/// The keys are hand-written so that renaming a property is a deliberate
+/// decision about stored data rather than a refactor that silently
+/// invalidates every persisted record.
+struct Commission: Equatable, Codable {
+    enum Route: String, Codable { case managed, byok }
+
+    enum CodingKeys: String, CodingKey {
+        case route
+        case callsign
+        case nodeEnrolled = "node_enrolled"
+    }
 
     var route: Route = .managed
     var callsign: String = ""
