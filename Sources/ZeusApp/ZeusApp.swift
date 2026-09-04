@@ -60,16 +60,31 @@ final class AppState: ObservableObject {
 struct ZeusApp: App {
     @StateObject private var state = AppState()
 
+    /// Push. Owned here rather than in `RootView` because the APNs token
+    /// arrives on the app delegate, which exists for the process lifetime —
+    /// a registrar owned by a view would miss a token delivered before that
+    /// view was constructed.
+    @StateObject private var push = PushRegistrar(authority: SystemNotificationAuthority())
+
+    /// The ONLY path by which a device token can reach a SwiftUI app: there is
+    /// no `onRegisterForRemoteNotifications` scene modifier.
+    @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
+
     var body: some Scene {
         WindowGroup {
             if let commission = state.commission {
-                RootView()
+                RootView(push: push)
                     .transition(.opacity)
                     // Carried so the ZEUS tab header can read `OPERATOR ·
                     // <callsign>` and the LINK pill can tell solo from
                     // enrolled.
                     .environment(\.commission, commission)
                     .environmentObject(state)
+                    // Hand the registrar to the delegate as soon as a scene
+                    // exists. Doing it here rather than in the delegate's own
+                    // init is what keeps ONE registrar: the delegate is
+                    // constructed by UIKit and cannot reach the @StateObject.
+                    .onAppear { pushDelegate.registrar = push }
             } else {
                 CommissioningView { result in
                     withAnimation(.easeInOut(duration: 0.45)) { state.commission(result) }

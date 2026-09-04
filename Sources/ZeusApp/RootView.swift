@@ -66,6 +66,12 @@ struct RootView: View {
     /// consuming sites read its verdict rather than a literal.
     @StateObject private var link = LinkMonitor()
 
+    /// Push state, owned by `ZeusApp` and passed in — NOT constructed here.
+    /// A registrar built by this view would be replaced whenever the view is
+    /// reconstructed, and a token delivered to the old one would be lost with
+    /// no error anywhere.
+    @ObservedObject var push: PushRegistrar
+
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
@@ -133,7 +139,13 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background: link.suspend()
-            case .active:     link.resume()
+            case .active:
+                link.resume()
+                // Permission can be revoked in Settings while the app is
+                // backgrounded and the app is never told, so every foreground
+                // re-reads it. Cheap, and the alternative is a badge that
+                // reads ON for a build that can no longer receive anything.
+                Task { await push.refresh() }
             case .inactive:   break
             @unknown default: break
             }
@@ -148,7 +160,7 @@ struct RootView: View {
             // `.zeus` unconditionally in release, so this is the cold-start
             // destination for every commissioned operator on every launch —
             // which is why it ships with restore rather than behind it.
-            HomeView(link: link, session: session, onOpenSession: { tab = .session })
+            HomeView(link: link, session: session, push: push, onOpenSession: { tab = .session })
         case .session:
             SessionView(
                 messages: session.messages,

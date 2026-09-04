@@ -226,8 +226,28 @@ final class LinkMonitorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(atSuspend, 1, "never polled — leg is vacuous")
 
         monitor.suspend()
+
+        // Settle window. `suspend()` cancels the task, but a probe ALREADY IN
+        // FLIGHT when the cancel lands still completes and still increments
+        // the counter — cancellation cannot un-issue a request that has left.
+        // So one extra call is correct behaviour, not a leak, and asserting
+        // equality against the pre-suspend count was a race: it failed only
+        // when suspend() happened to land inside the probe's await. MEASURED,
+        // not reasoned — it flaked once in a full-suite run and passed three
+        // isolated runs, which is the signature of a wall-clock-dependent leg
+        // rather than a defect.
+        try await Task.sleep(for: .milliseconds(40))
+        let afterSettle = probe.calls
+        XCTAssertLessThanOrEqual(afterSettle, atSuspend + 1,
+            "more than one probe survived suspend(): the in-flight one is " +
+            "unavoidable, a second means the LOOP is still scheduling.")
+
+        // The real claim: no FURTHER polls. Four intervals of quiet.
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(probe.calls, atSuspend, "polling continued after suspend()")
+        XCTAssertEqual(probe.calls, afterSettle,
+            "polling continued after suspend() — a suspended app must not be " +
+            "scheduling Task.sleep cycles in a process the OS is about to " +
+            "freeze and eventually kill.")
     }
 
     /// Unconfigured is exempt: it is not a measurement, it is the absence of a

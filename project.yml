@@ -8,6 +8,13 @@ targets:
     type: application
     platform: iOS
     sources: [Sources/ZeusApp]
+    entitlements:
+      # POINTS AT a tracked, hand-written file — it is deliberately NOT an
+      # inline `properties:` block. An inline block would make xcodegen
+      # generate the entitlements file too, and the reasoning about what
+      # `development` does and does not buy would be destroyed by the next
+      # `xcodegen generate` exactly as the Info.plist comment is.
+      path: Sources/ZeusApp/Zeus.entitlements
     info:
       # AUTHORITATIVE SOURCE for Sources/ZeusApp/Info.plist. That file is
       # generated whole from the properties below on every `xcodegen

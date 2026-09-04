@@ -27,6 +27,10 @@ struct HomeView: View {
     /// writer out of `RootView`.
     @ObservedObject var session: SessionEngine
 
+    /// Push state. Read, never owned — the token arrives on the app delegate
+    /// and the registrar that receives it must outlive this view.
+    @ObservedObject var push: PushRegistrar
+
     /// Hands the operator to the SESSION tab. The home screen starts a
     /// conversation; it does not host one.
     let onOpenSession: () -> Void
@@ -37,6 +41,7 @@ struct HomeView: View {
                 identity
                 LinkCard(state: link.state, onRetry: { Task { await link.probeOnce() } })
                 statusGrid
+            alertsRow
                 resume
                 activityFeed
             }
@@ -104,6 +109,41 @@ struct HomeView: View {
             StatCell(caption: "TURNS", value: turnsValue, tint: Theme.w(0.8))
             StatCell(caption: "LATENCY", value: latencyValue, tint: Theme.w(0.8))
         }
+    }
+
+    /// ALERTS. Its own row rather than a fifth grid cell because it carries a
+    /// detail line the four-cell grid has no room for — and the detail line is
+    /// the part that keeps it honest: `PENDING · allowed, no device token yet`
+    /// is the state a build with no APNs entitlement lives in permanently, and
+    /// a bare badge would render it indistinguishably from ON.
+    private var alertsRow: some View {
+        HStack(spacing: 8) {
+            Text("ALERTS")
+                .font(Theme.mono(8.5, .semibold))
+                .tracking(1.2)
+                .foregroundStyle(Theme.w(0.5))
+            Text(push.state.badgeText)
+                .font(Theme.mono(11, .semibold))
+                .tracking(0.6)
+                .foregroundStyle(PushState.badgeColor(for: push.state))
+            Text(push.state.detailLine)
+                .font(Theme.mono(9))
+                .foregroundStyle(Theme.w(0.5))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 0)
+            if push.state == .notDetermined {
+                Button("ENABLE") { Task { await push.request() } }
+                    .font(Theme.mono(9, .semibold))
+                    .foregroundStyle(Theme.accent)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.barCorner, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Alerts: \(push.state.badgeText). \(push.state.detailLine)")
     }
 
     /// Agent messages are the completed half of a turn; a streaming caret is
