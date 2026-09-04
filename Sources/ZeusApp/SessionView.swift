@@ -31,6 +31,19 @@ struct SessionView: View {
     /// one. Not defaulted to a string: a default here would reintroduce the
     /// exact defect this field removes.
     var sessionID: String? = nil
+    /// Deep-link prefill, consumed once.
+    ///
+    /// A BINDING and not a plain value, because the view must be able to
+    /// clear it: `zeus://session?prompt=x` twice in a row is two distinct
+    /// user intents, and a non-clearing value would compare equal the second
+    /// time and silently do nothing. The owner sets it; this view nils it
+    /// the moment it has been applied.
+    ///
+    /// Declared ABOVE the closures deliberately: Swift's memberwise init
+    /// fixes argument order to declaration order, and the call site reads
+    /// `prefill:` before `onSend:`.
+    var prefill: Binding<String?> = .constant(nil)
+
     var onSend: (String) -> Void = { _ in }
     var onVoice: () -> Void = {}
 
@@ -59,6 +72,26 @@ struct SessionView: View {
             transcript
             composer
         }
+        // Apply on APPEAR as well as on change: a deep link arriving on a
+        // cold start sets the value before this view exists, so an
+        // `onChange`-only wiring would drop the very first link the app ever
+        // receives — the one case a user is most likely to try.
+        .onAppear { applyPrefill() }
+        .onChange(of: prefill.wrappedValue) { _, _ in applyPrefill() }
+    }
+
+    /// Move a pending prefill into the composer, then clear it.
+    ///
+    /// REPLACES rather than appends. A deep link is a fresh intent, not a
+    /// continuation of half-typed text; appending would splice a URL's words
+    /// onto a sentence the user was mid-way through and send the result on
+    /// one tap.
+    ///
+    /// The clear is what makes the binding single-shot — see `prefill`.
+    private func applyPrefill() {
+        guard let pending = prefill.wrappedValue, !pending.isEmpty else { return }
+        input = pending
+        prefill.wrappedValue = nil
     }
 
     // MARK: - Header (:868-878)

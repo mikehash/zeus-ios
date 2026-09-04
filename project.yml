@@ -13,6 +13,15 @@ targets:
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: Zeus
+        # WITHOUT THIS, `onOpenURL` NEVER FIRES. The parser and its tests are
+        # pure Swift and pass whether or not the app is registered for the
+        # scheme — so a green suite is not evidence the links work. This block
+        # is the only thing that makes the OS route `zeus://` here, and it is
+        # tracked config, so it cannot drift out with a stale pbxproj.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.zeus.deeplink
+            CFBundleTypeRole: Editor
+            CFBundleURLSchemes: [zeus]
   ZeusTests:
     type: bundle.unit-test
     platform: iOS

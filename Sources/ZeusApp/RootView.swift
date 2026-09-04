@@ -42,6 +42,12 @@ struct RootView: View {
     /// view.
     @Environment(\.scenePhase) private var scenePhase
 
+    /// A deep-linked prompt awaiting the composer. Owned HERE and not in
+    /// `SessionView` because the URL can arrive while a different tab is
+    /// showing — the value has to outlive the tab switch that is about to
+    /// happen. `SessionView` clears it once applied.
+    @State private var pendingPrompt: String?
+
     /// :433 — `showToast(text)` sets, then clears after 2800ms.
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
@@ -102,6 +108,28 @@ struct RootView: View {
         //     centre — transient states the app returns from in under a
         //     second. Treating them as backgrounding would flap the pill to
         //     LINKING every time the user swiped down for a notification.
+        // `zeus://` links. `onOpenURL` fires for cold start AND for a link
+        // received while running, so this one modifier covers both — there is
+        // no separate launch-options path to keep in step with it.
+        //
+        // A REFUSED link does nothing at all: no tab change, no toast, no
+        // navigation. Falling back to a tab would put the user somewhere the
+        // URL did not ask for and look like the link worked.
+        .onOpenURL { url in
+            switch DeepLink.parse(url) {
+            case .tab(let t):
+                tab = t
+            case .session(let prompt):
+                // Order matters: set the prompt BEFORE the tab switch. If the
+                // tab changed first, `SessionView.onAppear` could run against
+                // a still-nil binding and the prefill would be dropped on
+                // exactly the cold-start path this is for.
+                pendingPrompt = prompt
+                tab = .session
+            case nil:
+                break
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background: link.suspend()
@@ -134,6 +162,7 @@ struct RootView: View {
                 // The gateway-named id, mirrored off the engine. The header
                 // printed the literal "SESSION-01" while this value existed.
                 sessionID: session.sessionLabel,
+                prefill: $pendingPrompt,
                 onSend: session.send,
                 // :660 — voice hands control back to the ZEUS tab, then runs
                 // the query. The tab switch is the part that is real here.
