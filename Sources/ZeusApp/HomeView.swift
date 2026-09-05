@@ -195,8 +195,21 @@ struct HomeView: View {
             .foregroundStyle(Theme.onAccent)
             .padding(.horizontal, 16)
             // `minHeight`, not `height`: 44pt is the TOUCH-TARGET FLOOR, not a
-            // ceiling. A fixed frame under scaled type is a clip that shrinking
-            // cannot rescue, because the row cannot grow to hold the line.
+            // ceiling.
+            //
+            // THIS ROW DOES NOT OVERFLOW A FIXED 44pt FRAME ON ITS OWN AT AX5,
+            // and an earlier version of this comment said it did. Measured on
+            // the platform, not off Apple's published ladder: `mono(11)` on
+            // `.caption` at AX5 is 35.0pt of glyph and 41.8pt of LINE, so the
+            // line consumes 41.8 of 44 and clears by 2.2 — which is less than
+            // this row's own horizontal padding, so any vertical padding at all
+            // takes it over. The composer (`SessionView`'s `TextField`) is the one that
+            // overflows outright (46.9). See `testTheRealControlRowsAtAX5`,
+            // which asserts BOTH directions so the difference cannot be lost.
+            //
+            // So the edit here rests on the touch-target floor ALONE, and it is
+            // correct on that argument whether or not a clip is ever observed.
+            // A fixed frame cannot grow; a floor can. That is the whole claim.
             .frame(minHeight: Theme.controlSize)
             .frame(maxWidth: .infinity)
             .background(Theme.accentGradient)

@@ -383,8 +383,11 @@ final class ClipBudgetTests: XCTestCase {
         }
     }
 
-    /// The reason `controlSize` moved from `height:` to `minHeight:` at
-    /// `HomeView:200` and `SessionView:234`. 44pt is Apple's touch-target
+    /// The reason `controlSize` moved from `height:` to `minHeight:` at the
+    /// resume bar (`HomeView.resumeBar`) and the composer (`SessionView`'s
+    /// `TextField`) — named, not numbered: line coordinates in this file went
+    /// stale twice tonight the moment a comment was added above the site.
+    /// 44pt is Apple's touch-target
     /// FLOOR — a row pinned to exactly it cannot grow to hold scaled type.
     ///
     /// THIS LEG ASSERTS ABOUT THE TWO REAL SITES AND NOTHING ELSE. Its first
@@ -419,7 +422,7 @@ final class ClipBudgetTests: XCTestCase {
         // target regardless, and this bound is what makes the margin visible.
         let resume = Theme.lineHeight(11, relativeTo: .caption, for: .accessibility5)
         XCTAssertLessThan(resume, Theme.controlSize,
-            "resume bar now overflows outright — the comment at HomeView:197 "
+            "resume bar now overflows outright — the comment at the site "
             + "understates it and should be rewritten, not this bound relaxed: \(resume)")
         XCTAssertGreaterThan(resume, Theme.controlSize * 0.9,
             "resume bar no longer fills the row at AX5, so the minHeight edit "

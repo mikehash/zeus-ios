@@ -228,9 +228,13 @@ struct SessionView: View {
             .foregroundStyle(Theme.text)
             .textFieldStyle(.plain)
             .padding(.horizontal, 14)
-            // Same reason as the resume bar: 44pt is the touch-target FLOOR.
-            // A composer pinned to it clips the caret line at AX5 — and this is
-            // the field the user types into, so the clip is on their own words.
+            // 44pt is the touch-target FLOOR here too — but unlike the resume
+            // bar (`HomeView.resumeBar`), this row ALSO overflows, and that is
+            // measured rather than reasoned: `body(14)` on `.body` at AX5 is
+            // 39.3pt of glyph and 46.9pt of LINE against a 44pt frame. Pinned
+            // to `height` it clips the caret line — the field the user types
+            // into, so the clip lands on their own words as they write them.
+            // `testTheRealControlRowsAtAX5` asserts this direction strictly.
             .frame(minHeight: Theme.controlSize)
             .background(Theme.w(0.04))
             .overlay(
