@@ -383,28 +383,69 @@ final class ClipBudgetTests: XCTestCase {
         }
     }
 
-    /// The reason `controlSize` moved from `height:` to `minHeight:`. 44pt is
-    /// Apple's touch-target FLOOR — a row pinned to exactly it cannot grow to
-    /// hold scaled type, so the guard is that body copy at AX5 has stopped
-    /// fitting inside it. If this ever goes RED, the fixed frame was harmless
-    /// and the two `minHeight` edits were unnecessary.
+    /// The reason `controlSize` moved from `height:` to `minHeight:` at
+    /// `HomeView:200` and `SessionView:234`. 44pt is Apple's touch-target
+    /// FLOOR — a row pinned to exactly it cannot grow to hold scaled type.
     ///
-    /// WHAT THE METRIC ACTUALLY IS, so nobody reads more into it than it holds:
-    /// `scaledSize` returns a font POINT SIZE, not a laid-out line height. A
-    /// rendered line is TALLER than its point size (leading, ascender/descender),
-    /// so `line * 2` UNDERSTATES the height two lines occupy. The inequality is
-    /// therefore conservative in the safe direction — if the understated figure
-    /// already overflows 44pt, the real one does too — but it is arithmetic on
-    /// Apple's scale ladder, NOT a measurement of a laid-out `Text`. Nothing in
-    /// this bundle can produce the latter: there is no UI-test target, and a
-    /// `body` is not observable in-process.
-    func testBodyCopyAtAX5NoLongerFitsAFixedControlRow() {
-        let line = Theme.scaledSize(17, relativeTo: .body, for: .accessibility5)
-        XCTAssertGreaterThan(line * 2, Theme.controlSize,
-            "two scaled lines still fit a 44pt row at AX5: \(line)")
-        XCTAssertLessThan(Theme.scaledSize(17, relativeTo: .body, for: .large),
-                          Theme.controlSize,
-            "VACUITY FLOOR: body copy overflows the row at DEFAULT size too, so "
-            + "the leg above is not about accessibility sizes at all")
+    /// THIS LEG ASSERTS ABOUT THE TWO REAL SITES AND NOTHING ELSE. Its first
+    /// version measured `scaledSize(17, .body) * 2` — two lines of 17pt body,
+    /// a configuration NEITHER site carries: the resume bar is `mono(11)` on
+    /// `.caption`, the composer `body(14)` on `.body`, both single-line. On the
+    /// sites' own point sizes the AX5 figures are 35.0 and 39.3 against a 44pt
+    /// row, so a point-size leg says BOTH FIT and the two `minHeight` edits
+    /// were unnecessary. That verdict is wrong, and wrong in the unsafe
+    /// direction, which is why the metric here is `lineHeight` and not
+    /// `scaledSize`: a laid-out line is ~1.19x its point size, giving 41.8 and
+    /// 46.9. The composer overflows; the resume bar sits 2.2pt under with no
+    /// room for the padding it carries.
+    ///
+    /// Both figures are MEASURED — `UIFontMetrics` and `UIFont.lineHeight` on
+    /// the platform, off-render — not read off Apple's published ladder. What
+    /// they are not is a laid-out `Text`: nothing in this bundle can produce
+    /// one, since there is no UI-test target and a `body` is not observable
+    /// in-process. Line height is the closest honest instrument to the thing
+    /// the sites claim.
+    func testTheRealControlRowsAtAX5() {
+        // Composer: `body(14)` on `.body`. Strictly overflows the fixed row.
+        let composer = Theme.lineHeight(14, relativeTo: .body, for: .accessibility5)
+        XCTAssertGreaterThan(composer, Theme.controlSize,
+            "the composer's line still fits a fixed 44pt row at AX5: \(composer)")
+
+        // Resume bar: `mono(11)` on `.caption`. Does NOT overflow on its own —
+        // asserted as such, so nobody reads this leg as claiming it does. What
+        // it claims is that the line has consumed the row: 41.8 of 44, leaving
+        // less than the 16pt horizontal padding's worth vertically, so any
+        // padding at all clips. `minHeight` there is justified by the touch
+        // target regardless, and this bound is what makes the margin visible.
+        let resume = Theme.lineHeight(11, relativeTo: .caption, for: .accessibility5)
+        XCTAssertLessThan(resume, Theme.controlSize,
+            "resume bar now overflows outright — the comment at HomeView:197 "
+            + "understates it and should be rewritten, not this bound relaxed: \(resume)")
+        XCTAssertGreaterThan(resume, Theme.controlSize * 0.9,
+            "resume bar no longer fills the row at AX5, so the minHeight edit "
+            + "rests on the touch-target argument alone: \(resume)")
+
+        // VACUITY FLOOR: at DEFAULT size both sit well inside the row, so the
+        // leg above is about accessibility sizes and not about the sites being
+        // mis-sized everywhere.
+        XCTAssertLessThan(Theme.lineHeight(14, relativeTo: .body, for: .large),
+                          Theme.controlSize * 0.5,
+            "VACUITY FLOOR: the composer already fills half the row at default size")
+        XCTAssertLessThan(Theme.lineHeight(11, relativeTo: .caption, for: .large),
+                          Theme.controlSize * 0.5,
+            "VACUITY FLOOR: the resume bar already fills half the row at default size")
+    }
+
+    /// The distinction the leg above turns on, pinned so it cannot silently
+    /// stop being true: line height EXCEEDS point size at the sizes in use. If
+    /// this ever goes RED the two metrics have converged, and every `lineHeight`
+    /// assertion in this file has quietly become a `scaledSize` assertion.
+    func testLineHeightExceedsPointSize() {
+        for size in [DynamicTypeSize.large, .accessibility5] {
+            let pt = Theme.scaledSize(14, relativeTo: .body, for: size)
+            let lh = Theme.lineHeight(14, relativeTo: .body, for: size)
+            XCTAssertGreaterThan(lh, pt,
+                "line height collapsed to point size at \(size): \(lh) vs \(pt)")
+        }
     }
 }

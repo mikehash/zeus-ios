@@ -108,6 +108,33 @@ enum Theme {
                 preferredContentSizeCategory: uiContentSizeCategory(dynamicTypeSize)))
     }
 
+    /// The height a rendered line of `size` occupies at `dynamicTypeSize` —
+    /// NOT its point size.
+    ///
+    /// This exists because the first version of the fixed-frame leg asserted on
+    /// `scaledSize` alone, which is a POINT SIZE: the em box, not the box the
+    /// glyphs are laid out in. A line is ~1.19x its point size once leading and
+    /// the ascender/descender band are counted, and at the sizes this app
+    /// actually uses that factor is the whole verdict — the composer's 14pt
+    /// body is 39.3pt at AX5 (fits a 44pt row) and 46.9pt of LINE (does not).
+    /// A leg on point size returns the wrong answer at the real call sites, in
+    /// the UNSAFE direction, while looking conservative.
+    ///
+    /// Measured off-render, so it is assertable without a UI-test target.
+    /// `lineHeight` is design-independent on the system face (verified: default,
+    /// rounded and monospaced return identical values at every size in use), so
+    /// one helper serves all three families.
+    static func lineHeight(_ size: CGFloat,
+                           relativeTo style: Font.TextStyle = .body,
+                           for dynamicTypeSize: DynamicTypeSize? = nil) -> CGFloat {
+        // Scale FIRST, then ask the face what a line of that scaled point size
+        // occupies. Asking in the other order scales a line height as if it
+        // were a point size, which is the same category error this helper
+        // exists to fix.
+        UIFont.systemFont(ofSize: scaledSize(size, relativeTo: style, for: dynamicTypeSize))
+            .lineHeight
+    }
+
     /// Wordmark, badges, tab labels. Orbitron when vendored.
     static func display(_ size: CGFloat,
                         _ weight: Font.Weight = .semibold,
