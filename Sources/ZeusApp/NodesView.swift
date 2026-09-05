@@ -212,7 +212,7 @@ struct NodesView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "mic.slash.fill")
-                    .font(.system(size: 16))
+                    .font(Theme.body(16))
                     .foregroundStyle(muted ? Theme.danger : Theme.accent2)
                 Text("KITCHEN MIC")
                     .font(Theme.body(14.5, .semibold))
@@ -252,7 +252,7 @@ struct NodesView: View {
             onToast("NODE ENROLLMENT — SCAN THE NEW DEVICE")
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 14))
+                Image(systemName: "plus").font(Theme.display(14, .regular))
                 Text("ENROLL NODE")
                     .font(Theme.display(9.5, .bold))
                     .tracking(1.9)                         // 0.2em at 9.5pt

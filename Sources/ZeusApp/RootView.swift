@@ -225,7 +225,7 @@ private struct ToastBanner: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark").font(.system(size: 12, weight: .bold))
+            Image(systemName: "checkmark").font(Theme.mono(12, .bold))
             Text(text)
                 .font(Theme.mono(9.5))
                 .tracking(1.14)
@@ -261,7 +261,7 @@ private struct TabBar: View {
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: t.symbol)
-                            .font(.system(size: 17, weight: .medium))
+                            .font(Theme.display(17, .medium))
                         Text(t.label)
                             .font(Theme.display(9))
                             .tracking(Theme.displayTracking)

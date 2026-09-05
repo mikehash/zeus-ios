@@ -175,7 +175,7 @@ struct HomeView: View {
         Button(action: onOpenSession) {
             HStack(spacing: 10) {
                 Image(systemName: session.messages.isEmpty ? "plus.message" : "arrow.uturn.forward")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Theme.mono(13, .semibold))
                 Text(resumeLabel)
                     .font(Theme.mono(11, .semibold))
                     .tracking(1.0)

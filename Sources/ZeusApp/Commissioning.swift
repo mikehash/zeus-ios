@@ -212,7 +212,7 @@ struct CommissioningView: View {
                 // Replaced in place — no modal, no page change (:509-515).
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 16, weight: .heavy))
+                        .font(Theme.mono(16, .heavy))
                         .foregroundStyle(Theme.ok)
                     Text("OPERATOR VERIFIED · MIGUEL")
                         .font(Theme.mono(11))
@@ -373,7 +373,7 @@ private struct PrimaryButton: View {
                     .font(Theme.display(11, .bold))
                     .tracking(2.6)
                 if !glyph.isEmpty {
-                    Image(systemName: glyph).font(.system(size: 14, weight: .bold))
+                    Image(systemName: glyph).font(Theme.display(14, .bold))
                 }
             }
             .foregroundStyle(Theme.onAccent)
