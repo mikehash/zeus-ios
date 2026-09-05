@@ -153,7 +153,11 @@ struct CommissioningView: View {
                 Image(systemName: narrator.voiceOn ? "speaker.wave.2" : "speaker.slash")
                     .font(Theme.body(15))
                     .foregroundStyle(narrator.voiceOn ? Theme.accent2 : Theme.w(0.4))
-                    .frame(minWidth: 34, minHeight: 34)
+                    // A TAP TARGET, so the floor is Theme.controlSize (44), not the
+                    // 34 this well was drawn at. 44 is the floor for things you touch;
+                    // a decorative well takes its own size as the floor instead
+                    // (see NodesView.iconWell, which stays at 38 for that reason).
+                    .frame(minWidth: Theme.controlSize, minHeight: Theme.controlSize)
                     .background(
                         RoundedRectangle(cornerRadius: 9)
                             .fill(narrator.voiceOn ? Theme.r(0.1) : Theme.w(0.04))
@@ -378,9 +382,17 @@ private struct PrimaryButton: View {
             }
             .foregroundStyle(Theme.onAccent)
             .frame(maxWidth: .infinity)
-            // A floor, not a height: the sibling Text above is Theme.display(11, .bold),
-            // which scales with Dynamic Type. A hard 52 clipped it at AX5 BEFORE any
-            // glyph work — found during the glyph walk, fixed here on the sibling alone.
+            // A floor, not a height. The sibling Text above is Theme.display(11, .bold),
+            // which has scaled with Dynamic Type since the Theme routing landed, inside
+            // a frame that could not grow. PRE-EXISTING, reached through Theme routing,
+            // and found during the glyph walk — not caused by the glyph work.
+            //
+            // CLIP PREDICTED, NOT OBSERVED. display(11) at AX5 is roughly 3x — about
+            // 31pt of glyph, 37pt of line — which fits 52 on ONE line. It overflows when
+            // the title wraps, and Text(title) here has no lineLimit, so wrapping at AX5
+            // is likely for any title longer than a word at this tracking. Likely is not
+            // measured, and nothing on this branch can observe a rendered clip.
+            // The fix rests on floor-not-ceiling alone, which holds either way.
             .frame(minHeight: 52)
             .background(
                 RoundedRectangle(cornerRadius: Theme.corner)

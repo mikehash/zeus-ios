@@ -276,6 +276,9 @@ struct NodesView: View {
         Image(systemName: symbol)
             .font(Theme.body(18))
             .foregroundStyle(tint)
+            // 38, NOT Theme.controlSize: this well is decorative and carries no action,
+            // so the 44 tap-target floor does not apply. Raising a non-interactive badge
+            // to 44 is a layout change nobody asked for. Floor at what it is drawn at.
             .frame(minWidth: 38, minHeight: 38)
             .background(Theme.r(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -305,6 +308,9 @@ struct NodeRow: View {
                 Image(systemName: icon)
                     .font(Theme.body(16))
                     .foregroundStyle(danger ? Theme.danger : Theme.accent2)
+                    // Width only, and it stays a width: this is a column slot, so every
+                    // row must agree on it. The VERTICAL axis is unconstrained, which is
+                    // the axis Dynamic Type grows — the glyph is free to get taller.
                     .frame(minWidth: 16)
                 Text(label.uppercased())
                     .font(Theme.body(14.5, .semibold))
@@ -352,6 +358,7 @@ struct NodeSlider: View {
             Image(systemName: icon)
                 .font(Theme.body(15))
                 .foregroundStyle(Theme.w(0.45))
+                // Width only — column slot, same as above. The vertical axis is free.
                 .frame(minWidth: 18)
 
             GeometryReader { geo in
