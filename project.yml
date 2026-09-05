@@ -8,6 +8,20 @@ targets:
     type: application
     platform: iOS
     sources: [Sources/ZeusApp]
+    settings:
+      base:
+        # NAMES THE ICON SET, AND IT IS NAMED HERE BECAUSE THE OTHER PLACE IT
+        # LIVED WAS NOT A DECISION. `xcodegen` emits this key with the value
+        # `AppIcon` by DEFAULT, into `Zeus.xcodeproj/project.pbxproj` — which
+        # `.gitignore` excludes. So before this line, the only thing pointing
+        # at the icon was a generated file nobody chose, nobody could review,
+        # and that was rewritten on every `xcodegen generate`. A default
+        # wearing a decision's clothes. Stating it here makes it tracked
+        # config, reviewable in a diff, and identical in meaning.
+        #
+        # The value is UNCHANGED from what xcodegen already emitted — this
+        # commit does not alter the build, it makes the setting auditable.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     entitlements:
       # POINTS AT a tracked, hand-written file — it is deliberately NOT an
       # inline `properties:` block. An inline block would make xcodegen
@@ -22,7 +36,16 @@ targets:
       # here, never there.
       path: Sources/ZeusApp/Info.plist
       properties:
-        UILaunchScreen: {}
+        # `UILaunchScreen: {}` IS VALID AND IT IS THE BUG. An empty dictionary
+        # is a well-formed launch screen — it renders the SYSTEM DEFAULT
+        # background, which is WHITE in light mode, in front of an app whose
+        # `bg` is 0x0D0806. Near-black app, white flash, every cold start, and
+        # nothing anywhere reports it: no warning, no failing test, no lint.
+        # `UIColorName` points at a tracked colour resource in the catalog, so
+        # the launch background and `Theme.bg` are now the same three bytes
+        # from the same tree.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         CFBundleDisplayName: Zeus
         # WITHOUT THIS, `onOpenURL` NEVER FIRES. The parser and its tests are
         # pure Swift and pass whether or not the app is registered for the
