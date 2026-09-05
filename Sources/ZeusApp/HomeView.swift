@@ -328,9 +328,9 @@ struct LinkCard: View {
 
             Button(action: onRetry) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Theme.mono(12, .semibold))
                     .foregroundStyle(Theme.r(0.9))
-                    .frame(width: Theme.controlSize, height: Theme.controlSize)
+                    .frame(minWidth: Theme.controlSize, minHeight: Theme.controlSize)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Re-probe the gateway")

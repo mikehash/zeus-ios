@@ -151,9 +151,9 @@ struct CommissioningView: View {
                 narrator.voiceOn.toggle()
             } label: {
                 Image(systemName: narrator.voiceOn ? "speaker.wave.2" : "speaker.slash")
-                    .font(.system(size: 15))
+                    .font(Theme.body(15))
                     .foregroundStyle(narrator.voiceOn ? Theme.accent2 : Theme.w(0.4))
-                    .frame(width: 34, height: 34)
+                    .frame(minWidth: 34, minHeight: 34)
                     .background(
                         RoundedRectangle(cornerRadius: 9)
                             .fill(narrator.voiceOn ? Theme.r(0.1) : Theme.w(0.04))
@@ -378,7 +378,10 @@ private struct PrimaryButton: View {
             }
             .foregroundStyle(Theme.onAccent)
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
+            // A floor, not a height: the sibling Text above is Theme.display(11, .bold),
+            // which scales with Dynamic Type. A hard 52 clipped it at AX5 BEFORE any
+            // glyph work — found during the glyph walk, fixed here on the sibling alone.
+            .frame(minHeight: 52)
             .background(
                 RoundedRectangle(cornerRadius: Theme.corner)
                     .fill(Theme.accentGradient)

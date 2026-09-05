@@ -274,9 +274,9 @@ struct NodesView: View {
 
     private func iconWell(_ symbol: String, tint: Color) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 18))
+            .font(Theme.body(18))
             .foregroundStyle(tint)
-            .frame(width: 38, height: 38)
+            .frame(minWidth: 38, minHeight: 38)
             .background(Theme.r(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .overlay(
@@ -303,9 +303,9 @@ struct NodeRow: View {
         Button(action: disabled ? {} : action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 16))
+                    .font(Theme.body(16))
                     .foregroundStyle(danger ? Theme.danger : Theme.accent2)
-                    .frame(width: 16)
+                    .frame(minWidth: 16)
                 Text(label.uppercased())
                     .font(Theme.body(14.5, .semibold))
                     .tracking(0.58)                        // 0.04em at 14.5pt
@@ -350,9 +350,9 @@ struct NodeSlider: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 15))
+                .font(Theme.body(15))
                 .foregroundStyle(Theme.w(0.45))
-                .frame(width: 18)
+                .frame(minWidth: 18)
 
             GeometryReader { geo in
                 let w = geo.size.width

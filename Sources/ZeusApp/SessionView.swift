@@ -263,9 +263,9 @@ struct SessionView: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 19, weight: .bold))
+                .font(Theme.display(19, .bold))
                 .foregroundStyle(Theme.onAccent)
-                .frame(width: Theme.controlSize, height: Theme.controlSize)
+                .frame(minWidth: Theme.controlSize, minHeight: Theme.controlSize)
                 .background(Theme.accentGradient)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
         }

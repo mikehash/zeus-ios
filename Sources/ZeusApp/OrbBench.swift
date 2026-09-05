@@ -115,6 +115,12 @@ enum OrbBench {
 /// A live view of the sweep, reachable in DEBUG only. It is a screen rather
 /// than a log line because the number has to be read on the device that
 /// produced it — a bench result from this Mac says nothing about a phone.
+// The four `.system(size:)` sites below (:125 :129 :133 :137) are the only
+// fixed-point type left in Sources and they stay raw ON PURPOSE: this block
+// is #if DEBUG, OrbBenchView has zero non-comment references outside this
+// file, and a developer bench is not a shipped surface. Routing them through
+// Theme would make the census read clean while changing nothing a user sees.
+// (:137's receiver is Button("RUN") — a Text one indirection down.)
 #if DEBUG
 struct OrbBenchView: View {
     @State private var results: [OrbBench.Result] = []
