@@ -11,14 +11,22 @@
   including the CFBundleURLTypes block that makes the OS route `zeus://`
   to this app.
 
-  THE PREDICTION ABOVE HAS NOW BEEN OBSERVED, not merely reasoned. The
-  UILaunchScreen edit at 35eb4ef required a `xcodegen generate`, and that
-  run deleted this entire block — the diff was 4 insertions, 12 deletions,
-  and the twelve were these lines. It is re-added BY HAND, knowing it dies
-  again on the next generate. That is not a defect to fix here; it is the
-  property the note exists to state, and a warning whose lifetime ends with
-  the event it warns about is worth re-adding precisely because a reader who
-  arrives after a regenerate finds a plist that looks hand-authored.
+  THE PREDICTION HAS NOW BEEN OBSERVED THREE TIMES, and the observations
+  SHARPEN it past what it originally claimed. At 35eb4ef a generate deleted
+  this block whole (4 insertions, 12 deletions, the twelve being these
+  lines). At cc494a5 two further generates left the file BYTE-IDENTICAL,
+  note intact. This commit killed it twice more — once adding the three keys
+  below, once restoring project.yml after the mutation arm.
+
+  So it does not die on INVOCATION. It dies on a CONTENT CHANGE of the
+  rendered plist: xcodegen rewrites the file only when the output differs,
+  and the rewrite is whole-file, so the comment goes with it. Re-added by
+  hand; the next death is the next key someone adds.
+
+  That distinction matters to a reader. "Regenerating destroys this" would
+  have them infer, from a note-less plist, that someone recently ran
+  generate — which is false. A note survives every generate that changes
+  nothing, and dies on every one that changes something.
 -->
 <plist version="1.0">
 <dict>
@@ -53,10 +61,20 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
 		<string>LaunchBackground</string>
 	</dict>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 </dict>
 </plist>

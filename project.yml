@@ -60,6 +60,46 @@ targets:
         UILaunchScreen:
           UIColorName: LaunchBackground
         CFBundleDisplayName: Zeus
+        # PORTRAIT ONLY, AND THE APP HAS NEVER SAID OTHERWISE IN CODE.
+        # Measured at cc494a5: `orientation` is 0 hits across Sources and
+        # Tests (POS ctl `AgentState` 8 on the same corpus, so the zero has a
+        # reporter). Nothing reads it, nothing adapts to it, and no view was
+        # ever laid out against a landscape canvas. Absent this key the OS
+        # supplies its own default — portrait plus BOTH landscapes on iPhone —
+        # so the app currently rotates into two geometries nobody designed and
+        # no leg in this suite can observe. Same organ as the icon name and the
+        # device family: the behaviour was a default nobody chose.
+        #
+        # This is a product statement, not a defect fix. It is one line to
+        # widen the day a landscape layout exists.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # THE FLOOR ON WHAT HARDWARE MAY INSTALL THIS. `arm64` excludes the
+        # 32-bit devices that cannot run an iOS 17 deployment target anyway —
+        # it is redundant with `deploymentTarget` TODAY and it is stated so the
+        # requirement is tracked rather than inferred from a number elsewhere.
+        # Deliberately NOT listing capabilities the app merely uses well
+        # (camera, telephony): every entry here REMOVES devices from the store
+        # listing, and a capability claimed but not required is a silent
+        # narrowing of the install base with no reporter.
+        UIRequiredDeviceCapabilities:
+          - arm64
+        # EXPORT COMPLIANCE, AND IT IS AN ASSUMPTION UNTIL merakizzz CONFIRMS.
+        # Without this key App Store Connect blocks EVERY upload on an
+        # interactive prompt — the declaration is the only thing that makes a
+        # submission non-interactive. `false` asserts the app uses no
+        # non-exempt encryption.
+        #
+        # WHAT IS MEASURED vs WHAT IS DECLARED, because they are not the same:
+        # measured at cc494a5, `CryptoKit`, `CommonCrypto`, `SecKey` and
+        # `CC_SHA` are 0 files across Sources and Tests — the app ships no
+        # custom crypto and speaks HTTPS to its own gateway, which is the
+        # exempt case. But export compliance is a LEGAL declaration about a
+        # shipped binary, not a grep result, and a green census is not
+        # authority to make one. The measurement supports the answer; it does
+        # not constitute it. Confirmation is item 3 on
+        # docs/STORE-UPLOAD-CHECKLIST.md and it gates upload, not this commit.
+        ITSAppUsesNonExemptEncryption: false
         # WITHOUT THIS, `onOpenURL` NEVER FIRES. The parser and its tests are
         # pure Swift and pass whether or not the app is registered for the
         # scheme — so a green suite is not evidence the links work. This block

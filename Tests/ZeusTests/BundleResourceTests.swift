@@ -196,4 +196,80 @@ final class BundleResourceTests: XCTestCase {
                 + "renders the system default (white) before the app draws"
         )
     }
+
+    /// Portrait is DECLARED, not inherited from the OS default.
+    ///
+    /// Absent `UISupportedInterfaceOrientations` the system supplies portrait
+    /// plus both landscapes on iPhone, so the app rotates into two geometries
+    /// nobody laid out. Nothing in Swift can observe that: `orientation` is 0
+    /// hits across Sources and Tests, which is precisely why the OS default
+    /// was invisible for the whole life of this branch.
+    ///
+    /// The assertion is EXACT SET EQUALITY, not `contains`. `contains
+    /// portrait` is satisfied by the OS default too — it would be green on the
+    /// tree this leg was written to change, which makes it no instrument at
+    /// all. Equality is the only form that separates "we chose portrait" from
+    /// "we chose nothing and portrait happens to be in the list".
+    func testTheAppDeclaresPortraitOnly() throws {
+        let app = try hostAppBundle()
+        let declared = app.object(
+            forInfoDictionaryKey: "UISupportedInterfaceOrientations"
+        ) as? [String]
+        XCTAssertEqual(
+            declared,
+            ["UIInterfaceOrientationPortrait"],
+            "orientations are not exactly [portrait] — the app either "
+                + "inherits the OS default (portrait + both landscapes) or "
+                + "claims a geometry no view was laid out against"
+        )
+    }
+
+    /// Export compliance is answered in the plist, so uploads are not
+    /// interactive.
+    ///
+    /// APERTURE, AND IT IS THE POINT OF THIS LEG: this asserts the key is
+    /// PRESENT and `false`. It cannot and does not verify that `false` is the
+    /// legally correct answer — that is a statement about a shipped binary
+    /// under export regulation, and no test in any suite can make it. The
+    /// supporting census (`CryptoKit`, `CommonCrypto`, `SecKey`, `CC_SHA` = 0
+    /// files) lives in project.yml beside the key; confirmation is merakizzz's
+    /// and it gates upload.
+    ///
+    /// What this leg genuinely guards is the ABSENCE case: without the key,
+    /// App Store Connect blocks every upload on a prompt, and nothing in the
+    /// build reports that until someone is mid-submission.
+    func testExportComplianceIsDeclared() throws {
+        let app = try hostAppBundle()
+        let declared = app.object(
+            forInfoDictionaryKey: "ITSAppUsesNonExemptEncryption"
+        ) as? Bool
+        XCTAssertEqual(
+            declared,
+            false,
+            "ITSAppUsesNonExemptEncryption is absent or true — every upload "
+                + "stalls on an interactive export-compliance prompt"
+        )
+    }
+
+    /// The device-capability floor is stated rather than inferred.
+    ///
+    /// Redundant with the iOS 17 deployment target TODAY — every device that
+    /// can run iOS 17 is arm64 — and that redundancy is the reason to assert
+    /// it: the requirement stops being a consequence of a number in a
+    /// different file. The leg is exact-set for the same reason as the
+    /// orientation one, and it is the reporter if anyone ever adds a
+    /// capability here, because each entry silently REMOVES devices from the
+    /// store listing with no other signal.
+    func testTheDeviceCapabilityFloorIsExactlyArm64() throws {
+        let app = try hostAppBundle()
+        let caps = app.object(
+            forInfoDictionaryKey: "UIRequiredDeviceCapabilities"
+        ) as? [String]
+        XCTAssertEqual(
+            caps,
+            ["arm64"],
+            "required capabilities are not exactly [arm64] — an added entry "
+                + "narrows the install base with no other reporter"
+        )
+    }
 }
