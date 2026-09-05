@@ -133,7 +133,8 @@ xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1
 #
 # They are captured into a separate directory and are not uploaded. Their
 # job is to be looked at, and to prove one thing mechanically: that the app
-# responds to the setting at all. An app that ignored Dynamic Type entirely
+# responds to the setting at all. Mechanically here means "when this script
+# is run" — not "when the suite is run". An app that ignored Dynamic Type entirely
 # would produce an AX5 frame IDENTICAL to its default frame — and that is a
 # collision, which the verifier already reports.
 AXOUT="$OUT/../store-screenshots-ax5"
@@ -165,9 +166,16 @@ python3 "$REPO/scripts/verify_store_screens.py" "$OUT" || exit $?
 echo "--- ax5 set ---"
 python3 "$REPO/scripts/verify_store_screens.py" "$AXOUT" || exit $?
 
-# The cross-set leg: same tab, two content sizes, MUST differ. This is the
-# only assertion in the repo whose subject is a laid-out view rather than a
-# derived number.
+# The cross-set leg: same tab, two content sizes, MUST differ.
+#
+# SCOPE, so nobody looks for this where it is not: this is an OBSERVATION
+# made by this script, not a leg in the suite. `xcodebuild test` does not
+# run it and never will — the 200 tests in the suite assert on derived
+# numbers (point sizes, line heights, plist values), and none of them has a
+# laid-out view as its subject. That aperture, stated on every accessibility
+# commit since f4e8152, is closed HERE, by a shell script somebody has to
+# invoke, on a machine with a simulator. Calling it an assertion invites the
+# next reader to grep the test target for it and conclude it was deleted.
 echo "--- default vs AX5, same tab ---"
 X="$OUT/../.zeus-axcmp"; rm -rf "$X"; mkdir -p "$X"
 cp "$OUT/2-zeus.png"   "$X/a-default.png"
