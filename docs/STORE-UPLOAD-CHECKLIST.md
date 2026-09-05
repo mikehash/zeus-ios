@@ -59,3 +59,42 @@ build: `CFBundleIconName` present (top-level or nested under
 bundle, `Assets.car` beside the plist, `UILaunchScreen.UIColorName` naming
 the dark background, and `UIDeviceFamily` equal to `[1]`. Those are
 packaging facts and they have a reporter. Everything above does not.
+
+## Screenshots — how the set is produced, and what it is NOT
+
+`scripts/capture_store_screens.sh` builds Debug, installs to an iPhone 17 Pro
+Max simulator (1320×2868, the 6.9" class App Store Connect requires for a
+`TARGETED_DEVICE_FAMILY = "1"` submission), and captures four frames:
+
+| frame | launch arguments | what it photographs |
+|---|---|---|
+| `1-commissioning` | *(none)* | the real cold-start path |
+| `2-zeus` | `-zeusSeedCommission -zeusTab zeus` | console, ZEUS tab |
+| `3-session` | `-zeusSeedCommission -zeusTab session` | console, SESSION tab |
+| `4-nodes` | `-zeusSeedCommission -zeusTab nodes` | console, NODES tab |
+
+Output lands in `build/store-screenshots/`, which is **gitignored** — the set
+is reproducible from the script, so the PNGs are an output, not a source.
+Re-run the script rather than committing frames; a tracked frame goes stale
+the first time the UI moves and nothing reports it.
+
+**The failure the set is guarded against.** `LaunchArgs.initialTab` falls back
+to `.zeus` on an unrecognised value, and *every* `LaunchArgs` member is
+`#if DEBUG`. So a typo'd `-zeusTab sesion`, or a Release build, produces four
+well-formed, correctly-sized PNGs in which every frame is the same screen.
+File-exists, non-zero-bytes and 1320×2868 are all **green** on that set.
+`scripts/verify_store_screens.py` is the only thing that isn't: it downsamples
+each frame to a 12×24 grid of cell averages and requires the frames to differ.
+Measured band on this box — same screen twice: **d = 3**; nearest genuinely
+distinct pair: **d = 102**; tolerance **6**. Both bounds print on every run.
+
+**Aperture.** Frames 2–4 are a *seeded* app: they prove the console renders
+given a commission, not that the commissioning flow can produce one. Frame 1
+is unargumented for exactly that reason.
+
+- [ ] **Re-shoot after the real icon lands.** The frames above were captured
+      on the placeholder build. The icon is not visible in any frame (no
+      springboard shot), so this is a low-risk re-run, but the set should
+      match the submitted binary.
+- [ ] **Copy** — App Store description, keywords, subtitle, promotional text.
+      Not written. Not a code artefact; no leg can guard it.
