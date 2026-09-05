@@ -110,6 +110,20 @@ final class BundleResourceTests: XCTestCase {
     /// "an icon set exists" from "an icon IMAGE compiled". `actool` writes
     /// rasterised PNGs beside the product for the primary icon; their
     /// presence is bytes derived from the artwork, which config cannot fake.
+    ///
+    /// 🔴 THE ARTWORK THIS LEG IS GREEN AGAINST IS A PLACEHOLDER.
+    /// `AppIcon-1024-PLACEHOLDER.png` is a generated mark — a dark field and a
+    /// red glyph, five sampled colours — not brand artwork, and it is a
+    /// TRACKED file, so it ships if nobody replaces it. This leg asserts
+    /// PACKAGING and is blind to that: it is exactly as green on the
+    /// placeholder as it will be on the real icon, by design, because its
+    /// subject is whether `actool` produced an image at all.
+    ///
+    /// The replacement is merakizzz's lane (1024² source, no alpha). The gate
+    /// is NOT here — a leg pinning the placeholder's sha would go red on the
+    /// good event, which trains the reader to delete it. It is a hard item on
+    /// the upload checklist instead: `docs/STORE-UPLOAD-CHECKLIST.md`, item
+    /// "icon sha ≠ placeholder sha", blocking submission, not the suite.
     func testTheCatalogRasterisedAnIcon() throws {
         let app = try hostAppBundle()
         let names = (try? FileManager.default.contentsOfDirectory(atPath: app.bundleURL.path)) ?? []
@@ -136,6 +150,32 @@ final class BundleResourceTests: XCTestCase {
             FileManager.default.fileExists(atPath: car.path),
             "Assets.car absent from \(app.bundleURL.lastPathComponent) — no "
                 + "asset catalog was compiled into the product"
+        )
+    }
+
+    /// The BUILT product claims iPhone only.
+    ///
+    /// THE REPORTER FOR A LINE THAT LIVES IN A TRACKED FILE BUT ACTS THROUGH
+    /// AN UNTRACKED ONE. `TARGETED_DEVICE_FAMILY: "1"` is stated in
+    /// `project.yml`, but what reaches the product is whatever the pbxproj
+    /// carries — and `.gitignore` excludes the pbxproj, so a stale or
+    /// regenerated project can put "1,2" back with the tracked config still
+    /// reading "1" in the diff. Neither a grep of `project.yml` nor a review
+    /// of the commit can tell those apart; only the built plist can.
+    ///
+    /// `UIDeviceFamily` is the plist form of that setting: `[1]` iPhone,
+    /// `[1, 2]` iPhone and iPad. Claiming iPad makes an iPad screenshot set
+    /// MANDATORY at submission for a canvas nothing here has laid out, so the
+    /// wrong value costs a rejected upload rather than a crash.
+    func testTheBuiltProductClaimsIPhoneOnly() throws {
+        let app = try hostAppBundle()
+        let families = app.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int]
+        XCTAssertEqual(
+            families,
+            [1],
+            "UIDeviceFamily=\(families.map(String.init(describing:)) ?? "absent") "
+                + "in the built product; project.yml says \"1\". The pbxproj is "
+                + "untracked, so this disagreement is invisible in a diff."
         )
     }
 

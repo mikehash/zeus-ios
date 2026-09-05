@@ -22,6 +22,19 @@ targets:
         # The value is UNCHANGED from what xcodegen already emitted — this
         # commit does not alter the build, it makes the setting auditable.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # iPHONE ONLY, AND IT IS STATED HERE FOR THE SAME REASON AS THE LINE
+        # ABOVE. xcodegen defaults this to "1,2" — iPhone AND iPad — into the
+        # untracked pbxproj, so before this line the app CLAIMED iPad and
+        # nobody had chosen that. Measured at baf0e1d: `UIScreen`,
+        # `horizontalSizeClass` and `idiom` are 0 hits across Sources. Nothing
+        # in this app has ever considered a large canvas, and claiming iPad
+        # also makes iPad screenshots MANDATORY in App Store Connect — it
+        # doubles the capture set for a form factor never rendered.
+        #
+        # "1" is honest about what was built. It is one line to reverse the
+        # day someone lays out a split view. iPad remains a product question
+        # for merakizzz; this is the default until he answers.
+        TARGETED_DEVICE_FAMILY: "1"
     entitlements:
       # POINTS AT a tracked, hand-written file — it is deliberately NOT an
       # inline `properties:` block. An inline block would make xcodegen

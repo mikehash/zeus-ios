@@ -1,7 +1,7 @@
 {
   "images": [
     {
-      "filename": "AppIcon-1024.png",
+      "filename": "AppIcon-1024-PLACEHOLDER.png",
       "idiom": "universal",
       "platform": "ios",
       "size": "1024x1024"
@@ -10,5 +10,8 @@
   "info": {
     "author": "xcode",
     "version": 1
+  },
+  "properties": {
+    "zeus-artwork-status": "PLACEHOLDER \u2014 generated mark, not brand artwork. Replace before upload."
   }
 }
