@@ -62,7 +62,7 @@ struct RootView: View {
     /// affordances for one sheet, and a per-tab flag would let both tabs
     /// believe their own editor was open.
     @State private var gatewayEditor = false
-    @State private var gatewayEditorConfig: GatewayConfig = .absent
+    @State private var gatewayEditorConfig: GatewayConfig? = nil
 
     /// The session loop. RootView READS the transcript and calls `send`; it
     /// cannot append a message or set an agent state, because neither is
@@ -90,6 +90,12 @@ struct RootView: View {
     /// with no store in scope, and therefore permanently on the env-only half
     /// of resolution.
     @StateObject private var routes: RouteCatalogStore
+
+    /// The gateway token store. Keychain in production, in-memory under
+    /// `-zeusInMemoryTokens` — chosen at init from the launch-argument seam,
+    /// the same switch the commission seed uses, so capture and test launches
+    /// take the deterministic branch without a second construction site.
+    private let tokens: GatewayTokenStoring
 
     /// The one resolution this view performs, kept so `content` reads a value
     /// rather than re-resolving per render.
@@ -123,6 +129,9 @@ struct RootView: View {
         let resolution = RootView.resolve(store: store)
         self.resolution = resolution
         self.push = push
+        self.tokens = LaunchArgs.useInMemoryTokens
+            ? InMemoryTokenStore()
+            : GatewayTokenStore()
         let config = resolution.config
         _session = StateObject(wrappedValue: SessionEngine(
             makeTransport: { box in Zeus.makeTransport(for: config, sessionID: box) }
@@ -159,9 +168,10 @@ struct RootView: View {
             // toast but a higher zIndex so an editor opened while a toast is
             // up draws above it — the editor is a decision, the toast is a
             // receipt, and the decision outranks it.
-            if gatewayEditor {
-                GatewayEditorSheet(config: gatewayEditorConfig,
+            if let config = gatewayEditorConfig, gatewayEditor {
+                GatewayEditorSheet(config: config,
                                    resolution: resolution,
+                                   tokens: tokens,
                                    isPresented: $gatewayEditor,
                                    onToast: showToast)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -252,11 +262,11 @@ struct RootView: View {
             // which is why it ships with restore rather than behind it.
             HomeView(link: link, session: session, push: push,
                      onOpenSession: { tab = .session }, approvals: approvals,
+                     resolution: resolution,
                      onOpenGatewayEditor: { config in
                          gatewayEditorConfig = config
                          gatewayEditor = true
-                     },
-                     resolution: resolution)
+                     })
         case .session:
             SessionView(
                 messages: session.messages,
@@ -295,11 +305,11 @@ struct RootView: View {
             )
         case .nodes:
             NodesView(link: link.state, routes: routes, onToast: showToast,
+                      resolution: resolution,
                       onOpenGatewayEditor: { config in
                           gatewayEditorConfig = config
                           gatewayEditor = true
-                      },
-                      resolution: resolution)
+                      })
         }
     }
 }

@@ -81,8 +81,7 @@ struct NodesView: View {
     /// The arm the console was built from. RECEIVED, not re-derived —
     /// `RootView` measured it once at `init`; a second resolver call over
     /// the same store here would be two pictures of one decision.
-    var resolution: GatewayConfig.Resolution =
-        GatewayConfig.Resolution(config: .absent, source: .unset)
+    var resolution: GatewayConfig.Resolution
 
     var body: some View {
         ScrollView {
