@@ -14,7 +14,43 @@ import Foundation
 enum GatewayConfig: Equatable {
 
     /// Nothing supplied. Not an error — a fact about this build.
+    ///
+    /// **This arm means NOTHING IS LISTENING**, and it kept that meaning
+    /// through the embedded-gateway cut. It was tempting to re-point it at the
+    /// local core — "no remote gateway set" and "run locally" describe the same
+    /// tap-through — and that would have been the smaller diff and the bigger
+    /// lie: the arm that asserts the app cannot work cannot become the arm
+    /// where it does. Twelve tests stand on this meaning and still test what
+    /// they were written to test. `.local` is a new value, below.
     case absent
+
+    /// The gateway runs IN THIS PROCESS — the Rust core linked as a static
+    /// archive, reached through `EmbeddedTransport`. No endpoint, no network.
+    ///
+    /// ## The third state, and why it is a value rather than a runtime failure
+    ///
+    /// Local-vs-remote is not binary. `ZeusCore.send` returns
+    /// `BridgeError::NoProvider` unless `setProvider` has run, so "local" with
+    /// no key is a real, reachable, *third* condition — and if it were only
+    /// discoverable by sending, the operator would learn about it as a failed
+    /// turn in the transcript. A configuration fact should be RENDERED BEFORE
+    /// THE FIRST SEND, not thrown at the first send.
+    ///
+    /// So the readiness is carried in the value: `.local(.ready)` arms the
+    /// composer, `.local(.noProvider)` disarms it and says
+    /// `NO PROVIDER — SET ONE IN ROUTES`. `BridgeError::NoProvider` remains
+    /// wired as a backstop (`EmbeddedTransport.describe`) with the same words,
+    /// so the two cannot drift into two explanations of one state — but on the
+    /// intended path it is unreachable.
+    case local(LocalReadiness)
+
+    /// Whether the embedded core has a route to a model yet.
+    enum LocalReadiness: String, Equatable {
+        /// A provider and key are set; a send will reach a model.
+        case ready
+        /// The core is live and has no provider. The composer is disarmed.
+        case noProvider
+    }
 
     /// Something was supplied and could not be turned into a usable endpoint.
     /// `raw` is carried verbatim so the failure can quote the operand rather
@@ -88,10 +124,43 @@ enum GatewayConfig: Equatable {
 
     /// One-line description for a receipt or a transcript. Never includes the
     /// token — the `resolved` arm prints the endpoint only.
+    /// The one sentence shown when the local core has no provider.
+    ///
+    /// A constant because it is said in TWO places — the disarmed composer and
+    /// the `BridgeError::NoProvider` backstop — and two spellings of one state
+    /// is how an operator ends up believing they are two states.
+    static let noProviderMessage = "NO PROVIDER — SET ONE IN ROUTES"
+
+    /// Why the composer must be disarmed, or `nil` if it should be armed.
+    ///
+    /// EXHAUSTIVE with no `default`, so a fifth config case cannot be added
+    /// without deciding whether it can send.
+    ///
+    /// Only `.local(.noProvider)` disarms. The unwired arms (`.absent`,
+    /// `.malformed`) deliberately DO NOT: their transports fail loudly on
+    /// send, and that failure landing in the transcript is the designed signal
+    /// — disarming them would hide a broken build behind a greyed-out button.
+    /// `.local(.noProvider)` is different in kind: it is not a broken build,
+    /// it is an unfinished setup with a known next action, and the operator
+    /// can act on it.
+    var disarmReason: String? {
+        switch self {
+        case .local(.noProvider):     return Self.noProviderMessage
+        case .local(.ready):          return nil
+        case .absent:                 return nil
+        case .malformed:              return nil
+        case .resolved:               return nil
+        }
+    }
+
     var summary: String {
         switch self {
         case .absent:
             return "\(Self.urlKey) unset"
+        case .local(.ready):
+            return "local core (in-process)"
+        case .local(.noProvider):
+            return "local core (in-process, no provider)"
         case let .malformed(raw, reason):
             return "\(Self.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)"
         case let .resolved(endpoint):

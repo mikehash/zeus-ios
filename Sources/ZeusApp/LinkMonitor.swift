@@ -55,6 +55,19 @@ enum LinkState: Equatable {
     /// pill does not flicker through an intermediate state every poll.
     case probing
 
+    /// The gateway runs IN THIS PROCESS. There is no link to measure.
+    ///
+    /// This arm exists because neither neighbour could tell the truth about
+    /// `.local`: `.unconfigured` says "no gateway configured" — false, there is
+    /// one and it is running — and `.linked` carries `host` and `ms`, two
+    /// values no probe produced and which would have to be invented. A
+    /// fabricated round-trip on a status pill is the exact defect the
+    /// `t-12min` literal was deleted for.
+    ///
+    /// It is also NOT probed: `start()` opens no poll loop for it. A local core
+    /// has no endpoint, and a health check against yourself measures nothing.
+    case embedded
+
     /// `/health` answered 2xx. Round-trip in milliseconds, for the status line.
     case linked(host: String, ms: Int)
 
@@ -67,6 +80,12 @@ enum LinkState: Equatable {
     var isLinked: Bool {
         switch self {
         case .linked:                                   return true
+        // TRUE, and it is the one arm where the word needs defending: nothing
+        // was measured. `isLinked` gates whether the console can talk to a
+        // core, and an embedded core is reachable BY CONSTRUCTION — it is in
+        // this address space. Returning false would disable the console
+        // against a working gateway.
+        case .embedded:                                 return true
         case .unconfigured, .probing, .unreachable:     return false
         }
     }
@@ -79,6 +98,11 @@ enum LinkState: Equatable {
         switch self {
         case .unconfigured:
             return "NO GATEWAY · SET ZEUS_GATEWAY_URL"
+        // Names WHERE the core is, and deliberately reports no latency: the
+        // other three informative arms carry a measurement, and this one has
+        // none to carry.
+        case .embedded:
+            return "LOCAL · ON THIS PHONE"
         case .probing:
             return "LINKING…"
         case .linked(let host, let ms):
@@ -95,6 +119,8 @@ enum LinkState: Equatable {
         switch self {
         case .unconfigured:
             return "no gateway configured"
+        case .embedded:
+            return "running on this phone"
         case .probing:
             return "probing…"
         case .linked(let host, let ms):
@@ -112,6 +138,10 @@ enum LinkState: Equatable {
         case .unconfigured:  return "UNSET"
         case .probing:       return "LINKING"
         case .linked:        return "LINKED"
+        // NOT "LINKED": that word means a remote gateway answered a probe, and
+        // reusing it here would make the two indistinguishable on the one
+        // surface whose entire job is telling them apart.
+        case .embedded:      return "LOCAL"
         case .unreachable:   return "REMOTE"
         }
     }
@@ -125,6 +155,7 @@ enum LinkState: Equatable {
         case .unconfigured:  return Theme.w(0.35)
         case .probing:       return Theme.info
         case .linked:        return Theme.ok
+        case .embedded:      return Theme.ok
         case .unreachable:   return Theme.warn
         }
     }
@@ -235,6 +266,11 @@ final class LinkMonitor: ObservableObject {
         switch config {
         case .resolved:                 self.state = .probing
         case .absent, .malformed:       self.state = .unconfigured
+        // No poll loop opens for this arm (`start()` guards on `.resolved`),
+        // so this is a TERMINAL state, not an initial one. That is correct:
+        // an in-process core has nothing to probe, and the pill should never
+        // move off it.
+        case .local:                    self.state = .embedded
         }
     }
 
@@ -281,6 +317,11 @@ final class LinkMonitor: ObservableObject {
     func suspend() {
         stop()
         if case .unconfigured = state { return }
+        // Same exemption, same reason: `.embedded` is not a measurement that
+        // can go stale. The core does not stop existing while the app is
+        // backgrounded, and showing LINKING… for it would advertise a probe
+        // that never runs.
+        if case .embedded = state { return }
         state = .probing
     }
 

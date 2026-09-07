@@ -56,6 +56,24 @@ struct SessionView: View {
     /// Tapping the mic. Toggles — the same button starts and stops.
     var onVoice: () -> Void = {}
 
+    /// Why sending is impossible right now, or `nil` if it is possible.
+    ///
+    /// A STRING rather than a Bool, because a disarmed composer with no reason
+    /// is a dead button: the operator sees that it does not work and has no way
+    /// to learn why. The value is `GatewayConfig.disarmReason` — today only
+    /// `.local(.noProvider)` produces one.
+    ///
+    /// Rendered BEFORE the first send. The bridge would also refuse the turn
+    /// (`BridgeError::NoProvider`), but discovering a configuration fact as a
+    /// failed message in the transcript teaches the operator that the app is
+    /// broken rather than that the setup is unfinished.
+    var disarmReason: String? = nil
+
+    // DECLARED LAST, and that is load-bearing: Swift's memberwise init fixes
+    // argument order to declaration order, so this property's position in the
+    // file IS the position of `disarmReason:` at the call site.
+
+
     @State private var input: String = ""
 
     private var trimmed: String {
@@ -73,6 +91,23 @@ struct SessionView: View {
     static func sessionTitle(for id: String?) -> String {
         guard let id, !id.isEmpty else { return "SESSION · —" }
         return "SESSION · " + id.prefix(8).uppercased()
+    }
+
+    /// Whether a send can proceed. THE predicate, used by both the button's
+    /// `enabled:` and by `send()` — two call sites, one decision.
+    ///
+    /// `static` and pure for the reason `sessionTitle` is: a SwiftUI body is
+    /// not observable in-process (this target has no ViewInspector), so a
+    /// predicate left inline in the view is guardable only by screenshot.
+    ///
+    /// 🔴 APERTURE, stated because the guard is narrower than it looks: this
+    /// function is tested; the two lines that CALL it are not. A mutation that
+    /// replaces `enabled: SessionView.canSend(...)` with `enabled: true`
+    /// survives the whole suite — measured, not feared (MUT-3 at this commit).
+    /// One decision in one testable place is a smaller unguarded surface than
+    /// two inline expressions, not a closed one.
+    static func canSend(trimmedInput: String, disarmReason: String?) -> Bool {
+        disarmReason == nil && !trimmedInput.isEmpty
     }
 
     var body: some View {
@@ -94,6 +129,22 @@ struct SessionView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 6)
                     .accessibilityLabel(line)
+            }
+            // SAID, not merely enforced. The same row the voice states use,
+            // for the same reason: a disabled control tells the operator that
+            // something is off, and only text tells them which thing and what
+            // to do about it. `NO PROVIDER — SET ONE IN ROUTES` names the
+            // destination, so the sentence is an instruction rather than a
+            // diagnosis.
+            if let reason = disarmReason {
+                Text(reason)
+                    .font(Theme.mono(10))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.warn)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .accessibilityLabel(reason)
             }
             composer
         }
@@ -282,7 +333,15 @@ struct SessionView: View {
                              enabled: voiceState.isActionable,
                              action: onVoice)
             } else {
-                accentButton(symbol: "arrow.up", label: "Send", action: send)
+                // `enabled` carries the disarm: with no provider the arrow is
+                // visibly dead rather than absent. Hiding it would make the
+                // composer look like a build without sending at all, which is
+                // a different (and unfixable-looking) claim.
+                accentButton(symbol: "arrow.up",
+                             label: "Send",
+                             enabled: SessionView.canSend(trimmedInput: trimmed,
+                                                          disarmReason: disarmReason),
+                             action: send)
             }
         }
         .padding(.horizontal, 16)
@@ -333,8 +392,12 @@ struct SessionView: View {
     }
 
     private func send() {
+        // Guarded HERE as well as by `.disabled`, because `.onSubmit` fires on
+        // the keyboard's return key and does not consult the button's disabled
+        // state. Without this, hitting return would send a turn the UI just
+        // said was impossible.
         let t = trimmed
-        guard !t.isEmpty else { return }
+        guard SessionView.canSend(trimmedInput: t, disarmReason: disarmReason) else { return }
         onSend(t)
         input = ""
     }

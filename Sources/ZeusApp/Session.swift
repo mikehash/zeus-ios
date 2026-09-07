@@ -62,6 +62,16 @@ enum TransportError: LocalizedError, Equatable {
     /// would send the operator to check the network for a model failure.
     case agentFailed(reason: String)
 
+    /// The EMBEDDED core failed — the gateway running in this process.
+    ///
+    /// Distinct from every arm above it because none of them can be true here:
+    /// there is no host to be unreachable, no status code to be refused with,
+    /// no body to be malformed. Routing an in-process failure onto
+    /// `.unreachable` would send the operator to check a network that was
+    /// never used. Carries the bridge's own message verbatim
+    /// (`EmbeddedTransport.describe`) rather than a category.
+    case embedded(detail: String)
+
     var errorDescription: String? {
         switch self {
         case .unconfigured:
@@ -82,6 +92,9 @@ enum TransportError: LocalizedError, Equatable {
         case let .malformedResponse(detail):
             return "BAD GATEWAY RESPONSE — \(detail). "
                  + "The request succeeded and the body was not a usable reply."
+        case let .embedded(detail):
+            return "LOCAL CORE ERROR — \(detail). "
+                 + "The gateway runs in this app; no network was involved."
         }
     }
 }
@@ -129,13 +142,25 @@ struct MisconfiguredTransport: SessionTransport {
 /// property of a request, not of a config, and pretending otherwise would put a
 /// network call on the app's launch path.
 ///
-/// `sessionID` is threaded in rather than constructed here. Two of the three
+/// `sessionID` is threaded in rather than constructed here. Two of the four
 /// arms DISCARD it — `.absent` and `.malformed` return conformers that never
 /// reach a wire and have no id to carry — so the signature over-promises, and
-/// says so here rather than letting a reader infer all three thread context.
-/// The parameter is still required on all three: the caller owning the box is
+/// says so here rather than letting a reader infer all four thread context.
+/// The parameter is still required on all four: the caller owning the box is
 /// the whole point, and an arm-specific overload would put the decision back
 /// where it cannot be checked.
+///
+/// `.local` returns an `EmbeddedTransport` over the in-process Rust core. It
+/// carries the sessionID for the same reason `.resolved` does — the core keeps
+/// per-session history — and BOTH readiness values return the same transport:
+/// `.noProvider` is rendered by the surface before a send (see
+/// `GatewayConfig.disarmReason`), not by handing back a crippled wire. A
+/// separate no-provider transport would put one state in two places.
+///
+/// A failed `EmbeddedCore.shared` is the one asymmetry: the core could not
+/// start, so there is nothing to talk to, and that is a *misconfiguration*
+/// with a quotable reason rather than an absence. It routes to
+/// `MisconfiguredTransport` naming the bridge's own error.
 func makeTransport(for config: GatewayConfig, sessionID: SessionIDBox) -> SessionTransport {
     switch config {
     case .absent:
@@ -145,6 +170,15 @@ func makeTransport(for config: GatewayConfig, sessionID: SessionIDBox) -> Sessio
             detail: "\(GatewayConfig.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)")
     case let .resolved(endpoint):
         return HTTPTransport(endpoint: endpoint, sessionID: sessionID)
+    case .local:
+        switch EmbeddedCore.shared {
+        case let .success(core):
+            return EmbeddedTransport(core: core, sessionID: sessionID)
+        case let .failure(error):
+            return MisconfiguredTransport(
+                detail: "local core failed to start: "
+                      + EmbeddedTransport.describe(error))
+        }
     }
 }
 

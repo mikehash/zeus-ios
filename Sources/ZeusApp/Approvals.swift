@@ -358,6 +358,15 @@ final class ApprovalsStore: ObservableObject {
         switch config {
         case .absent, .malformed: self.state = .unconfigured(config.summary)
         case .resolved:           self.state = .loading
+        // An approval is a request from an AGENT LOOP to run a tool. The
+        // embedded core has no agent loop until zeus107's `automation` feature
+        // gate lands, so `.local` cannot produce one — this is emptiness by
+        // construction, not an empty list from a gateway that might fill it.
+        //
+        // Said in its own words rather than `config.summary`: the operator
+        // needs "nothing can arrive here yet", not "the core is in-process".
+        case .local:
+            self.state = .unconfigured("local core has no agent loop yet")
         }
     }
 

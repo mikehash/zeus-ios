@@ -294,6 +294,18 @@ final class RouteCatalogStore: ObservableObject {
             self.state = .unconfigured(config.summary)
         case .resolved:
             self.state = .loading
+        // The route catalogue is `GET /v1/providers` — an HTTP surface the
+        // embedded core does not have. The v1 bridge exports `setProvider` and
+        // NO enumeration (`zeus_core_bridge.swift:492-547`), so there is no
+        // list to fetch and `.loading` would spin forever against a fetcher
+        // that can never be called (`load()` guards on `.resolved`).
+        //
+        // Reported through `.unconfigured` because that arm means "no catalogue
+        // and here is why", which is exactly true — with its own sentence
+        // rather than `config.summary`, so the reader is told what is missing
+        // instead of where the core is.
+        case .local:
+            self.state = .unconfigured("local core enumerates no providers yet")
         }
     }
 

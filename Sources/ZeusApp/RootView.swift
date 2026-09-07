@@ -218,7 +218,12 @@ struct RootView: View {
                 // moving them away from it mid-utterance would hide the one
                 // thing they need to check before sending.
                 voiceState: voice.state,
-                onVoice: voice.toggle
+                onVoice: voice.toggle,
+                // Resolved HERE rather than inside the view, for the same
+                // reason `voiceState` is: a `View` body cannot read the
+                // environment, and a config read in a body would re-run on
+                // every render. One read, one owner, rendered downstream.
+                disarmReason: GatewayConfig.resolve().disarmReason
             )
         case .nodes:
             NodesView(link: link.state, onToast: showToast)
