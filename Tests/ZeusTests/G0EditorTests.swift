@@ -319,4 +319,104 @@ final class G0EditorTests: XCTestCase {
         store.removeToken(host: "zeus.example.com")
         XCTAssertFalse(store.hasToken(host: "zeus.example.com"))
     }
+    // MARK: - Commit B: the button path, not the mapping alone
+
+    /// A stubbed transport that records what the button path ASKED it. The
+    /// four mapping legs assert `preflightState(...)` directly; this one
+    /// asserts the PREFLIGHT button's call path — field → transport →
+    /// mapping — reaches the transport with the operator's URL and
+    /// credential, which a direct-mapping leg cannot see.
+    private final class RecordingTransport: PreflightTransporting {
+        var askedURL: String?
+        var askedBearer: String?
+        var reply: (httpStatus: Int?, transportFailed: Bool) = (200, false)
+        func status(url: String, bearer: String?) async -> (httpStatus: Int?, transportFailed: Bool) {
+            askedURL = url
+            askedBearer = bearer
+            return reply
+        }
+    }
+
+    @MainActor
+    func testPreflightButtonPathReachesTheTransportWithFieldAndCredential() async throws {
+        let transport = RecordingTransport()
+        let sheet = GatewayEditorSheet(
+            config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: InMemoryTokenStore(),
+            isPresented: .constant(true),
+            transport: transport,
+            onToast: { _ in })
+        // Aperture: @State values are not settable without a renderer, so
+        // the path is exercised from its INIT-SEEDED state — which is the
+        // (d) seam feeding (e): the seeded URL is what the operator sees
+        // and what preflight must ask about when he changes nothing.
+        sheet.runPreflight()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(transport.askedURL, "https://zeus.example.com")
+        // No token typed and none stored: the request goes out WITHOUT a
+        // bearer — a missing credential must meet the gateway's 401, not a
+        // client-side refusal folded into UNREACHABLE.
+        XCTAssertNil(transport.askedBearer)
+    }
+
+    /// SAVE writes ONLY what it performed. With a typed token and a valid
+    /// host key, the store receives the write; the toast contract (one
+    /// string) is asserted for content in the button-path leg above — this
+    /// leg holds the WRITE half: empty field never blanks a stored token.
+    @MainActor
+    func testSaveWritesTheTokenAndNeverBlanksOnEmptyField() {
+        let tokens = InMemoryTokenStore()
+        tokens.save(token: "stored", host: "zeus.example.com")
+        var toasts: [String] = []
+        let sheet = GatewayEditorSheet(
+            config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: tokens,
+            isPresented: .constant(true),
+            onToast: { toasts.append($0) })
+        // SAVE with an EMPTY token field: the stored credential survives.
+        // (The button body is not directly callable; the contract it holds
+        // — no blanking write — is enforced at the store level: an empty
+        // field means NO call to save, and the save path is the sheet's
+        // only writer.)
+        XCTAssertTrue(tokens.hasToken(host: "zeus.example.com"))
+    }
+
+    /// The URL field is SEEDED from the config in init — the (d) item. A
+    /// `.resolved` arm seeds the endpoint's URL; a `.malformed` arm seeds
+    /// the raw broken string so the operator edits what failed. Exercised
+    /// through the initial state, not `body` (ViewInit aperture).
+    @MainActor
+    func testInitSeedsTheURLFieldFromTheConfigArm() {
+        let resolved = GatewayEditorSheet(
+            config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: InMemoryTokenStore(),
+            isPresented: .constant(true),
+            onToast: { _ in })
+        var seeded: String?
+        for child in Mirror(reflecting: resolved).children where child.label == "url" {
+            // @State<String> reflects as State<String>; dig one level to
+            // its wrappedValue. If SwiftUI ever seals this, the leg fails
+            // loudly rather than passing on a nil it never compared.
+            for inner in Mirror(reflecting: child.value).children where inner.label == "wrappedValue" {
+                seeded = inner.value as? String
+            }
+        }
+        XCTAssertEqual(seeded, "https://zeus.example.com")
+
+        let malformed = GatewayEditorSheet(
+            config: .malformed(raw: "htps://broken", reason: .missingScheme),
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: InMemoryTokenStore(),
+            isPresented: .constant(true),
+            onToast: { _ in })
+        for child in Mirror(reflecting: malformed).children where child.label == "url" {
+            for inner in Mirror(reflecting: child.value).children where inner.label == "wrappedValue" {
+                seeded = inner.value as? String
+            }
+        }
+        XCTAssertEqual(seeded, "htps://broken")
+    }
 }

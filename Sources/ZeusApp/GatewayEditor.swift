@@ -33,13 +33,35 @@ struct GatewayEditorSheet: View {
     /// provenance is the only line that explains it.
     let resolution: GatewayConfig.Resolution
 
+    /// Token store — INJECTED, no default. `RootView` owns the one
+    /// construction (Keychain in production, in-memory under the
+    /// `-zeusInMemoryTokens` launch seam), so what the sheet writes to is
+    /// the same store every launch decided on. A default here would let a
+    /// call site silently ship an editor writing to a throwaway store.
+    let tokens: GatewayTokenStoring
+
     @Binding var isPresented: Bool
     let onToast: (String) -> Void
 
-    /// Token presence. Injected rather than constructed so legs run against
-    /// the in-memory store; the real one is the default a production
-    /// construction site supplies explicitly.
-    var tokens: GatewayTokenStoring = InMemoryTokenStore()
+    /// The URL field is SEEDED IN INIT, not on appear and not lazily: seed
+    /// logic in `body` re-runs per render (and would fight the operator's
+    /// typing), `onAppear` runs after first paint (a frame with an empty
+    /// field), and an init assignment runs exactly once, before the field
+    /// exists to disagree with it.
+    init(config: GatewayConfig,
+         resolution: GatewayConfig.Resolution,
+         tokens: GatewayTokenStoring,
+         isPresented: Binding<Bool>,
+         transport: PreflightTransporting = URLSessionPreflight(),
+         onToast: @escaping (String) -> Void) {
+        self.config = config
+        self.resolution = resolution
+        self.tokens = tokens
+        self._isPresented = isPresented
+        self.transport = transport
+        self.onToast = onToast
+        _url = State(initialValue: Self.seedURL(for: config))
+    }
 
     /// The four preflight outcomes. TRANSPORT FAILURE IS ITS OWN STATE: a
     /// dead host and a wrong token are different subjects and the operator
@@ -51,6 +73,29 @@ struct GatewayEditorSheet: View {
         case tokenRejected
         case noTokenBlocked
         case gatewayUnreachable
+    }
+
+    /// The transport preflight runs over. A protocol so the legs can stub
+    /// responses AND so the button path is exercised against the seam the
+    /// production `URLSession` sits behind — the four mapping legs assert
+    /// `preflightState(...)` directly; the button legs assert the CALL
+    /// reaches it, which a direct-mapping test cannot see.
+    var transport: PreflightTransporting = URLSessionPreflight()
+
+    /// The run's verdict. `@State` because it is sheet-local: two sheets
+    /// open in one process (impossible today, one flag) would not share a
+    /// preflight result any more than they share the `@State` URL field.
+    @State private var preflight: PreflightState?
+
+    /// Shared row rendering for the four verdicts — the states differ in
+    /// label and tint, never in shape; a fifth shape is a defect here.
+    private func preflightLabel(_ state: PreflightState) -> (String, Color) {
+        switch state {
+        case .tokenOK:            return ("TOKEN OK", Theme.ok)
+        case .tokenRejected:      return ("TOKEN REJECTED", Theme.danger)
+        case .noTokenBlocked:     return ("NO TOKEN — API BLOCKED", Theme.warn)
+        case .gatewayUnreachable: return ("GATEWAY UNREACHABLE", Theme.warn)
+        }
     }
 
     /// Static because a SwiftUI body is not observable in-process — the
@@ -117,49 +162,116 @@ struct GatewayEditorSheet: View {
         .padding(.top, 12)
     }
 
+    /// The entry field for a NEW token. `@State` (sheet-local, never
+    /// re-read from the store — the store's read contract is presence-only,
+    /// and an echo of the stored secret would break it), and EMPTY means
+    /// "leave the stored one alone": SAVE writes only a non-empty field, so
+    /// an operator who opens the sheet to fix a URL cannot accidentally
+    /// blank a stored credential.
+    @State private var newToken: String = ""
+
     private var tokenLine: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("TOKEN")
                 .font(Theme.mono(8.5, .semibold))
                 .tracking(1.2)
                 .foregroundStyle(Theme.w(0.5))
-            // PRESENCE, never the secret: the read-back contract is a
+            SecureField("api token", text: $newToken)
+                .font(Theme.mono(11))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(10)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.barCorner,
+                                            style: .continuous))
+            HStack(spacing: 8) {
+                // PRESENCE, never the secret: the read-back contract is a
             // boolean. A masked echo (`•••`) of the real value is a secret
             // rendered, one screenshot away from leaking.
-            Text(tokens.hasToken(host: Self.hostKey(for: config)) ? "PRESENT · KEYCHAIN" : "NOT SET")
-                .font(Theme.mono(9.5))
-                .tracking(0.6)
-                .foregroundStyle(Theme.w(0.7))
-            Spacer(minLength: 0)
+                Text(tokens.hasToken(host: Self.hostKey(for: config)) ? "PRESENT · KEYCHAIN" : "NOT SET")
+                    .font(Theme.mono(9.5))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.w(0.7))
+                Spacer(minLength: 0)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
+    }
+
+    /// The URL preflight RUNS against. `seedURL(for:)`'s live arm — what
+    /// the field holds, falling back to the config's own operand when the
+    /// operator has not typed anything yet, so PREFLIGHT checks the URL he
+    /// is about to save, not the one he is replacing.
+    private var urlOrSeed: String {
+        url.isEmpty ? Self.seedURL(for: config) : url
     }
 
     private var preflightLine: some View {
-        HStack(spacing: 8) {
-            Text("PREFLIGHT · GET /v1/status")
-                .font(Theme.mono(8.5, .semibold))
-                .tracking(1.2)
-                .foregroundStyle(Theme.w(0.5))
-            Spacer(minLength: 0)
-            Text("NOT RUN YET")
-                .font(Theme.mono(9.5, .semibold))
-                .tracking(0.6)
-                .foregroundStyle(Theme.w(0.4))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("PREFLIGHT · GET /v1/status")
+                    .font(Theme.mono(8.5, .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.w(0.5))
+                Spacer(minLength: 0)
+                if let preflight {
+                    let (label, tint) = preflightLabel(preflight)
+                    Text(label)
+                        .font(Theme.mono(9.5, .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(tint)
+                } else {
+                    Text("NOT RUN YET")
+                        .font(Theme.mono(9.5, .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(Theme.w(0.4))
+                }
+            }
+            Button {
+                runPreflight()
+            } label: {
+                Text("RUN PREFLIGHT")
+                    .font(Theme.display(9.5, .bold))
+                    .tracking(1.9)
+                    .foregroundStyle(Theme.text)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: Theme.controlSize)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
     }
 
+    /// The button path: field → transport → mapping. Extracted as a method
+    /// so the legs can call THE PATH the button calls, not a parallel copy
+    /// of its body — a private-in-view closure is unobservable in-process,
+    /// a method on the struct is not.
+    func runPreflight() {
+        let host = Self.hostKey(for: config)
+        let hadToken = tokens.hasToken(host: host)
+        Task { @MainActor in
+            let reply = await transport.status(url: urlOrSeed, bearer: newToken.isEmpty ? nil : newToken)
+            preflight = Self.preflightState(httpStatus: reply.httpStatus,
+                                            hadToken: hadToken || !newToken.isEmpty,
+                                            transportFailed: reply.transportFailed)
+        }
+    }
+
     private var saveButton: some View {
-        Button {
-            // SAVE + RE-RESOLVE + REPORT. The URL is stored RAW and
-            // unvalidated (validation belongs to `GatewayConfig.parse`, the
-            // same parser the environment goes through — two parsers is how
-            // the two sources drift), and the operator is told the verdict
-            // rather than a success.
-            onToast("GATEWAY URL SAVED — RESTART TO APPLY")
+        VStack(spacing: 8) {
+            Button {
+            // The TOKEN half is REAL: Keychain (or the in-memory twin under
+            // the launch seam) at the config's host key. The URL half is
+            // DISABLED until ③ lands `Commission.gatewayURL` — the toast
+            // reports exactly what was written, never a persistence it did
+            // not perform.
+            let host = Self.hostKey(for: config)
+            if !newToken.isEmpty, !host.isEmpty {
+                tokens.save(token: newToken, host: host)
+                onToast("TOKEN SAVED")
+            }
             isPresented = false
         } label: {
             Text("SAVE")
@@ -168,11 +280,17 @@ struct GatewayEditorSheet: View {
                 .foregroundStyle(Theme.text)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: Theme.controlSize)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            Text("URL SAVES WHEN COMMISSION WIRING LANDS — TOKEN SAVES NOW")
+                .font(Theme.mono(8))
+                .tracking(0.7)
+                .foregroundStyle(Theme.w(0.4))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.bottom, 22)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 22)
     }
 
     /// Seeded from the RESOLVED endpoint when there is one; a malformed
@@ -197,6 +315,39 @@ struct GatewayEditorSheet: View {
         case .resolved(let endpoint): return endpoint.url.host ?? ""
         case .malformed(let raw, _):  return URL(string: raw)?.host ?? ""
         case .absent, .local:         return ""
+        }
+    }
+}
+
+// MARK: - Preflight transport
+
+/// One method on purpose: everything else about the request (timeout, 
+/// headers beyond the bearer) is `URLSession` configuration, and each knob
+/// hoisted here is one more a leg must stub. The mapping under test is
+/// `preflightState(...)`, not HTTP itself.
+protocol PreflightTransporting: AnyObject {
+    func status(url: String, bearer: String?) async -> (httpStatus: Int?, transportFailed: Bool)
+}
+
+/// The production transport. `GET /v1/status` with the bearer when one is
+/// supplied — a missing credential must produce the gateway's 401, not a
+/// client-side error folded into UNREACHABLE, which is why the request is
+/// sent WITHOUT a bearer rather than short-circuited locally when
+/// `bearer` is nil.
+final class URLSessionPreflight: PreflightTransporting, @unchecked Sendable {
+    func status(url: String, bearer: String?) async -> (httpStatus: Int?, transportFailed: Bool) {
+        guard let target = URL(string: url) else {
+            return (nil, true)   // an unparseable URL is unreachable, full stop
+        }
+        var request = URLRequest(url: target.appending(path: "v1/status"))
+        request.timeoutInterval = 10
+        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode
+            return (code, false)
+        } catch {
+            return (nil, true)
         }
     }
 }

@@ -108,6 +108,22 @@ enum LaunchArgs {
         ProcessInfo.processInfo.arguments.contains(flag)
     }
 
+    /// `-zeusInMemoryTokens` — the token-store seam for capture and tests.
+    ///
+    /// The Keychain is per-device and per-credential-prompt; a capture run or
+    /// a test that exercised the real `GatewayTokenStore` would be asserting
+    /// on whatever the host Mac's keychain happened to hold. This flag routes
+    /// `RootView` to `InMemoryTokenStore` through the same launch-argument
+    /// seam the commission seed uses — one construction site, one switch.
+    /// `#if DEBUG` like every other member: inert in release.
+    static var useInMemoryTokens: Bool {
+        #if DEBUG
+        return has("-zeusInMemoryTokens")
+        #else
+        return false
+        #endif
+    }
+
     /// Reads `-flag value`. Returns `nil` when the flag is absent OR is the
     /// final argument — a trailing flag with no operand is a malformed
     /// invocation, and answering it with the *next* flag's name would be a
