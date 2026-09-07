@@ -45,6 +45,15 @@ struct SessionView: View {
     var prefill: Binding<String?> = .constant(nil)
 
     var onSend: (String) -> Void = { _ in }
+
+    /// What the voice affordance is doing right now.
+    ///
+    /// A VALUE, not a flag the view derives: the four states are decided by
+    /// OS capability and two authorization grants, none of which a `View`
+    /// body can read. Owned above, rendered here.
+    var voiceState: VoiceState = .idle
+
+    /// Tapping the mic. Toggles — the same button starts and stops.
     var onVoice: () -> Void = {}
 
     @State private var input: String = ""
@@ -70,6 +79,22 @@ struct SessionView: View {
         VStack(spacing: 0) {
             header
             transcript
+            // The state SAID, above the composer, not merely glyphed. A
+            // slashed icon tells an operator something is off; this tells
+            // them WHICH thing and whether Settings can fix it. `.idle`
+            // renders nothing at all — a persistent "ready" line would be
+            // status chrome for a state that is just the absence of one.
+            if let line = voiceState.line {
+                Text(line)
+                    .font(Theme.mono(10))
+                    .tracking(1.2)
+                    .foregroundStyle(voiceState == .listening
+                                     ? Theme.accent : Theme.w(0.45))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .accessibilityLabel(line)
+            }
             composer
         }
         // Apply on APPEAR as well as on change: a deep link arriving on a
@@ -248,7 +273,14 @@ struct SessionView: View {
             // send and voice are different actions, so this is a branch and
             // not a conditional label.
             if trimmed.isEmpty {
-                accentButton(symbol: "mic", label: "Comms", action: onVoice)
+                // The symbol reports the state rather than always claiming a
+                // mic: `.unavailable` renders a slashed mic and does not arm,
+                // because a normal-looking mic button whose tap cannot work is
+                // the silent non-action this cut exists to retire.
+                accentButton(symbol: voiceSymbol,
+                             label: voiceLabel,
+                             enabled: voiceState.isActionable,
+                             action: onVoice)
             } else {
                 accentButton(symbol: "arrow.up", label: "Send", action: send)
             }
@@ -258,8 +290,34 @@ struct SessionView: View {
         .padding(.bottom, 8)
     }
 
+    /// The mic glyph for the current voice state.
+    ///
+    /// `.listening` shows a stop, not a pulsing mic: the button IS the stop,
+    /// and an animated mic would be a level meter with nothing metering it.
+    private var voiceSymbol: String {
+        switch voiceState {
+        case .idle:        return "mic"
+        case .listening:   return "stop.fill"
+        case .denied:      return "mic.slash"
+        case .unavailable: return "mic.slash"
+        }
+    }
+
+    /// VoiceOver reads the STATE, because the glyph difference is the only
+    /// thing a sighted operator has and a label of "Comms" in all four cases
+    /// would make three of them indistinguishable without sight.
+    private var voiceLabel: String {
+        switch voiceState {
+        case .idle:        return "Start voice input"
+        case .listening:   return "Stop voice input"
+        case .denied:      return "Microphone denied — open Settings"
+        case .unavailable: return "Voice unavailable on this device"
+        }
+    }
+
     private func accentButton(symbol: String,
                               label: String,
+                              enabled: Bool = true,
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
@@ -269,6 +327,8 @@ struct SessionView: View {
                 .background(Theme.accentGradient)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
         }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
         .accessibilityLabel(label)
     }
 

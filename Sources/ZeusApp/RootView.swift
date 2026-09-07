@@ -48,6 +48,11 @@ struct RootView: View {
     /// happen. `SessionView` clears it once applied.
     @State private var pendingPrompt: String?
 
+    /// The on-device recogniser. `@StateObject` because it owns an
+    /// `AVAudioEngine` and a live tap — a `@State` value would be reconstructed
+    /// on identity changes and leak the tap.
+    @StateObject private var voice = VoiceInput()
+
     /// :433 — `showToast(text)` sets, then clears after 2800ms.
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
@@ -102,6 +107,22 @@ struct RootView: View {
         }
         .animation(.easeOut(duration: 0.22), value: toast)
         .preferredColorScheme(.dark)
+        // The transcript lands in the SAME single-shot binding a deep link
+        // uses, and for the same reason: it is a fresh intent that must be
+        // consumable exactly once. Reusing it also means the composer needs no
+        // second ingestion path — one place text arrives, one place it clears.
+        //
+        // NEVER AUTO-SENDS. `VoiceTranscript.accepted` has already refused an
+        // empty or whitespace-only result, so nothing here can dispatch an
+        // utterance the operator did not make; what it cannot check is whether
+        // the device heard them CORRECTLY, and that is what the review-then-tap
+        // step is for.
+        .onChange(of: voice.transcript) { _, new in
+            guard let new, !new.isEmpty else { return }
+            pendingPrompt = new
+            voice.transcript = nil
+            if tab != .session { tab = .session }
+        }
         // `start()` is idempotent by design: `.task` re-fires on view identity
         // changes, and two poll loops would halve the effective interval with
         // nothing in the UI to show it.
@@ -185,7 +206,19 @@ struct RootView: View {
                 onSend: session.send,
                 // :660 — voice hands control back to the ZEUS tab, then runs
                 // the query. The tab switch is the part that is real here.
-                onVoice: { tab = .zeus }
+                // NO LONGER A TAB SWITCH. `:660`'s prototype hands control
+                // back to ZEUS and then "runs the query"; the comment that
+                // used to sit here admitted the tab switch was the only real
+                // part and never said so to the OPERATOR — a silent
+                // non-action, the shape retired at `NodesView:105`/`:191`.
+                //
+                // The mic now records on-device, and the transcript lands in
+                // this composer. The tab does NOT change: the operator is
+                // looking at the transcript they are about to add to, and
+                // moving them away from it mid-utterance would hide the one
+                // thing they need to check before sending.
+                voiceState: voice.state,
+                onVoice: voice.toggle
             )
         case .nodes:
             NodesView(link: link.state, onToast: showToast)

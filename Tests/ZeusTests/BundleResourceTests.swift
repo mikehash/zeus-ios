@@ -272,4 +272,70 @@ final class BundleResourceTests: XCTestCase {
                 + "narrows the install base with no other reporter"
         )
     }
+
+    /// B9 — BOTH voice usage strings, and the leg is worth its lines because
+    /// nothing else in this suite can see them.
+    ///
+    /// The recogniser is never constructed by a unit test (the aperture is
+    /// stated at the top of `Voice.swift`), so a fully green suite is NOT
+    /// evidence these keys exist. Missing either one does not degrade: iOS
+    /// TERMINATES the process at the first `requestAuthorization` or the first
+    /// `installTap`. The crash would appear on merakizzz's device, on his
+    /// first tap, and nowhere before it.
+    ///
+    /// Both keys are read in ONE leg on purpose. Two separate legs would let a
+    /// half-fix go green on the one that was kept, and the half-fix is the
+    /// exact failure this guards: the two grants are one gate.
+    func testBothVoiceUsageStringsAreDeclared() throws {
+        let app = try hostAppBundle()
+
+        for key in ["NSMicrophoneUsageDescription",
+                    "NSSpeechRecognitionUsageDescription"] {
+            let value = app.object(forInfoDictionaryKey: key) as? String
+            XCTAssertNotNil(
+                value,
+                "\(key) is absent from the built plist — iOS kills the process "
+                    + "on the first voice call, and no other leg here reports it"
+            )
+            // Non-empty, because `""` is a well-formed string that satisfies a
+            // presence check and still gives the operator a blank permission
+            // sheet. Same family as `UILaunchScreen: {}` being valid and wrong.
+            XCTAssertFalse(
+                (value ?? "").trimmingCharacters(in: .whitespaces).isEmpty,
+                "\(key) is present but empty — a blank purpose string is a "
+                    + "valid plist and an unanswerable permission prompt"
+            )
+        }
+    }
+
+    /// The no-egress SENTENCE, asserted as a fact about the shipped strings.
+    ///
+    /// The whole reason B9 is on-device rather than `/v1/stt` is that the
+    /// gateway's transcription endpoint egresses to Groq/OpenAI by
+    /// construction. The operator learns that promise ONLY from these two
+    /// permission sheets. If someone later rewrites them into the usual
+    /// boilerplate, the code stays on-device and the app stops SAYING so —
+    /// which is a truthful implementation behind a silent one.
+    func testTheVoiceStringsStateTheAudioDoesNotLeaveTheDevice() throws {
+        let app = try hostAppBundle()
+        let mic = app.object(
+            forInfoDictionaryKey: "NSMicrophoneUsageDescription"
+        ) as? String ?? ""
+        let speech = app.object(
+            forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription"
+        ) as? String ?? ""
+
+        XCTAssertTrue(
+            mic.lowercased().contains("on this device")
+                || mic.lowercased().contains("never leaves"),
+            "the mic purpose string no longer states that audio stays on the "
+                + "device — the on-device guarantee is now unstated"
+        )
+        XCTAssertTrue(
+            speech.lowercased().contains("on this device")
+                || speech.lowercased().contains("never sent"),
+            "the speech purpose string no longer states that recognition is "
+                + "local — the on-device guarantee is now unstated"
+        )
+    }
 }

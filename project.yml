@@ -109,6 +109,32 @@ targets:
           - CFBundleURLName: com.zeus.deeplink
             CFBundleTypeRole: Editor
             CFBundleURLSchemes: [zeus]
+        # TWO KEYS, ONE GATE — and they land together or the app dies on a
+        # device the first time the mic is tapped.
+        #
+        # These are not a graceful-degradation nicety. iOS TERMINATES the
+        # process, immediately, on the first call into an API whose usage
+        # string is missing: `SFSpeechRecognizer.requestAuthorization` needs
+        # `NSSpeechRecognitionUsageDescription`, and `installTap` on the audio
+        # engine's input node needs `NSMicrophoneUsageDescription`. Ship one
+        # and the crash arrives at whichever call runs second, where it reads
+        # as a mic bug and is a plist omission.
+        #
+        # Neither is observable from `xcodebuild test`: the suite never
+        # constructs a recogniser (see the aperture note in `Voice.swift`), so
+        # a green 236 is NOT evidence these keys are present. What guards them
+        # is `BundleResourceTests`, which reads the GENERATED plist.
+        #
+        # The sentences are true and specific. "Zeus uses the microphone" is
+        # the boilerplate every reviewer has read a thousand times and tells an
+        # operator nothing about where their voice goes — which, here, is the
+        # only fact they actually care about.
+        NSMicrophoneUsageDescription: >-
+          Zeus records your voice only while you hold the mic open, and
+          transcribes it on this device. The audio never leaves your iPhone.
+        NSSpeechRecognitionUsageDescription: >-
+          Speech recognition runs entirely on this device, so your dictated
+          prompts are never sent to Apple or to any transcription service.
   ZeusTests:
     type: bundle.unit-test
     platform: iOS
