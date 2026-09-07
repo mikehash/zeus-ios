@@ -1,0 +1,19 @@
+# Pin the compiler at the crate root, not the repo root.
+#
+# WHY: a git dependency does not carry its pin across the repository boundary.
+# The four crates this bridge links (zeus-core, zeus-llm, zeus-session,
+# zeus-memory) live in mikehash/Zeus, which pins 1.95.0 in its own
+# rust-toolchain.toml — but that file governs builds *in that tree*, not builds
+# that merely depend on it. Commit 9ce179bb therefore built under this box's
+# default (1.97.1) while main builds under 1.95.0: two different compilers
+# producing slices that would later be merged into one xcframework.
+#
+# The device and simulator slices of an xcframework may be produced on
+# different boxes. Without this file "which rustc" is a per-box fact; with it,
+# it is a property of the tree, and two slices can be compared before they meet.
+#
+# Targets required by scripts/build-xcframework.sh; rustup installs them on
+# first use if absent.
+[toolchain]
+channel = "1.95.0"
+targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim"]
