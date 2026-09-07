@@ -402,9 +402,12 @@ final class G0EditorTests: XCTestCase {
             // @State<String> reflects as State<String>; dig one level to
             // its wrappedValue. If SwiftUI ever seals this, the leg fails
             // loudly rather than passing on a nil it never compared.
-            for inner in Mirror(reflecting: child.value).children where inner.label == "wrappedValue" {
+            var innerMatched = 0
+            for inner in Mirror(reflecting: child.value).children where inner.label == "_value" {
+                innerMatched += 1
                 seeded = inner.value as? String
             }
+            XCTAssertEqual(innerMatched, 1, "reflection walk read 0 children — VOID, not a seeding failure")
         }
         XCTAssertEqual(matched, 1, "reflection walk read 0 children — VOID, not a seeding failure")
         XCTAssertEqual(seeded, "https://zeus.example.com")
@@ -418,9 +421,12 @@ final class G0EditorTests: XCTestCase {
         var malformedMatched = 0
         for child in Mirror(reflecting: malformed).children where child.label == "_url" {
             malformedMatched += 1
-            for inner in Mirror(reflecting: child.value).children where inner.label == "wrappedValue" {
+            var innerMatched = 0
+            for inner in Mirror(reflecting: child.value).children where inner.label == "_value" {
+                innerMatched += 1
                 seeded = inner.value as? String
             }
+            XCTAssertEqual(innerMatched, 1, "reflection walk read 0 children — VOID, not a seeding failure")
         }
         XCTAssertEqual(malformedMatched, 1, "reflection walk read 0 children — VOID, not a seeding failure")
         XCTAssertEqual(seeded, "htps://broken")
