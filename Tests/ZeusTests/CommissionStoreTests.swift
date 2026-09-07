@@ -210,11 +210,60 @@ final class ManagedDeferralTests: XCTestCase {
     /// Swift's SYNTHESISED decoder throws `keyNotFound` here — which
     /// `CommissionStore.load` turns into nil — so this test dies if the
     /// hand-written `init(from:)` is deleted in favour of synthesis.
-    func testALegacyRecordWithoutProviderDecodesToTheDefault() throws {
+    func testALegacyRecordWithoutProviderDecodesToNilAndSaysSo() throws {
         let legacy = #"{"route":"byok","callsign":"ATLAS","node_enrolled":false}"#
         let data = try XCTUnwrap(legacy.data(using: .utf8))
         let c = try JSONDecoder().decode(Commission.self, from: data)
-        XCTAssertEqual(c.provider, "anthropic", "a missing new key must not erase the record")
+        XCTAssertNil(c.provider, "a missing new key must not erase the record — and must not invent a value")
+        // The screen is the point: nil must SAY not-set, never name a provider
+        // the operator did not choose.
+        XCTAssertTrue(c.summary.contains("PROVIDER NOT SET"), c.summary)
+        XCTAssertFalse(c.summary.uppercased().contains("ANTHROPIC"),
+                       "a record that never set a provider must not print one: \(c.summary)")
+    }
+
+    /// THE WRITER. `provider` is nil until an operator action names one, so
+    /// the routes step must WRITE it — a fresh commission that reached `done`
+    /// without this call would print `PROVIDER NOT SET` on the summary.
+    func testTheRoutesStepWritesTheProviderAndTheRouteTogether() {
+        var c = Commission()
+        XCTAssertNil(c.provider, "nothing has chosen yet")
+        XCTAssertTrue(c.summary.contains("PROVIDER NOT SET"), c.summary)
+
+        c.recordRoutesChoice()
+
+        XCTAssertEqual(c.route, .byok)
+        XCTAssertEqual(c.provider, Commission.routesProviderID)
+        XCTAssertTrue(c.summary.contains("ANTHROPIC · BYOK"), c.summary)
+        XCTAssertFalse(c.summary.contains("PROVIDER NOT SET"), c.summary)
+    }
+
+    /// APERTURE, STATED: the function above is guarded; the ONE LINE that calls
+    /// it inside the CTA closure is not — a SwiftUI body is not observable in
+    /// this target (no ViewInspector). Deleting that line left the whole suite
+    /// green before this grep existed. A source grep is a weaker instrument
+    /// than a test, and it is named as one.
+    func testTheRoutesCTACallsTheWriter() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(src.contains("mutating func recordRoutesChoice"),
+                      "POS control: the grep is reading the right file")
+        XCTAssertTrue(src.contains("commission.recordRoutesChoice()"),
+                      "the routes CTA must write the choice, not leave provider nil")
+    }
+
+    /// POSITIVE CONTROL for the leg above: the same decoder, same store shape,
+    /// WITH the key present — so the nil result is a property of the absent
+    /// key and not of a decoder that drops the field on every input.
+    func testARecordThatHeldAProviderStillDecodesIt() throws {
+        let record = #"{"route":"byok","provider":"ollama","callsign":"ATLAS","node_enrolled":false}"#
+        let data = try XCTUnwrap(record.data(using: .utf8))
+        let c = try JSONDecoder().decode(Commission.self, from: data)
+        XCTAssertEqual(c.provider, "ollama")
+        XCTAssertTrue(c.summary.contains("OLLAMA · BYOK"), c.summary)
     }
 
     /// And the whole path, through the store the app actually uses — the
@@ -267,8 +316,10 @@ final class ManagedDeferralTests: XCTestCase {
         let coreAccepted = ["anthropic", "openai", "ollama", "openrouter", "google", "gemini",
                             "groq", "mistral", "together", "fireworks", "azure", "bedrock",
                             "deepseek", "xai", "grok", "cerebras", "moonshot", "kimi"]
-        XCTAssertTrue(coreAccepted.contains(seeded.provider),
-                      "`\(seeded.provider)` is not a prefix the core resolves")
+        let seededProvider = try XCTUnwrap(seeded.provider,
+                                           "the capture seed must WRITE a provider, not inherit one")
+        XCTAssertTrue(coreAccepted.contains(seededProvider),
+                      "`\(seededProvider)` is not a prefix the core resolves")
         #endif
     }
 

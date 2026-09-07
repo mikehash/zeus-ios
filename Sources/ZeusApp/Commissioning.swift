@@ -163,7 +163,7 @@ struct Commission: Equatable, Codable {
     }
 
     init(route: Route = .byok,
-         provider: String = "anthropic",
+         provider: String? = nil,
          callsign: String = "",
          nodeEnrolled: Bool = false) {
         self.route = route
@@ -184,7 +184,11 @@ struct Commission: Equatable, Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         route = try c.decode(Route.self, forKey: .route)
-        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? "anthropic"
+        // NO `?? "anthropic"`. A record written before this key existed did
+        // not hold a provider, and defaulting one here would print a provider
+        // the operator never chose onto the completion screen — the fabricated
+        // `11 routes` class, one field over. Absent decodes to absent.
+        provider = try c.decodeIfPresent(String.self, forKey: .provider)
         callsign = try c.decode(String.self, forKey: .callsign)
         nodeEnrolled = try c.decode(Bool.self, forKey: .nodeEnrolled)
     }
@@ -194,7 +198,7 @@ struct Commission: Equatable, Codable {
     /// bridge's `setProvider` → `Provider::from_prefix` (zeus-core:8922);
     /// there is deliberately no provider table on the Swift side, so this is
     /// a string the CORE validates and not an enum this app invents.
-    var provider: String = "anthropic"
+    var provider: String?
     var callsign: String = ""
     var nodeEnrolled: Bool = false
 
@@ -206,8 +210,31 @@ struct Commission: Equatable, Codable {
     /// the same class as a latency on a pill no probe produced. What replaces
     /// it is the provider the operator actually set at the routes step,
     /// uppercased, and nothing else.
+    /// The id this step writes when the operator takes the single BYOK card.
+    ///
+    /// It is a CONSTANT OF THE STEP, not a default of the type: `provider` is
+    /// optional and nil means nobody chose. Only an operator action reaching
+    /// here may name a provider. The value is one the core resolves
+    /// (`Provider::from_prefix`, zeus-core:8922) — a literal the core refuses
+    /// would be a commission the bridge rejects on the first send.
+    static let routesProviderID = "anthropic"
+
+    /// EXTRACTED BECAUSE THE VIEW BODY IS NOT OBSERVABLE IN THIS TARGET.
+    /// Deleting the write inside the CTA closure left all 283 tests green
+    /// (measured) — the third instance today of value-asserted /
+    /// call-site-unguarded. The decision now lives in a function with its own
+    /// leg; the one line that calls it is guarded only by the source grep in
+    /// `CommissionStoreTests`, which is a weaker instrument, stated as such.
+    mutating func recordRoutesChoice(providerID: String = Commission.routesProviderID) {
+        route = .byok
+        provider = providerID
+    }
+
     var summary: String {
-        let routeText = "\(provider.uppercased()) · BYOK"
+        // nil is a real state, not a missing value to paper over: a legacy
+        // record never held a provider, and the screen says so rather than
+        // naming one the operator did not choose.
+        let routeText = provider.map { "\($0.uppercased()) · BYOK" } ?? "PROVIDER NOT SET"
         let nodeText = nodeEnrolled ? "1 node enrolled" : "solo"
         let operatorText = callsign.isEmpty ? "operator" : "operator \(callsign.lowercased())"
         return "zeus core · \(routeText) · \(nodeText) · \(operatorText)"
@@ -444,6 +471,15 @@ struct CommissioningView: View {
                 // validates a key, and with MANAGED gone there is no branch
                 // where it does not. The label is the only warning there is.
                 PrimaryButton("VALIDATE + CONTINUE", glyph: "arrow.right") {
+                    // THE STEP WRITES THE PROVIDER. It is not a type-level
+                    // default: `Commission.provider` is `String?` and nil means
+                    // the operator never chose one, which the summary prints as
+                    // such. Only an operator action through this step may name
+                    // a provider. The id is one `Provider::from_prefix` accepts
+                    // (zeus-core:8922) — the picker that lets him choose among
+                    // them arrives with the first `setProvider` caller; until
+                    // it does, this single card IS the choice he made.
+                    commission.recordRoutesChoice()
                     step = .nodes
                 }
             }
