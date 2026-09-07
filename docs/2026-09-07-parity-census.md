@@ -78,7 +78,7 @@ Ordered as merakizzz will touch it: **onboarding → session loop → nodes**.
 | C9 | Revoke access | `:730` | **PARTIAL** | row present `:189`, `danger: true`; **confirm sheet not ported** — toasts `"REVOKE — CONFIRM SHEET NOT PORTED"` and deliberately does not act. Comment at `:185-188` states why |
 | C10 | Sector row (`KITCHEN`) | `:729` | **ABSENT** | `sector` 0 hits repo-wide |
 | C11 | ENROLL NODE | `:739` | **PRESENT** | `:250-256` |
-| C12 | **ROUTE SELECT sheet** (11 routes, lock, toast) | `:322-331`, `:760-790` | **ABSENT** | `routeSheet` 0 hits. Only the toast stub at `:105` |
+| C12 | **ROUTE SELECT sheet** (8 routes, lock, toast) | `:322-331`, `:760-790` | **ABSENT** | `routeSheet` 0 hits. Only the toast stub at `:105` |
 | C13 | **Revoke confirm sheet** | `:800-825` | **ABSENT** | `confirmRevoke` 0 hits |
 
 **Nodes verdict: 8 present, 3 partial, 2 absent (both modal sheets).**
@@ -93,7 +93,7 @@ Nine items. Four of them are one shape: **the app has no modal-sheet layer.**
    already used at two sites. Wiring is `AgentState.orbMode` (already written, `AgentState.swift:53-55`).
 2. **B10 — proposal cards + approve/deny.** The largest genuinely-new feature. Needs a data source;
    the prototype's is a hardcoded array.
-3. **C12 — ROUTE SELECT sheet.** 11 routes + lock + toast. First sheet; establishes the layer.
+3. **C12 — ROUTE SELECT sheet.** 8 routes + lock + toast. First sheet; establishes the layer.
 4. **C13 — revoke confirm sheet.** Second sheet, reuses the layer. Currently a stated non-action.
 5. **B9 — big mic / voice query on home.** Depends on whether B5's mic is real.
 6. **A12 — back navigation in onboarding.** One-line-ish; forward-only today.
@@ -115,3 +115,40 @@ derives it from a real gateway probe. Porting the toggle would be a regression d
 - "PRESENT" means the affordance renders and its state is derivable. It does **not** mean visual
   fidelity was compared — no screenshot diff against the prototype exists, and this box cannot make
   one (the prototype is React, unrunnable here without a toolchain that isn't installed).
+
+
+---
+
+## CORRECTION — 2026-09-07, at the C12 cut
+
+**`C12` said "11 routes". The array has 8.**
+
+```
+python3 -c "import re;s=open('prototypes/ZeusApp.jsx').read();
+b=re.search(r'const ROUTES = \[(.*?)\n\]',s,re.S).group(1);
+print(len(re.findall(r\"id: '([^']+)'\",b)))"
+  -> 8   ids: auto anthropic openai google xai groq deepseek ollama
+grep -n "PROVIDERS ENROLLED" prototypes/ZeusApp.jsx
+  -> :769  "11 PROVIDERS ENROLLED · DIRECT FROM THIS NODE"
+```
+
+**The 11 is not my miscount alone — it is in the prototype, and the prototype
+contradicts itself.** `ZeusApp.jsx:769` renders the literal `11 PROVIDERS
+ENROLLED` directly above a `.map` over an eight-element array. Nothing computes
+it. I read the subtitle and transcribed its number into a census row instead of
+parsing the array the row was about, so a literal in a mock became a
+measurement-shaped claim in the document that defines "done".
+
+**Two things follow, and only one of them is the correction:**
+
+1. The row now says 8, with the parse command above so the next reader re-runs
+   rather than re-eyeballs.
+2. **The port does not reproduce the contradiction.** `RouteCatalog.subtitle`
+   derives its count from `all.count`, and `RouteTests` fails if it is ever
+   re-hardcoded to 11. A prototype's self-contradiction is not a parity
+   requirement.
+
+**Also not ported, deliberately:** the `meta` strings (`P50 180MS`, `P50 90MS`,
+`P50 320MS`) are hardcoded literals in a mock, and this app has no latency
+instrument. They are replaced by `reach` — a topology, true by identity, needing
+no probe. Leg: `testNoRouteAdvertisesALatencyNothingMeasured`.

@@ -46,9 +46,17 @@ struct NodesView: View {
     @State private var volume: Double = 0.62
     @State private var brightness: Double = 0.40
 
-    /// :711 — `route.name`. The route-select sheet (:745+) is NOT ported;
-    /// this reads the current value and the row is inert.
-    private let routeName = "LOCAL · MLX"
+    /// :711 — `route.name`. The route-select sheet (`:754-790`) is now
+    /// ported, so this is SELECTED state rather than a literal. It starts at
+    /// `RouteCatalog.fallback` (ollama — local, no egress), which is a true
+    /// statement about an unconfigured build; the old `"LOCAL · MLX"` string
+    /// named a route that is not in the catalogue at all.
+    @State private var route: Route = RouteCatalog.fallback
+
+    /// `:410` / `:408` — the two sheets. Separate flags: the prototype can
+    /// have neither open, and nothing in either flow opens both.
+    @State private var routeSheet = false
+    @State private var confirmRevoke = false
 
     let onToast: (String) -> Void
 
@@ -66,6 +74,99 @@ struct NodesView: View {
                     .padding(.bottom, 8)
             }
             .padding(.bottom, 86)                          // :743 tab-bar gutter
+        }
+        // :754-812 — the sheet layer, drawn OVER the scroll view rather than
+        // inside it. Inside, the panel would scroll away with the content.
+        .overlay {
+            if routeSheet { routeSelectSheet }
+            if confirmRevoke { revokeConfirmSheet }
+        }
+        .animation(.easeOut(duration: 0.28), value: routeSheet)
+        .animation(.easeOut(duration: 0.28), value: confirmRevoke)
+    }
+
+    // MARK: - :754-790  route select
+
+    private var routeSelectSheet: some View {
+        SheetLayer(isPresented: $routeSheet,
+                   title: "ROUTE SELECT",
+                   subtitle: RouteCatalog.subtitle) {
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(RouteCatalog.all) { rt in
+                        RouteRow(route: rt, selected: rt.id == route.id) {
+                            route = rt
+                            routeSheet = false
+                            onToast("ROUTE LOCKED — \(rt.name)")
+                        }
+                    }
+                }
+            }
+            Button {
+                routeSheet = false
+            } label: {
+                Text("CLOSE")
+                    .font(Theme.display(9.5, .bold))
+                    .tracking(1.9)
+                    .foregroundStyle(Theme.w(0.4))
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: Theme.controlSize)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - :797-812  revoke confirm
+
+    /// The confirm sheet. The ONLY site in this view that performs the
+    /// destructive act — the row at `:196` merely raises the flag.
+    ///
+    /// ⚠️ WHAT THIS DOES TODAY: it toasts, exactly as the prototype does
+    /// (`:801`). There is no token-invalidation call behind it because there is
+    /// no such endpoint in `HTTPTransport` (`grep -rn "revoke" Sources` = this
+    /// file only). Wiring a real revocation is a gateway feature, not a sheet
+    /// feature. Stated here rather than implied, so the next reader does not
+    /// assume access was actually revoked because a red button said REVOKE.
+    private var revokeConfirmSheet: some View {
+        SheetLayer(isPresented: $confirmRevoke,
+                   title: "REVOKE ACCESS",
+                   subtitle: "PRINCIPAL TOKEN INVALIDATED") {
+            Text("NODE CONTINUES AUTONOMOUS · RE-ENROLL VIA PAIR CODE")
+                .font(Theme.mono(9.5))
+                .tracking(0.57)
+                .lineSpacing(5)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.w(0.4))
+                .padding(.bottom, 14)
+
+            Button {
+                confirmRevoke = false
+                onToast("ACCESS REVOKED — RE-ENROLL TO RECONNECT")
+            } label: {
+                Text("REVOKE")
+                    .font(Theme.display(10.5, .bold))
+                    .tracking(2.3)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    // Floor at 48 (the prototype's height), not a fixed 48:
+                    // the label scales.
+                    .frame(minHeight: 48)
+                    .background(Color(hex: 0xE02020))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                confirmRevoke = false
+            } label: {
+                Text("ABORT")
+                    .font(Theme.display(9.5, .bold))
+                    .tracking(1.9)
+                    .foregroundStyle(Theme.w(0.4))
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: Theme.controlSize)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -100,9 +201,9 @@ struct NodesView: View {
                         value: "LIVE-LINK") {
                     onToast("MNEMOSYNE CONSISTENT — NO DELTA")
                 }
-                NodeRow(icon: "wifi", label: "Route", value: routeName,
+                NodeRow(icon: "wifi", label: "Route", value: route.name,
                         last: true) {
-                    onToast("ROUTE SELECT — SHEET NOT PORTED")
+                    routeSheet = true
                 }
             }
             .padding(.vertical, 5)
@@ -182,13 +283,13 @@ struct NodesView: View {
                         disabled: !nodeOnline) {
                     onToast("NODE RESTART SEQUENCE INITIATED")
                 }
-                // :730 — the prototype opens a confirm sheet here
-                // (`setConfirmRevoke(true)`). The sheet is NOT ported; this
-                // is a destructive-looking control with no confirmation
-                // behind it, so it toasts instead of pretending to act.
+                // :730 — opens the confirm sheet. The row itself is still
+                // non-destructive: it only raises a flag. Every destructive
+                // effect lives behind the REVOKE button in the sheet, so a
+                // mis-tap here costs a dismissal and nothing else.
                 NodeRow(icon: "bolt.horizontal.circle", label: "Revoke access",
                         danger: true, last: true) {
-                    onToast("REVOKE — CONFIRM SHEET NOT PORTED")
+                    confirmRevoke = true
                 }
             }
             .padding(.vertical, 2)
