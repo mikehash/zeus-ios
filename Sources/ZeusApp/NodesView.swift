@@ -74,7 +74,9 @@ struct NodesView: View {
     /// sheet for every arm — "switchable anytime" is the product ruling,
     /// and the row must exist for the operator who most needs the switch:
     /// the one already looking at a LOCAL console.
-    var onOpenGatewayEditor: (GatewayConfig) -> Void = { _ in }
+    /// No default — ②'s enumeration rule: `RootView` must pass it, and a
+    /// defaulted closure would let a future call site ship the row dead.
+    var onOpenGatewayEditor: (GatewayConfig) -> Void
 
     /// The arm the console was built from. RECEIVED, not re-derived —
     /// `RootView` measured it once at `init`; a second resolver call over
