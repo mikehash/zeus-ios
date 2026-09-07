@@ -234,7 +234,7 @@ final class ManagedDeferralTests: XCTestCase {
 
         XCTAssertEqual(c.route, .byok)
         XCTAssertEqual(c.provider, Commission.routesProviderID)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC · BYOK"), c.summary)
+        XCTAssertTrue(c.summary.contains("ANTHROPIC · OWN KEY"), c.summary)
         XCTAssertFalse(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
     }
 
@@ -290,7 +290,7 @@ final class ManagedDeferralTests: XCTestCase {
         let data = try XCTUnwrap(record.data(using: .utf8))
         let c = try JSONDecoder().decode(Commission.self, from: data)
         XCTAssertEqual(c.provider, "ollama")
-        XCTAssertTrue(c.summary.contains("OLLAMA · BYOK"), c.summary)
+        XCTAssertTrue(c.summary.contains("OLLAMA · OWN KEY"), c.summary)
     }
 
     /// And the whole path, through the store the app actually uses — the
@@ -310,7 +310,7 @@ final class ManagedDeferralTests: XCTestCase {
     /// (2) The summary prints a value something wrote, not a route count.
     func testSummaryNamesTheProviderAndNeverAFabricatedRouteCount() {
         let c = Commission(route: .byok, provider: "anthropic", callsign: "MIGUEL", nodeEnrolled: false)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC · BYOK"), "summary must name the provider set at routes: \(c.summary)")
+        XCTAssertTrue(c.summary.contains("ANTHROPIC · OWN KEY"), "summary must name the provider set at routes: \(c.summary)")
         XCTAssertFalse(c.summary.contains("11 routes"), "no route count: nothing measured one")
         XCTAssertFalse(c.summary.lowercased().contains("managed"), "summary must not print a mode the app cannot produce")
     }
@@ -322,7 +322,7 @@ final class ManagedDeferralTests: XCTestCase {
         let a = Commission(provider: "anthropic", callsign: "X").summary
         let b = Commission(provider: "ollama", callsign: "X").summary
         XCTAssertNotEqual(a, b, "summary must be derived from `provider`, not fixed")
-        XCTAssertTrue(b.contains("OLLAMA · BYOK"), b)
+        XCTAssertTrue(b.contains("OLLAMA · OWN KEY"), b)
     }
 
     /// (3) The capture seed is a mode that exists, and its provider id is one
@@ -338,7 +338,7 @@ final class ManagedDeferralTests: XCTestCase {
         XCTAssertEqual(seeded.route, .byok)
         XCTAssertFalse(seeded.summary.lowercased().contains("managed"),
                        "the captured summary frame must not carry the string `managed`: \(seeded.summary)")
-        XCTAssertTrue(seeded.summary.contains("ANTHROPIC · BYOK"), seeded.summary)
+        XCTAssertTrue(seeded.summary.contains("ANTHROPIC · OWN KEY"), seeded.summary)
         // The id must be one `Provider::from_prefix` knows (zeus-core:8922).
         let coreAccepted = ["anthropic", "openai", "ollama", "openrouter", "google", "gemini",
                             "groq", "mistral", "together", "fireworks", "azure", "bedrock",
@@ -389,6 +389,24 @@ final class CopyRegisterTests: XCTestCase {
         src.split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+    }
+
+    /// S3. The rendered noun is singular — a state, one key. `BYOK` survives
+    /// in `Sources` only as prose (4 comment lines at the time of writing);
+    /// this leg scopes to RENDERABLE strings, so a comment explaining the
+    /// history cannot fail it and a re-introduced literal cannot pass it.
+    /// POS is the replacement in the same walk: a zero on the old noun means
+    /// removal only if the walk demonstrably reads the new one.
+    func testTheRenderedRouteNounIsSingularAndTheOldOneIsGone() throws {
+        let code = codeLines(try source("Commissioning.swift"))
+        XCTAssertEqual(code.filter { $0.contains("· OWN KEY") }.count, 1,
+                       "POS: the walk reads the REPLACEMENT — a dead walk VOIDs instead of greening the count")
+        XCTAssertEqual(code.filter { $0.contains("· BYOK") }.count, 0,
+                       "the retired noun must not ship in a rendered string")
+        // The rendered value itself, not just the source line.
+        let c = Commission(route: .byok, provider: "anthropic", callsign: "ATLAS", nodeEnrolled: false)
+        XCTAssertTrue(c.summary.contains("ANTHROPIC · OWN KEY"), c.summary)
+        XCTAssertFalse(c.summary.contains("BYOK"), c.summary)
     }
 
     /// S1. `PROVIDER NOT SET` is retired in favour of

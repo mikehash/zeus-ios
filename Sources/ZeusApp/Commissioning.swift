@@ -322,7 +322,7 @@ struct Commission: Equatable, Codable {
         // nil is a real state, not a missing value to paper over: a legacy
         // record never held a provider, and the screen says so rather than
         // naming one the operator did not choose.
-        let routeText = provider.map { "\($0.uppercased()) · BYOK" } ?? "NO PROVIDER — SET ONE IN ROUTES"
+        let routeText = provider.map { "\($0.uppercased()) · OWN KEY" } ?? "NO PROVIDER — SET ONE IN ROUTES"
         let nodeText = nodeEnrolled ? "1 node enrolled" : "solo"
         let operatorText = callsign.isEmpty ? "operator" : "operator \(callsign.lowercased())"
         return "zeus core · \(routeText) · \(nodeText) · \(operatorText)"
