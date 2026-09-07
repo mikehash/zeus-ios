@@ -106,6 +106,19 @@ FRAMES=(
   "2-zeus|-zeusSeedCommission -zeusTab zeus"
   "3-session|-zeusSeedCommission -zeusTab session"
   "4-nodes|-zeusSeedCommission -zeusTab nodes"
+  # THE SUMMARY FRAME. Ruled leg for the MANAGED deferral: this frame must
+  # carry the provider and not the string `managed`.
+  #
+  # APERTURE, AND IT IS THE POINT: `-zeusStep done` walks the COMMISSIONING
+  # flow to its last step; it cannot be combined with `-zeusSeedCommission`,
+  # which bypasses that flow entirely (ZeusApp.swift:32 — a seeded commission
+  # means `CommissioningView` never renders). So this frame photographs the
+  # summary of a DEFAULT `Commission()`, not of `LaunchArgs.captureSeed`.
+  # Both now say BYOK and neither can say `managed`, which is what the ruling
+  # asked; but a PNG cannot be grepped, so the STRING claim is closed by
+  # `ManagedDeferralTests` reading the shipping constant, and this frame is
+  # the visual observation beside it — not a substitute for it.
+  "5-summary|-zeusStep done"
 )
 
 for entry in "${FRAMES[@]}"; do
