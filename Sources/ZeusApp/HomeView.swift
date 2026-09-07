@@ -39,8 +39,10 @@ struct HomeView: View {
     /// Opens the gateway editor sheet, handed the config arm the console was
     /// built from. The pill is the affordance; the sheet itself lives in
     /// `RootView`, which owns the one `@State` flag — a second owner would
-    /// mean two truths about whether the editor is open.
-    var onOpenGatewayEditor: (GatewayConfig) -> Void = { _ in }
+    /// mean two truths about whether the editor is open. No default — ②'s
+    /// enumeration rule: a defaulted closure lets a call site ship a row
+    /// that does nothing, and the compiler must enumerate the wiring.
+    var onOpenGatewayEditor: (GatewayConfig) -> Void
 
     /// Pending tool executions awaiting an answer. Read-only here; the store
     /// owns the queue and re-reads the gateway after every decision.
@@ -432,8 +434,38 @@ struct StatCell: View {
     let caption: String
     let value: String
     let tint: Color
+    /// The control arm. Nil = read-only cell; non-nil = the whole cell is
+    /// the button. Optional (not defaulted-away) so the two arms stay
+    /// explicit at the call site: `action:` present means control.
+    var action: (() -> Void)? = nil
 
     var body: some View {
+        Group {
+            if let action = action {
+                // Control arm: the identical body wrapped in a plain
+                // button — full-cell hit area (`contentShape` covers the
+                // padded frame), tap-target floor, the trait so assistive
+                // tech reads it as what it is.
+                Button(action: action) {
+                    cellBody
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .frame(minHeight: Theme.controlSize)
+                .accessibilityAddTraits(.isButton)
+            } else {
+                // Read-only arm: same body, no wrapper, no gesture.
+                cellBody
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(caption): \(value)")
+    }
+
+    /// The shared cell body — the arms differ only by the wrapper, so any
+    /// visual divergence between control and read-only cells is a defect
+    /// in this file, not a styling decision elsewhere.
+    private var cellBody: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(caption)
                 .font(Theme.mono(8.5, .semibold))
@@ -454,7 +486,5 @@ struct StatCell: View {
         .padding(.vertical, 10)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Theme.barCorner, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(caption): \(value)")
     }
 }
