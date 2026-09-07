@@ -254,7 +254,7 @@ final class LinkMonitor: ObservableObject {
     /// cannot change under a running app, and re-resolving per poll would make
     /// every verdict depend on a read that always returns the same thing —
     /// work whose only possible effect is a bug.
-    init(config: GatewayConfig = GatewayConfig.resolve(),
+    init(config: GatewayConfig = GatewayConfig.resolveFromEnvironment(),
          probe: LinkProbe = HTTPLinkProbe(),
          interval: Duration = .seconds(10)) {
         self.config = config

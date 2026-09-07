@@ -16,26 +16,26 @@ final class GatewayConfigTests: XCTestCase {
     // MARK: - Absent
 
     func testEmptyEnvironmentIsAbsent() {
-        XCTAssertEqual(GatewayConfig.resolve(from: [:]), .absent)
+        XCTAssertEqual(GatewayConfig.resolveFromEnvironment(from: [:]), .absent)
     }
 
     /// An empty string and whitespace are ABSENT, not malformed. Supplying
     /// `ZEUS_GATEWAY_URL=""` is how a shell spells "unset" by accident, and
     /// routing it to the malformed arm would name the wrong repair.
     func testBlankURLIsAbsentNotMalformed() {
-        XCTAssertEqual(GatewayConfig.resolve(from: [k: ""]), .absent)
-        XCTAssertEqual(GatewayConfig.resolve(from: [k: "   \n "]), .absent)
+        XCTAssertEqual(GatewayConfig.resolveFromEnvironment(from: [k: ""]), .absent)
+        XCTAssertEqual(GatewayConfig.resolveFromEnvironment(from: [k: "   \n "]), .absent)
     }
 
     /// A token with no URL is still absent — the token is not a wire.
     func testTokenWithoutURLIsAbsent() {
-        XCTAssertEqual(GatewayConfig.resolve(from: [t: "secret"]), .absent)
+        XCTAssertEqual(GatewayConfig.resolveFromEnvironment(from: [t: "secret"]), .absent)
     }
 
     // MARK: - Malformed
 
     func testSchemelessIsRejected() {
-        let got = GatewayConfig.resolve(from: [k: "192.168.1.100:8080"])
+        let got = GatewayConfig.resolveFromEnvironment(from: [k: "192.168.1.100:8080"])
         guard case let .malformed(raw, reason) = got else {
             return XCTFail("expected malformed, got \(got)")
         }
@@ -51,7 +51,7 @@ final class GatewayConfigTests: XCTestCase {
     }
 
     func testUnsupportedSchemeIsRejected() {
-        let got = GatewayConfig.resolve(from: [k: "ftp://zeus.local:8080"])
+        let got = GatewayConfig.resolveFromEnvironment(from: [k: "ftp://zeus.local:8080"])
         guard case let .malformed(_, reason) = got else {
             return XCTFail("expected malformed, got \(got)")
         }
@@ -59,7 +59,7 @@ final class GatewayConfigTests: XCTestCase {
     }
 
     func testHostlessIsRejected() {
-        let got = GatewayConfig.resolve(from: [k: "http:///path"])
+        let got = GatewayConfig.resolveFromEnvironment(from: [k: "http:///path"])
         guard case let .malformed(_, reason) = got else {
             return XCTFail("expected malformed, got \(got)")
         }
@@ -69,7 +69,7 @@ final class GatewayConfigTests: XCTestCase {
     // MARK: - Resolved
 
     func testWellFormedResolves() {
-        let got = GatewayConfig.resolve(from: [k: "http://192.168.1.100:8080"])
+        let got = GatewayConfig.resolveFromEnvironment(from: [k: "http://192.168.1.100:8080"])
         guard case let .resolved(endpoint) = got else {
             return XCTFail("expected resolved, got \(got)")
         }
@@ -78,13 +78,13 @@ final class GatewayConfigTests: XCTestCase {
     }
 
     func testHTTPSResolves() {
-        guard case .resolved = GatewayConfig.resolve(from: [k: "https://zeus.example"]) else {
+        guard case .resolved = GatewayConfig.resolveFromEnvironment(from: [k: "https://zeus.example"]) else {
             return XCTFail("https must be accepted")
         }
     }
 
     func testTokenIsCarried() {
-        let got = GatewayConfig.resolve(from: [k: "http://a.b", t: "sk-123"])
+        let got = GatewayConfig.resolveFromEnvironment(from: [k: "http://a.b", t: "sk-123"])
         guard case let .resolved(endpoint) = got else {
             return XCTFail("expected resolved, got \(got)")
         }
@@ -96,7 +96,7 @@ final class GatewayConfigTests: XCTestCase {
     /// token and sends the operator to rotate a credential that was never
     /// supplied — the wrong-subject failure this taxonomy exists to prevent.
     func testEmptyTokenFoldsToNil() {
-        let got = GatewayConfig.resolve(from: [k: "http://a.b", t: "   "])
+        let got = GatewayConfig.resolveFromEnvironment(from: [k: "http://a.b", t: "   "])
         guard case let .resolved(endpoint) = got else {
             return XCTFail("expected resolved, got \(got)")
         }
@@ -110,14 +110,14 @@ final class GatewayConfigTests: XCTestCase {
     /// alone would pass on an empty string.
     func testSummaryNeverPrintsTheToken() {
         let secret = "sk-must-not-appear-9137"
-        let summary = GatewayConfig.resolve(from: [k: "http://a.b", t: secret]).summary
+        let summary = GatewayConfig.resolveFromEnvironment(from: [k: "http://a.b", t: secret]).summary
         XCTAssertFalse(summary.contains(secret), "summary leaked the token")
         XCTAssertTrue(summary.contains("http://a.b"), "summary must still name the endpoint")
         XCTAssertTrue(summary.contains("token present"))
     }
 
     func testMalformedSummaryQuotesTheOperand() {
-        let summary = GatewayConfig.resolve(from: [k: "ftp://x"]).summary
+        let summary = GatewayConfig.resolveFromEnvironment(from: [k: "ftp://x"]).summary
         XCTAssertTrue(summary.contains("ftp://x"), "summary must quote the rejected operand")
     }
 
@@ -148,7 +148,7 @@ final class GatewayConfigTests: XCTestCase {
         XCTAssertNotEqual(absent, malformed)
 
         // Third arm: distinct by construction — a different type entirely.
-        let resolved = makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"]),
+        let resolved = makeTransport(for: GatewayConfig.resolveFromEnvironment(from: [k: "http://a.b"]),
                           sessionID: SessionIDBox())
         XCTAssertTrue(resolved is HTTPTransport)
         XCTAssertFalse(makeTransport(for: .absent, sessionID: SessionIDBox()) is HTTPTransport)
@@ -181,7 +181,7 @@ final class GatewayConfigTests: XCTestCase {
 
         // The resolved arm is a real client — asserted by type, not by drain.
         XCTAssertTrue(
-            makeTransport(for: GatewayConfig.resolve(from: [k: "http://a.b"]),
+            makeTransport(for: GatewayConfig.resolveFromEnvironment(from: [k: "http://a.b"]),
                           sessionID: SessionIDBox()) is HTTPTransport,
             "a resolved config must select the HTTP client")
     }
@@ -227,5 +227,110 @@ final class GatewayConfigTests: XCTestCase {
         } catch {
             return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
         }
+    }
+}
+
+// MARK: - The seam: resolve(from:store:)
+
+/// Precedence legs for the two-source resolver.
+///
+/// One test per PRECEDENCE EDGE, not one per input: the defect this seam can
+/// have is an ordering defect, and an ordering defect is only visible when
+/// BOTH sources are populated at once. A suite that tests each source alone
+/// would be fully green with the branches swapped.
+final class GatewayResolutionTests: XCTestCase {
+
+    private let k = GatewayConfig.urlKey
+    private let t = GatewayConfig.tokenKey
+
+    private func store(_ commission: Commission?) -> CommissionStoring {
+        InMemoryCommissionStore(seed: commission)
+    }
+
+    private func commissioned(provider: String?) -> Commission {
+        var c = Commission()
+        c.provider = provider
+        return c
+    }
+
+    // MARK: Edge 3 — neither source
+
+    /// UNCHANGED BEHAVIOUR, restated through the new entry point. `.absent`
+    /// keeps its meaning: nothing is listening. The twelve tests that stand on
+    /// that meaning are untouched by this commit.
+    func testNoEnvironmentAndNoCommissionIsAbsent() {
+        let r = GatewayConfig.resolve(from: [:], store: store(nil))
+        XCTAssertEqual(r.config, .absent)
+        XCTAssertEqual(r.source, .unset)
+    }
+
+    // MARK: Edge 2 — commission alone
+
+    /// THE PRODUCER THAT DID NOT EXIST. Before this commit no code path in the
+    /// shipping app could return `.local`; it was reachable in tests and
+    /// unreachable in the app. This leg is the whole point of the seam.
+    func testCommissionWithProviderResolvesLocalReady() {
+        let r = GatewayConfig.resolve(from: [:], store: store(commissioned(provider: "anthropic")))
+        XCTAssertEqual(r.config, .local(.ready))
+        XCTAssertEqual(r.source, .commission)
+    }
+
+    /// The third state, produced rather than constructed: a commission that
+    /// never ran the routes step is LIVE and has no route to a model.
+    func testCommissionWithoutProviderResolvesLocalNoProvider() {
+        let r = GatewayConfig.resolve(from: [:], store: store(commissioned(provider: nil)))
+        XCTAssertEqual(r.config, .local(.noProvider))
+        XCTAssertEqual(r.source, .commission)
+        XCTAssertEqual(r.config.disarmReason, GatewayConfig.noProviderMessage)
+    }
+
+    // MARK: Edge 1 — BOTH sources, the ordering leg
+
+    /// THE MUTATION TARGET. Env wins over a persisted LOCAL choice, and the
+    /// provenance says so. Swapping the two branches in `resolve(from:store:)`
+    /// fails exactly here and nowhere else.
+    func testEnvironmentBeatsCommission() {
+        let r = GatewayConfig.resolve(
+            from: [k: "https://gw.example.com"],
+            store: store(commissioned(provider: "anthropic"))
+        )
+        XCTAssertEqual(
+            r.config,
+            .resolved(GatewayConfig.Endpoint(url: URL(string: "https://gw.example.com")!, token: nil))
+        )
+        XCTAssertEqual(r.source, .environment)
+        // Vacuity guard: the two arms this test claims to distinguish must
+        // actually differ. If `.local(.ready)` ever compares equal to the
+        // resolved endpoint, the assertion above is satisfied by an identity
+        // and proves nothing about ordering.
+        XCTAssertNotEqual(r.config, .local(.ready))
+    }
+
+    /// A MALFORMED env value still beats the commission. Falling through to
+    /// the persisted choice would repair the operator's typo behind his back
+    /// and report success — the wrong-subject failure, one arm over.
+    func testMalformedEnvironmentBeatsCommissionRatherThanFallingThrough() {
+        let r = GatewayConfig.resolve(
+            from: [k: "notaurl:::"],
+            store: store(commissioned(provider: "anthropic"))
+        )
+        XCTAssertEqual(r.source, .environment)
+        XCTAssertNotEqual(r.config, .local(.ready))
+        guard case .malformed = r.config else {
+            return XCTFail("expected .malformed, got \(r.config)")
+        }
+    }
+
+    /// The token rides along with the env branch — the seam must not drop it
+    /// while re-routing the return value through `Resolution`.
+    func testEnvironmentTokenSurvivesTheSeam() {
+        let r = GatewayConfig.resolve(
+            from: [k: "https://gw.example.com", t: "sekret"],
+            store: store(commissioned(provider: "anthropic"))
+        )
+        guard case let .resolved(endpoint) = r.config else {
+            return XCTFail("expected .resolved, got \(r.config)")
+        }
+        XCTAssertEqual(endpoint.token, "sekret")
     }
 }

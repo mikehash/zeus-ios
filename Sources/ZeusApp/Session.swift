@@ -258,7 +258,7 @@ final class SessionEngine: ObservableObject {
     /// single production call site vanish entirely (RootView now writes
     /// `SessionEngine()`), and a vanished call site cannot drift.
     init(makeTransport: @escaping (SessionIDBox) -> SessionTransport
-            = { box in Zeus.makeTransport(for: GatewayConfig.resolve(), sessionID: box) },
+            = { box in Zeus.makeTransport(for: GatewayConfig.resolveFromEnvironment(), sessionID: box) },
          seed: [Message] = [
             Message(role: .agent,
                     text: "Operator link established. All systems nominal — "

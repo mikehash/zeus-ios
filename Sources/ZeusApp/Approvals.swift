@@ -351,7 +351,7 @@ final class ApprovalsStore: ObservableObject {
     private let config: GatewayConfig
     private let service: ApprovalsServicing
 
-    init(config: GatewayConfig = GatewayConfig.resolve(),
+    init(config: GatewayConfig = GatewayConfig.resolveFromEnvironment(),
          service: ApprovalsServicing = HTTPApprovalsService()) {
         self.config = config
         self.service = service

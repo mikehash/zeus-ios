@@ -285,7 +285,7 @@ final class RouteCatalogStore: ObservableObject {
     private let config: GatewayConfig
     private let fetcher: RouteCatalogFetching
 
-    init(config: GatewayConfig = GatewayConfig.resolve(),
+    init(config: GatewayConfig = GatewayConfig.resolveFromEnvironment(),
          fetcher: RouteCatalogFetching = HTTPRouteCatalogFetcher()) {
         self.config = config
         self.fetcher = fetcher

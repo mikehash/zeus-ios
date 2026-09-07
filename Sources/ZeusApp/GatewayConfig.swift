@@ -83,14 +83,47 @@ enum GatewayConfig: Equatable {
     static let urlKey = "ZEUS_GATEWAY_URL"
     static let tokenKey = "ZEUS_GATEWAY_TOKEN"
 
-    /// Resolve from an arbitrary key/value source.
+    /// WHICH source produced the config — carried beside it, never inferred.
+    ///
+    /// The precedence below puts the environment on top of the operator's
+    /// persisted choice, which is a debugging trap unless the winner is
+    /// VISIBLE: an operator who chose REMOTE in the fork screen and is
+    /// silently running against `ZEUS_GATEWAY_URL` from a scheme argument sees
+    /// a correct app doing something he did not ask for. So resolution returns
+    /// a `Resolution`, not a bare config, and the LINK surface names the
+    /// source. A precedence rule with no provenance is a correct answer to a
+    /// question the operator cannot ask.
+    enum Source: String, Equatable {
+        /// `ZEUS_GATEWAY_URL` was set. Wins over everything.
+        case environment
+        /// The persisted `Commission` decided it (LOCAL or REMOTE).
+        case commission
+        /// Neither. The config is `.absent`.
+        case unset
+    }
+
+    /// A config and the source that produced it.
+    struct Resolution: Equatable {
+        let config: GatewayConfig
+        let source: Source
+    }
+
+
+    /// Resolve from the environment ALONE.
     ///
     /// Takes the environment as a **parameter** rather than reading
     /// `ProcessInfo` directly, because a function that reads global state is
     /// only testable by mutating global state — and a test that mutates the
     /// process environment leaks into every other test in the same process.
-    /// The default argument keeps the call site short in production.
-    static func resolve(
+    ///
+    /// ## This is one HALF of resolution and it is going away
+    ///
+    /// It reads no `Commission`, so it can never return `.local` — the arm
+    /// with no producer that this seam exists to give one. It survives this
+    /// commit ONLY so the five production call sites keep compiling between
+    /// step ① (this seam) and step ② (the sites), and step ② deletes it. It
+    /// is not a supported production path: `resolve(from:store:)` below is.
+    static func resolveFromEnvironment(
         from env: [String: String] = ProcessInfo.processInfo.environment
     ) -> GatewayConfig {
         guard let raw = env[urlKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -120,6 +153,60 @@ enum GatewayConfig: Equatable {
         let usableToken = (token?.isEmpty == false) ? token : nil
 
         return .resolved(Endpoint(url: url, token: usableToken))
+    }
+
+    /// Resolve from the environment AND the operator's persisted choice.
+    ///
+    /// ## Precedence, stated at the type
+    ///
+    /// 1. `ZEUS_GATEWAY_URL` in `env` — **wins**, source `.environment`.
+    /// 2. A persisted `Commission` — source `.commission`.
+    /// 3. Neither — `.absent`, source `.unset`.
+    ///
+    /// The environment sits on top because it is the EXPLICIT, per-launch
+    /// operand: a build-time override that a persisted preference could
+    /// silently beat is a debugging trap — you set the variable, the app
+    /// ignores it, and nothing on screen says why. The cost of that ordering
+    /// is paid by returning `Resolution` rather than a bare config, so the
+    /// LINK surface can say WHICH source won.
+    ///
+    /// ## The store parameter has NO default, deliberately
+    ///
+    /// A `UserDefaultsCommissionStore()` default here would silently bypass
+    /// the seeded `InMemoryCommissionStore` that `ZeusApp` builds for capture
+    /// and test launches (`ZeusApp.swift:31-35`): the harness would seed LOCAL
+    /// and the resolver would read the phone's real defaults, so every
+    /// captured frame would be a lie with green legs beneath it. Making the
+    /// store un-defaultable is what turns that from discouraged into
+    /// unrepresentable. The callers pass the store the app already injects.
+    static func resolve(
+        from env: [String: String],
+        store: CommissionStoring
+    ) -> Resolution {
+        let fromEnv = resolveFromEnvironment(from: env)
+
+        // `.malformed` from the environment stays `.environment`-sourced: the
+        // operator supplied that string, and falling through to the commission
+        // would repair his typo behind his back and report success.
+        if fromEnv != .absent {
+            return Resolution(config: fromEnv, source: .environment)
+        }
+
+        guard let commission = store.load() else {
+            return Resolution(config: .absent, source: .unset)
+        }
+
+        // Every persisted commission resolves LOCAL in this step, because the
+        // fork choice (LOCAL/REMOTE) and `Commission.gatewayURL` do not exist
+        // until step ③ — this is the whole content of the seam: the `.local`
+        // arm acquires its first production producer here. The REMOTE branch
+        // is added at ③ beside this comment, not bolted on elsewhere.
+        //
+        // Readiness comes from the provider the routes step wrote. No provider
+        // is not a broken install; it is `.local(.noProvider)`, rendered
+        // before the first send instead of thrown at it.
+        let readiness: LocalReadiness = (commission.provider == nil) ? .noProvider : .ready
+        return Resolution(config: .local(readiness), source: .commission)
     }
 
     /// One-line description for a receipt or a transcript. Never includes the

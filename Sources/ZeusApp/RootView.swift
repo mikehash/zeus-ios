@@ -223,7 +223,7 @@ struct RootView: View {
                 // reason `voiceState` is: a `View` body cannot read the
                 // environment, and a config read in a body would re-run on
                 // every render. One read, one owner, rendered downstream.
-                disarmReason: GatewayConfig.resolve().disarmReason
+                disarmReason: GatewayConfig.resolveFromEnvironment().disarmReason
             )
         case .nodes:
             NodesView(link: link.state, onToast: showToast)
