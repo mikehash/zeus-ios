@@ -87,6 +87,77 @@ final class G0EditorTests: XCTestCase {
                       "the one control is LINK, not another cell")
     }
 
+    // MARK: - The trait: on the control arm, absent everywhere else
+
+    /// The asymmetry at the source level: `.isButton` sits inside the
+    /// `if let action` arm and NOWHERE else in this file — not the
+    /// read-only `else` arm, not `cellBody`. Instrument: a brace-walk
+    /// from each region opener to its matching close, comment-only
+    /// lines skipped (the same census discipline — a docstring naming
+    /// the needle cannot self-match). POS: the trait count inside the
+    /// if-let block is >= 1 — if the walk were reading the wrong text,
+    /// that POS would read 0 and VOID the leg. NEG: exactly 0 in the
+    /// else arm and exactly 0 in cellBody. (a)∧(b) with the census
+    /// above = trait on the one cell that passes `action:`, absent on
+    /// the three that don't.
+    func testIsButtonTraitLivesOnlyInTheActionArm() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/HomeView.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+
+        let needle = ".accessibilityAddTraits(.isButton)"
+
+        // Brace-walk: from a region opener, to its matching `{`, to the
+        // `}` that closes it. Returns nil when the opener is absent.
+        func region(from opener: String) -> Substring? {
+            guard let r = src.range(of: opener) else { return nil }
+            guard let brace = src.range(of: "{", range: r.lowerBound..<src.endIndex) else { return nil }
+            var depth = 0
+            var end = brace.lowerBound
+            for ch in src[brace.lowerBound..<src.endIndex] {
+                if ch == "{" { depth += 1 }
+                if ch == "}" {
+                    depth -= 1
+                    if depth == 0 { break }
+                }
+                end = src.index(after: end)
+            }
+            return src[r.lowerBound..<end]
+        }
+
+        // Code-only line filter, as in the census.
+        func traitCount(_ region: Substring?) -> Int {
+            guard let region = region else { return -1 }  // -1 = opener absent: VOID, not pass
+            return region.split(separator: "\n", omittingEmptySubsequences: true)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .reduce(0) { $0 + $1.components(separatedBy: needle).count - 1 }
+        }
+
+        let controlArm = region(from: "if let action = action {")
+        let readOnlyArm = region(from: "} else {")
+        let sharedBody = region(from: "private var cellBody: some View {")
+
+        // POS control first: the walk must be able to SEE a trait where
+        // one provably lives, else every 0 below is the walk's blindness.
+        XCTAssertGreaterThanOrEqual(traitCount(controlArm), 1,
+            "POS control: the if-let arm holds the trait — 0 here means the walk reads the wrong text, VOID not pass")
+
+        XCTAssertEqual(traitCount(readOnlyArm), 0,
+            "the read-only arm carries no isButton trait")
+        XCTAssertEqual(traitCount(sharedBody), 0,
+            "cellBody carries no isButton trait — the trait belongs to the wrapper, not the shared body")
+
+        // Whole-file cardinality: exactly one, so a trait smuggled into a
+        // fourth region (outside all three named) cannot hide.
+        let wholeFile = src.split(separator: "\n", omittingEmptySubsequences: true)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .reduce(0) { $0 + $1.components(separatedBy: needle).count - 1 }
+        XCTAssertEqual(wholeFile, 1,
+            "exactly one isButton in HomeView.swift — found \(wholeFile)")
+    }
+
     // MARK: - The NODES row: present in EVERY arm, labelled by arm
 
     /// Four arms, four renderings of the same row derivation, asserted to
