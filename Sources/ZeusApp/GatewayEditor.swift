@@ -126,7 +126,7 @@ struct GatewayEditorSheet: View {
             // PRESENCE, never the secret: the read-back contract is a
             // boolean. A masked echo (`•••`) of the real value is a secret
             // rendered, one screenshot away from leaking.
-            Text(tokens.hasToken(host: hostKey) ? "PRESENT · KEYCHAIN" : "NOT SET")
+            Text(tokens.hasToken(host: Self.hostKey(for: config)) ? "PRESENT · KEYCHAIN" : "NOT SET")
                 .font(Theme.mono(9.5))
                 .tracking(0.6)
                 .foregroundStyle(Theme.w(0.7))
