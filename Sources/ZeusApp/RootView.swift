@@ -261,12 +261,13 @@ struct RootView: View {
             // destination for every commissioned operator on every launch —
             // which is why it ships with restore rather than behind it.
             HomeView(link: link, session: session, push: push,
-                     onOpenSession: { tab = .session }, approvals: approvals,
-                     resolution: resolution,
+                     onOpenSession: { tab = .session },
                      onOpenGatewayEditor: { config in
                          gatewayEditorConfig = config
                          gatewayEditor = true
-                     })
+                     },
+                     approvals: approvals,
+                     resolution: resolution)
         case .session:
             SessionView(
                 messages: session.messages,
