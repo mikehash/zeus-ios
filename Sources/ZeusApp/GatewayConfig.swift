@@ -130,7 +130,32 @@ enum GatewayConfig: Equatable {
               !raw.isEmpty else {
             return .absent
         }
+        return parseEndpoint(raw: raw, token: env[tokenKey])
+    }
 
+    /// Turn a raw endpoint string + optional token into a config. **The ONLY
+    /// parser in this type**, and both arms of `resolve(from:store:)` call it.
+    ///
+    /// ## Why an extraction rather than "the same validation as env"
+    ///
+    /// Written literally, "the REMOTE arm validates the way the environment
+    /// does" is a SECOND PARSER — and two parsers agree until one of them is
+    /// edited. The divergence would then be invisible: both arms return a
+    /// `GatewayConfig`, both compile, and the only symptom is that a string
+    /// the environment rejects is accepted from the fork screen (or the
+    /// reverse), which nothing in the transcript distinguishes from a correct
+    /// resolution. One function, two named call sites, and a test asserting
+    /// the two paths agree on the SAME malformed input — an equality between
+    /// the paths, not two tables that happen to match.
+    ///
+    /// ## Production callers — a census, not a promise
+    ///
+    /// Exactly two, both in this file: `resolveFromEnvironment` above and the
+    /// REMOTE arm of `resolve(from:store:)` below. A pure function extracted
+    /// for testability acquires no producer by default, and an extraction with
+    /// one arm quietly re-inlined is indistinguishable from this one at the
+    /// type. `GatewayConfigTests` counts the call sites for that reason.
+    static func parseEndpoint(raw: String, token: String?) -> GatewayConfig {
         guard let url = URL(string: raw) else {
             return .malformed(raw: raw, reason: .notAURL)
         }
@@ -149,8 +174,8 @@ enum GatewayConfig: Equatable {
         // would reject with a 401 that reads like a *wrong* token instead of an
         // absent one — the same wrong-subject error the whole taxonomy exists
         // to prevent.
-        let token = env[tokenKey]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let usableToken = (token?.isEmpty == false) ? token : nil
+        let trimmed = token?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let usableToken = (trimmed?.isEmpty == false) ? trimmed : nil
 
         return .resolved(Endpoint(url: url, token: usableToken))
     }
@@ -196,17 +221,41 @@ enum GatewayConfig: Equatable {
             return Resolution(config: .absent, source: .unset)
         }
 
-        // Every persisted commission resolves LOCAL in this step, because the
-        // fork choice (LOCAL/REMOTE) and `Commission.gatewayURL` do not exist
-        // until step ③ — this is the whole content of the seam: the `.local`
-        // arm acquires its first production producer here. The REMOTE branch
-        // is added at ③ beside this comment, not bolted on elsewhere.
+        // The fork choice, landed where ② promised it would land.
         //
-        // Readiness comes from the provider the routes step wrote. No provider
-        // is not a broken install; it is `.local(.noProvider)`, rendered
-        // before the first send instead of thrown at it.
-        let readiness: LocalReadiness = (commission.provider == nil) ? .noProvider : .ready
-        return Resolution(config: .local(readiness), source: .commission)
+        // `nil` is NOT a third mode: it is a record written before the fork
+        // screen existed. Every such record resolved `.local` at ② — that is
+        // observed behaviour of the shipped build, not a default invented
+        // here — so it keeps resolving `.local` and does not re-onboard.
+        switch commission.deployment {
+        case .remote:
+            // The operator chose REMOTE and has not supplied an endpoint yet.
+            // `.absent` is the honest arm: its documented meaning is NOTHING
+            // IS LISTENING, which is exactly true of a remote deployment with
+            // no URL. Source stays `.commission` because the commission IS
+            // what decided it — a `.unset` here would say "nobody chose", and
+            // somebody did.
+            guard let raw = commission.gatewayURL?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else {
+                return Resolution(config: .absent, source: .commission)
+            }
+            // Token is nil until the Keychain store has a production
+            // construction site. That surface is live in the G0 editor cut and
+            // is NOT stubbed here: a token read from an in-memory dictionary
+            // would resolve `(token present)` for a credential no operator
+            // ever entered.
+            return Resolution(config: parseEndpoint(raw: raw, token: nil),
+                              source: .commission)
+
+        case .local, .none:
+            // Readiness comes from the provider the routes step wrote. No
+            // provider is not a broken install; it is `.local(.noProvider)`,
+            // rendered before the first send instead of thrown at it.
+            let readiness: LocalReadiness =
+                (commission.provider == nil) ? .noProvider : .ready
+            return Resolution(config: .local(readiness), source: .commission)
+        }
     }
 
     /// One-line description for a receipt or a transcript. Never includes the

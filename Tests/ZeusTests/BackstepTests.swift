@@ -22,8 +22,15 @@ final class BackstepTests: XCTestCase {
     /// VACUOUS FORM: "previous(of:) returns a step or nil for every case" —
     /// passes on `return nil`, which is the forward-only app we started with.
     /// The kept form pins the actual predecessor at every index.
+    ///
+    /// ③ CHANGED THIS LIST ON PURPOSE and the leg is why that was a decision
+    /// rather than an accident: inserting `.fork` moved `.auth`'s predecessor,
+    /// the pin failed, and the new order was confirmed by hand. A leg that
+    /// derived the order from `allCases` would have gone green on the insert
+    /// and told nobody.
     func testPreviousIsTheImmediatePredecessorInDeclaredOrder() {
-        XCTAssertEqual(Backstep.previous(of: .auth), .welcome)
+        XCTAssertEqual(Backstep.previous(of: .fork), .welcome)
+        XCTAssertEqual(Backstep.previous(of: .auth), .fork)
         XCTAssertEqual(Backstep.previous(of: .routes), .auth)
         XCTAssertEqual(Backstep.previous(of: .nodes), .routes)
         XCTAssertEqual(Backstep.previous(of: .callsign), .nodes)

@@ -18,7 +18,15 @@ import SwiftUI
 /// rail's denominator is derived rather than typed — a hardcoded `6` is a
 /// number that goes stale silently when a step is added.
 enum CommissioningStep: String, CaseIterable {
-    case welcome, auth, routes, nodes, callsign, done
+    /// `fork` sits between `welcome` and `auth` because the deployment
+    /// choice decides what AUTH even means — operator-on-this-phone vs.
+    /// operator-against-that-gateway — and a question whose answer changes an
+    /// earlier screen's meaning cannot come after it.
+    ///
+    /// Adding a member here is deliberately load-bearing: the rail denominator
+    /// is `allCases.count`, `narration` is a `switch` with NO `default`, and
+    /// `Backstep` is index-derived. The compiler names every site.
+    case welcome, fork, auth, routes, nodes, callsign, done
 
     /// `NARRATION` at :305-312, verbatim including the typographic
     /// apostrophes — they are in the source and the TTS pronounces them
@@ -27,6 +35,8 @@ enum CommissioningStep: String, CaseIterable {
         switch self {
         case .welcome:
             return "Zeus core is live on this phone. Commissioning takes under a minute — let’s light it up."
+        case .fork:
+            return "Two ways to run me. On this phone, or against a core you already have."
         case .auth:
             return "First — you. Authenticate as operator."
         case .routes:
@@ -118,10 +128,30 @@ enum Backstep {
     /// recorded decision, and a step you have deliberately returned to must be
     /// re-askable. Discarding it on entry to `.nodes` only, so stepping back
     /// past that step does not quietly rewrite it.
+    /// `.fork` is the SECOND member of the per-step re-ask rule, written into
+    /// this same total function rather than as a second `if`: two independent
+    /// conditionals over the same input are a policy in two places, and the
+    /// next reader has to find both to know what stepping back forgets. One
+    /// `switch` over the target is the policy, stated once.
+    ///
+    /// Stepping back to `.fork` discards `deployment` for the same reason
+    /// `.nodes` discards `nodeEnrolled`: the stored value is not a fact about
+    /// the world, it is *a decision the operator made*, and a step you have
+    /// deliberately returned to must be re-askable rather than pre-answered.
+    /// `gatewayURL` rides with it — a URL kept across a fork re-ask would be a
+    /// REMOTE endpoint attached to a commission that now says LOCAL.
     static func entering(_ target: CommissioningStep, from state: Entry) -> Entry {
         var next = state
         next.scanning = false
-        if target == .nodes { next.commission.nodeEnrolled = false }
+        switch target {
+        case .fork:
+            next.commission.deployment = nil
+            next.commission.gatewayURL = nil
+        case .nodes:
+            next.commission.nodeEnrolled = false
+        case .welcome, .auth, .routes, .callsign, .done:
+            break
+        }
         return next
     }
 }
@@ -155,21 +185,47 @@ struct Commission: Equatable, Codable {
     /// not worth a factory reset.
     enum Route: String, Codable { case managed, byok }
 
+    /// Where the core the operator talks to actually runs.
+    ///
+    /// Optional at the property, not defaulted: `nil` means NO FORK SCREEN WAS
+    /// EVER SHOWN — a record written before this key existed. It is not a
+    /// third mode and nothing renders it as one; `GatewayConfig.resolve`
+    /// folds it into `.local`, which is the behaviour those installs already
+    /// had. The same reasoning as `provider`, one field over: an absent key
+    /// must decode without erasing the record AND without fabricating a
+    /// choice the operator never made.
+    enum Deployment: String, Codable { case local, remote }
+
+    /// ## Any key added after v1 is `decodeIfPresent` with NO fallback value
+    ///
+    /// Stated here rather than at each site because it is a property of the
+    /// STORE, not of any one field: `UserDefaultsCommissionStore.load` turns a
+    /// decode failure into "no commission" (CommissionStore.swift:78-84), so a
+    /// plain `decode` of a key an older record lacks is a factory reset. And a
+    /// `??` default is the opposite failure — the record survives and reports
+    /// a value nobody wrote. Post-v1 keys: `provider`, `deployment`,
+    /// `gatewayURL`.
     enum CodingKeys: String, CodingKey {
         case route
         case provider
         case callsign
         case nodeEnrolled = "node_enrolled"
+        case deployment
+        case gatewayURL = "gateway_url"
     }
 
     init(route: Route = .byok,
          provider: String? = nil,
          callsign: String = "",
-         nodeEnrolled: Bool = false) {
+         nodeEnrolled: Bool = false,
+         deployment: Deployment? = nil,
+         gatewayURL: String? = nil) {
         self.route = route
         self.provider = provider
         self.callsign = callsign
         self.nodeEnrolled = nodeEnrolled
+        self.deployment = deployment
+        self.gatewayURL = gatewayURL
     }
 
     /// HAND-WRITTEN BECAUSE ADDING A FIELD IS A MIGRATION.
@@ -198,6 +254,8 @@ struct Commission: Equatable, Codable {
         provider = try c.decodeIfPresent(String.self, forKey: .provider)
         callsign = try c.decode(String.self, forKey: .callsign)
         nodeEnrolled = try c.decode(Bool.self, forKey: .nodeEnrolled)
+        deployment = try c.decodeIfPresent(Deployment.self, forKey: .deployment)
+        gatewayURL = try c.decodeIfPresent(String.self, forKey: .gatewayURL)
     }
 
     var route: Route = .byok
@@ -208,6 +266,14 @@ struct Commission: Equatable, Codable {
     var provider: String?
     var callsign: String = ""
     var nodeEnrolled: Bool = false
+
+    /// `nil` = no fork screen was shown for this record. See `Deployment`.
+    var deployment: Deployment?
+
+    /// The REMOTE endpoint, as the operator typed it. Stored RAW, unvalidated:
+    /// `GatewayConfig.parseEndpoint` is the only parser, and pre-validating
+    /// here would be the second one this cut exists to prevent.
+    var gatewayURL: String?
 
     /// The `done` summary line.
     ///
@@ -232,6 +298,21 @@ struct Commission: Equatable, Codable {
     /// call-site-unguarded. The decision now lives in a function with its own
     /// leg; the one line that calls it is guarded only by the source grep in
     /// `CommissionStoreTests`, which is a weaker instrument, stated as such.
+    /// The sole writer of `deployment` from the fork screen.
+    ///
+    /// Same shape and same reason as `recordRoutesChoice` below: a mutation
+    /// that lives only inside a SwiftUI CTA closure is unreachable from any
+    /// in-process test, so deleting it costs nothing measurable and every leg
+    /// stays green. Named, it has a call site a guard can count.
+    mutating func recordDeployment(_ choice: Deployment) {
+        deployment = choice
+        // Choosing LOCAL erases any endpoint a previous REMOTE pass wrote. A
+        // stale URL on a LOCAL commission is not inert: it is the value the
+        // editor seeds and the value a later REMOTE switch would silently
+        // adopt without the operator re-typing it.
+        if choice == .local { gatewayURL = nil }
+    }
+
     mutating func recordRoutesChoice(providerID: String = Commission.routesProviderID) {
         route = .byok
         provider = providerID
@@ -259,6 +340,18 @@ struct CommissioningView: View {
     @State private var step: CommissioningStep = LaunchArgs.initialStep
     @State private var commission = Commission()
     @State private var authed = false
+
+    /// What the fork screen HIGHLIGHTS, which is not what the record holds.
+    ///
+    /// LOCAL is the default rendering because it is the option that needs
+    /// nothing from the operator — but `commission.deployment` stays nil until
+    /// CONTINUE writes it. Deriving the highlight instead of seeding the field
+    /// keeps "shown a preselection" and "made a choice" distinguishable in the
+    /// stored record, which is the same distinction `provider: String?` buys
+    /// one field over.
+    private var forkSelection: Commission.Deployment {
+        commission.deployment ?? .local
+    }
     @State private var scanning = false
 
     var body: some View {
@@ -396,7 +489,43 @@ struct CommissioningView: View {
     private var stepContent: some View {
         switch step {
         case .welcome:
-            PrimaryButton("INITIALIZE", glyph: "arrow.right") { step = .auth }
+            PrimaryButton("INITIALIZE", glyph: "arrow.right") { step = .fork }
+
+        case .fork:
+            VStack(alignment: .leading, spacing: 10) {
+                // Preselection is RENDERED, never stored. `deployment` stays
+                // nil until CONTINUE writes it, so "the operator looked at a
+                // screen where LOCAL was highlighted" and "the operator chose
+                // LOCAL" are different states in the record — the second is
+                // the only one that resolves.
+                RouteCard(
+                    title: "LOCAL — THIS PHONE",
+                    copy: "The core runs in-process. No network, no gateway. Bring your own key.",
+                    selected: forkSelection == .local
+                ) { commission.deployment = .local }
+
+                RouteCard(
+                    title: "REMOTE — EXISTING GATEWAY",
+                    copy: "Point this phone at a Zeus gateway you already run.",
+                    selected: forkSelection == .remote
+                ) { commission.deployment = .remote }
+
+                Text("SWITCHABLE ANYTIME IN NODES → LINK")
+                    .font(Theme.mono(8.5))
+                    .tracking(1.4)
+                    .foregroundStyle(Theme.w(0.3))
+
+                PrimaryButton("CONTINUE", glyph: "arrow.right") {
+                    // The SOLE writer of the preselected value. Extracted to a
+                    // named mutating func rather than left as a closure body
+                    // because a write that lives only inside a CTA closure is
+                    // the call-site-unguarded shape this branch has now paid
+                    // for five times: the value is asserted, the site that
+                    // produces it is deletable with every test still green.
+                    commission.recordDeployment(forkSelection)
+                    step = .auth
+                }
+            }
 
         case .auth:
             if authed {

@@ -44,7 +44,13 @@ struct SessionView: View {
     /// `prefill:` before `onSend:`.
     var prefill: Binding<String?> = .constant(nil)
 
-    var onSend: (String) -> Void = { _ in }
+    /// NO DEFAULT. `= { _ in }` here would ship a composer that renders,
+    /// accepts text, highlights SEND, takes the tap and does nothing — an
+    /// empty closure is worse than an absent one because it is a lie with a
+    /// tap target, indistinguishable from working software until an operator
+    /// tries it. `prefill` above keeps its default for the opposite reason: a
+    /// binding to nothing is a VALUE, not an unwired affordance.
+    var onSend: (String) -> Void
 
     /// What the voice affordance is doing right now.
     ///
