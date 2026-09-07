@@ -5,3 +5,15 @@ build/
 
 # Rust build artifacts — the bridge target dir is ~1.5GB of git deps + objects.
 rust/**/target/
+
+# The built xcframework: 112MB of static archive (2 slices x ~56MB), fully
+# reproducible from scripts/build-xcframework.sh at a known crate sha. Git
+# stores binaries whole and forever — committing it would add 112MB to every
+# clone, permanently, for an artifact any Mac regenerates in ~5 minutes.
+#
+# What IS tracked is everything needed to produce it: the crate, its Cargo.lock,
+# the rustc pin, the script, and the generated Swift bindings (so the app
+# compiles even without a Rust toolchain — only LINKING needs the archive).
+# The manifest inside each build records rustc/Xcode/SDK/ios-min/crate-sha, so
+# two boxes' slices remain comparable without either being in git.
+Frameworks/*.xcframework/
