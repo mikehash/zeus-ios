@@ -40,6 +40,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 identity
+                agent
                 LinkCard(state: link.state, onRetry: { Task { await link.probeOnce() } })
                 statusGrid
             alertsRow
@@ -94,6 +95,65 @@ struct HomeView: View {
     static func operatorLine(for callsign: String) -> String {
         let name = callsign.trimmingCharacters(in: .whitespacesAndNewlines)
         return "OPERATOR · \(name.isEmpty ? "UNNAMED" : name.uppercased())"
+    }
+
+    // MARK: - The agent
+
+    /// The orb — the prototype's home-screen centrepiece (`ZeusApp.jsx:544`).
+    ///
+    /// It was absent here (`grep -c DeviceOrb HomeView.swift` = 0 at
+    /// `4798cc2`) while the renderer was already built and already used at
+    /// `Commissioning:110` and `SessionView:332`. This adds a third call site;
+    /// it adds no renderer, no mode, and no data source.
+    ///
+    /// NO BADGE UNDER IT, deliberately, and the reason is the accessibility
+    /// split already stated in `AccessibilityTests:28-40`: the orb carries
+    /// `DeviceOrb.Mode` (three energies) and the badge carries `AgentState`
+    /// (four phases), because `orbMode` folds `listening` and `responding`
+    /// into `.speaking`. The `AGENT` cell of `statusGrid` is this screen's
+    /// badge — it publishes `session.state.badgeText`, the recoverable phase.
+    /// Rendering a second badge here would put the same string on screen
+    /// twice and still leave the phase unrecoverable from the picture.
+    private var agent: some View {
+        DeviceOrb(mode: session.state.orbMode,
+                  level: Self.orbLevel(for: session.state))
+            .frame(width: Self.orbDiameter, height: Self.orbDiameter)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .accessibilityElement()
+            .accessibilityLabel("Zeus orb")
+            .accessibilityValue(DeviceOrb.accessibilityValue(for: session.state.orbMode))
+    }
+
+    /// 250 in the prototype (`:543`). Held as a fixed square rather than a
+    /// floor because the orb is a `Canvas` and carries no type: the
+    /// floor-not-ceiling ruling that governs every other frame in this file
+    /// exists so scaled TEXT is never clipped by a fixed parent, and there is
+    /// no text inside this one. It is a drawing, and a drawing has a size.
+    static let orbDiameter: CGFloat = 250
+
+    /// Energy handed to the renderer, derived from the engine phase.
+    ///
+    /// THIS IS NOT AN AUDIO AMPLITUDE AND MUST NOT BE READ AS ONE. The
+    /// prototype's `level` is a live mic meter; nothing on this screen meters
+    /// anything, and a plausible oscillating number would be the `t-12min`
+    /// defect wearing a renderer argument — a fabricated value in a slot the
+    /// eye reads as a measurement.
+    ///
+    /// So it is a two-valued constant over a REAL reading, which is exactly
+    /// the shape `Commissioning:110` already uses (`narrator.isNarrating ?
+    /// 0.7 : 0.2`). `level` is read by the renderer only in `.speaking`
+    /// (`DeviceOrb.swift:70`), so the value differs only where it is
+    /// observable, and the two speaking phases are deliberately equal: the
+    /// orb's alphabet is energy, and it does not claim to tell them apart.
+    ///
+    /// Static for the reason the six other derivations here are static — a
+    /// SwiftUI body is not observable in-process, so anything computed inside
+    /// one is guardable only by screenshot.
+    static func orbLevel(for state: AgentState) -> Double {
+        switch state {
+        case .listening, .responding: return 0.7
+        case .thinking, .ambient:     return 0.2
+        }
     }
 
     // MARK: - Status grid

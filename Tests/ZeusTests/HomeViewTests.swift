@@ -121,6 +121,70 @@ final class HomeViewTests: XCTestCase {
         XCTAssertTrue(HomeView.recentActivity(from: []).isEmpty)
     }
 
+    // MARK: - The orb
+
+    /// PRE-REGISTERED, and the vacuous form is named first so it cannot be
+    /// written later by accident: "`orbLevel` returns a Double for every
+    /// state" passes on `return 0.2`, which is the defect — a renderer
+    /// argument that never varies while looking like a live meter.
+    ///
+    /// The discriminating form is that the value DIFFERS across the phases
+    /// where the renderer reads it. `level` is consumed only in `.speaking`
+    /// (`DeviceOrb.swift:70`), so this asserts the split lands on exactly the
+    /// boundary `orbMode` draws: the two states that map to `.speaking` carry
+    /// the higher energy, the two that do not carry the lower.
+    func testOrbLevelDiffersAcrossTheModeBoundaryItIsReadAt() {
+        for state in AgentState.allCases {
+            let level = HomeView.orbLevel(for: state)
+            let speaking = state.orbMode == .speaking
+            XCTAssertEqual(
+                level, speaking ? 0.7 : 0.2,
+                "\(state) maps to \(state.orbMode); its level must follow that boundary"
+            )
+        }
+        // The assertion above is satisfiable by a constant if every state
+        // happened to share a mode. It does not — but that is a fact about
+        // `orbMode`, not about this leg, so the leg states it itself.
+        XCTAssertNotEqual(
+            HomeView.orbLevel(for: .responding),
+            HomeView.orbLevel(for: .ambient),
+            "orbLevel must not collapse to a constant"
+        )
+    }
+
+    /// `AgentState` is exhaustive and `CaseIterable`, so a fifth phase makes
+    /// the `switch` in `orbLevel` fail to compile — the compiler holds
+    /// totality. What it CANNOT hold is that a new phase gets a considered
+    /// energy rather than being dropped into the default arm, so this leg
+    /// pins the count the author reasoned over.
+    func testOrbLevelIsTotalOverEveryAgentState() {
+        XCTAssertEqual(AgentState.allCases.count, 4)
+        let levels = Set(AgentState.allCases.map { HomeView.orbLevel(for: $0) })
+        XCTAssertEqual(levels, [0.2, 0.7])
+    }
+
+    /// The orb announces the ORB's vocabulary (energy) and the grid announces
+    /// the PHASE. Both are on this screen now, and this asserts they do not
+    /// say the same thing — the split `AccessibilityTests:28-40` documents,
+    /// enforced at the one screen where both surfaces are visible at once.
+    ///
+    /// `listening` and `responding` are the pair that proves it: they differ
+    /// in the grid and are identical to the orb, by design.
+    func testOrbValueAndGridBadgeAnswerDifferentQuestions() {
+        let listening = AgentState.listening
+        let responding = AgentState.responding
+
+        XCTAssertEqual(
+            DeviceOrb.accessibilityValue(for: listening.orbMode),
+            DeviceOrb.accessibilityValue(for: responding.orbMode),
+            "the orb speaks energy: both speaking phases are one value to it"
+        )
+        XCTAssertNotEqual(
+            listening.badgeText, responding.badgeText,
+            "the grid speaks phase: it must still tell them apart"
+        )
+    }
+
     // MARK: - The grid does not collapse two questions into one
 
     /// An idle agent behind an unreachable gateway is NOMINAL and REMOTE at
