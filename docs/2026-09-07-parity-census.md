@@ -152,3 +152,87 @@ measurement-shaped claim in the document that defines "done".
 `P50 320MS`) are hardcoded literals in a mock, and this app has no latency
 instrument. They are replaced by `reach` — a topology, true by identity, needing
 no probe. Leg: `testNoRouteAdvertisesALatencyNothingMeasured`.
+
+---
+
+## SECOND CORRECTION — 2026-09-07, at the fetch rider
+
+### ① The needle that reported "3 files" never matched a modal
+
+The census claimed the modal layer went `0 → 3 files`. Zeus100 read 1. Both
+apertures, reproduced:
+
+```
+# WHAT I PUBLISHED (case-sensitive, no escapes):
+grep -rlE 'Sheet|Alert|confirmationDialog' Sources     -> 3
+  HomeView.swift:207  .accessibilityLabel("Alerts: …")   <- a VoiceOver STRING
+  NodesView.swift:58  @State private var routeSheet      <- a Bool
+  SheetLayer.swift
+# WHAT IT CLAIMED TO BE (modal PRESENTATION apis):
+grep -rlE '\.sheet\(|\.alert\(|confirmationDialog' Sources  -> 1
+# THE NEEDLE THAT NAMES THE DELIVERABLE:
+grep -rc 'SheetLayer(' Sources/ZeusApp/NodesView.swift      -> 2   (:91, :131)
+```
+
+A needle named after the thing I had just built matched **the identifiers I had
+named after it**. Self-confirmation with a grep in front of it — the same organ
+as a dead probe returning a false positive because the subject's name is in the
+noise. And the honest statement is neither 1 nor 3: `SheetLayer` is a
+hand-rolled `ZStack` overlay, so `.sheet(`/`.alert(` are 0 **by design** and the
+one `confirmationDialog` is the only SwiftUI modal primitive in the tree.
+**A parity row must cite the needle that names what was built, not the one that
+names the category it belongs to.**
+
+### ② The route rows are fetched; three of the eight were fiction
+
+`C12`'s eight rows carried model versions as literals. They are gone; rows now
+come from `GET /v1/providers`. Measured live on this box against `~/Zeus@8746e17e4`:
+
+```
+curl 127.0.0.1:8080/v1/providers   http 200 · 18 providers
+  anthropic openai google ollama google-gemini-cli moonshot kimi-code glm-coding
+  zai qwen qwen-coding minimax minimax-coding xiaomimimo openrouter xai sakana vertex
+  xai PRESENT · groq ABSENT · deepseek ABSENT   (deepseek in crates/zeus-api: 0 files;
+                                                 POS ctl anthropic 9 · NEG ctl qqzz4417 0)
+  "models": []  in 15 of 18  <- EMPTY BY DESIGN, per the handler's own docstring
+curl .../v1/models   -> ONE entry, state.config.model — not a catalogue
+curl .../v1/status   -> provider Anthropic · model claude-opus-5
+"auto" as a provider/model on ~/Zeus@main: 0 sites in zeus-api|zeus-llm|zeus-core
+```
+
+**The fetch does not make the string measured — it makes it SINGLE.**
+`list_providers` (`extensions_handlers.rs:381`) reads no state; the response body
+and the `json!` literal are the same bytes. The benefit is one server-side
+authority, changeable without an App Store release. Worth saying plainly.
+
+Rows dropped, not renamed: `auto` (fiction), `groq` and `deepseek` (not among the
+18). The one model string the app may render is the **ACTIVE** one from
+`/v1/status` — a fact about the running process, not a claim about what any
+provider serves.
+
+### ③ The toast does not say LOCKED, and the reason changed mid-walk
+
+`PUT /v1/config { default_provider }` (`config_handlers.rs:156`) is **declined**,
+and my first reading of why was wrong. I read the write path to `:421` and
+stopped one line short:
+
+```
+config_handlers.rs:421-430
+  providers_data["default_provider"] = dp
+  if providers_data["providers"][dp]["model"] exists
+      -> state.config.model = "<dp>/<model>"      <- A REAL EFFECT
+~/.zeus/providers.json = {"default_provider":"ollama"}  · "providers" key ABSENT
+  -> unreachable ON THIS BOX, which is why /v1/status never moved
+```
+
+So a tap that PUT it does **nothing** on an unconfigured box or **silently
+repoints the active model** on a configured one — server-side state the app
+cannot see. A toast reading the same in both cases fabricates certainty either
+way, and the second case is a bigger effect than a row captioned "Route"
+promises. The row is a **device-local preference**:
+`ROUTE PREFERRED — <name> · THIS DEVICE`.
+
+**Unmeasured by choice, stated rather than skipped quietly:** proving the `:423`
+branch fires means PUTting a `providers` map with a model, which sets
+`state.config.model` on the gateway this agent's own inference runs through. Not
+run.

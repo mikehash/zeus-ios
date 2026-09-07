@@ -46,12 +46,16 @@ struct NodesView: View {
     @State private var volume: Double = 0.62
     @State private var brightness: Double = 0.40
 
-    /// :711 — `route.name`. The route-select sheet (`:754-790`) is now
-    /// ported, so this is SELECTED state rather than a literal. It starts at
-    /// `RouteCatalog.fallback` (ollama — local, no egress), which is a true
-    /// statement about an unconfigured build; the old `"LOCAL · MLX"` string
-    /// named a route that is not in the catalogue at all.
-    @State private var route: Route = RouteCatalog.fallback
+    /// :711 — `route.name`.
+    ///
+    /// FETCHED, not vendored. This was `RouteCatalog.fallback` — one of eight
+    /// hardcoded rows carrying model versions (see `Route.swift`; the strings
+    /// are not repeated here — the leg greps this directory for them). The
+    /// catalogue now comes from `GET /v1/providers`, so there is no local
+    /// default to fall back to and **no selection until the operator makes
+    /// one**: the row reads the gateway's ACTIVE provider when nothing is
+    /// selected, and says so.
+    @StateObject private var routes = RouteCatalogStore()
 
     /// `:410` / `:408` — the two sheets. Separate flags: the prototype can
     /// have neither open, and nothing in either flow opens both.
@@ -83,6 +87,7 @@ struct NodesView: View {
         }
         .animation(.easeOut(duration: 0.28), value: routeSheet)
         .animation(.easeOut(duration: 0.28), value: confirmRevoke)
+        .task { await routes.load() }
     }
 
     // MARK: - :754-790  route select
@@ -90,15 +95,29 @@ struct NodesView: View {
     private var routeSelectSheet: some View {
         SheetLayer(isPresented: $routeSheet,
                    title: "ROUTE SELECT",
-                   subtitle: RouteCatalog.subtitle) {
+                   subtitle: routes.state.subtitle) {
             ScrollView {
                 VStack(spacing: 2) {
-                    ForEach(RouteCatalog.all) { rt in
-                        RouteRow(route: rt, selected: rt.id == route.id) {
-                            route = rt
+                    ForEach(routes.state.routes) { rt in
+                        RouteRow(route: rt, selected: rt.id == routes.selected?.id) {
+                            let toast = routes.select(rt)
                             routeSheet = false
-                            onToast("ROUTE LOCKED — \(rt.name)")
+                            onToast(toast)
                         }
+                    }
+                    // NO VENDORED FALLBACK. When the fetch failed or the
+                    // gateway is unconfigured there are zero rows and this
+                    // line names WHY — rather than a stale hardcoded list,
+                    // which would reintroduce the literal-model defect on the
+                    // one path nobody tests.
+                    if let reason = routes.state.emptyReason {
+                        Text(reason)
+                            .font(Theme.mono(8.5))
+                            .tracking(0.8)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(Theme.w(0.35))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 22)
                     }
                 }
             }
@@ -201,7 +220,10 @@ struct NodesView: View {
                         value: "LIVE-LINK") {
                     onToast("MNEMOSYNE CONSISTENT — NO DELTA")
                 }
-                NodeRow(icon: "wifi", label: "Route", value: route.name,
+                // No selection yet renders the gateway's own word for its
+                // state, not an invented default.
+                NodeRow(icon: "wifi", label: "Route",
+                        value: routes.selected?.name ?? "TAP TO SELECT",
                         last: true) {
                     routeSheet = true
                 }
