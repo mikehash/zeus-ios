@@ -104,11 +104,29 @@ for FL in "${LISTS[@]}"; do
     # is flat; live the day it grows a subdirectory, and nothing said so.
     # If a driver path did not sit under ROOT the strip is a no-op and every
     # comparison below mismatches — VOID rather than report a false DRIFT.
+    # 🔴 GENERATED INPUTS ARE NOT WORKING-TREE FILES, AND THE VOID WAS ME
+    #    ASKING THE WRONG SET. Measured at a63b343: the one stray is
+    #    .../Zeus.build/DerivedSources/GeneratedAssetSymbols.swift, emitted by
+    #    the asset compiler under OBJROOT. It is a real compiler input, it has
+    #    no working-tree counterpart by construction, and `git ls-files` can
+    #    never produce it — so comparing it against TREE is a category error,
+    #    not drift. The guard was VOID on a file whose absence from the tree is
+    #    the correct state.
+    #
+    #    The repair is NARROW on purpose: drop only what sits under this very
+    #    invocation's OBJROOT — the coordinate the build system emitted about
+    #    itself, two sections up. Any OTHER absolute path is still a VOID,
+    #    because a blanket `grep -v '^/'` would silently discard a real source
+    #    living outside ROOT and turn this guard back into the false zero it
+    #    was written to replace. Generated count is printed beside the aperture
+    #    so it is never invisible.
+    GEN=$(printf '%s\n' "$GOT" | grep -c "^$OBJROOT/")
+    GOT=$(printf '%s\n' "$GOT" | grep -v "^$OBJROOT/")
     STRAY=$(printf '%s\n' "$GOT" | grep -c '^/')
-    [ "$STRAY" -eq 0 ] || void "$STRAY driver input path(s) not under ROOT=$ROOT — cannot normalise"
+    [ "$STRAY" -eq 0 ] || void "$STRAY driver input path(s) neither under ROOT=$ROOT nor generated under OBJROOT — cannot normalise"
     GOT_N=$(printf '%s\n' "$GOT" | grep -c '[.]swift$')
 
-    printf 'list %-28s inputs=%-3s tree=%-3s mtime=%s\n' "$ARCH" "$GOT_N" "$TREE_N" "$MT"
+    printf 'list %-28s inputs=%-3s (+%s generated) tree=%-3s mtime=%s\n' "$ARCH" "$GOT_N" "$GEN" "$TREE_N" "$MT"
 
     MISSING=$(comm -13 <(printf '%s\n' "$GOT") <(printf '%s\n' "$TREE"))
     EXTRA=$(comm -23 <(printf '%s\n' "$GOT") <(printf '%s\n' "$TREE"))

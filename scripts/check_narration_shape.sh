@@ -99,9 +99,35 @@ pin() { # pin <label> <expected> <actual>
 # Pinned counts.
 # ---------------------------------------------------------------------------
 
-# 1. The type appears in exactly one file.
-files=$(git grep $SCAN -l -F -e 'AVSpeechSynthesizer' -- 'Sources/*.swift' | wc -l | tr -d ' ')
-pin 'files naming AVSpeechSynthesizer' 1 "$files"
+# 1. Exactly one file holds a CODE occurrence of the type.
+#
+# 🔴 RE-DERIVED at a63b343, and the old pin was the guard matching its own
+#    subject in prose. The needle was `-l` over the raw string, so it counted
+#    FILES NAMING the type — and LaunchArgs.swift:70 names it in a doc comment
+#    explaining why the launch flag is not cosmetic. That comment is correct,
+#    load-bearing documentation and there is nothing to restore: the count
+#    moved 1 -> 2 with the shape fully intact, i.e. a FALSE DRIFT.
+#
+#    Bumping the pin to 2 would have been the wrong repair twice over: it
+#    licenses a second CODE site (the defect this guard exists to catch) and
+#    it re-breaks on the next file that merely mentions the type in prose.
+#
+#    Leg 2 already drew this exact distinction one scope down — a needle built
+#    from the documentation cannot tell a live call site from a sentence about
+#    call sites. Leg 1 was the same leg at whole-tree scope and had not been
+#    given the same filter. It is scoped to code now, so prose is free and a
+#    second synthesizer is not.
+files=$(git grep $SCAN -n -F -e 'AVSpeechSynthesizer' -- 'Sources/*.swift' \
+    | grep -v ':[[:space:]]*//' \
+    | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
+pin 'files with a CODE occurrence' 1 "$files"
+
+# 1b. Vacuity: the code filter must not have eaten everything. If the strip
+#     took the corpus to zero the pin above is a statement about an empty set,
+#     and "exactly one" would be unreachable rather than satisfied.
+prose_files=$(git grep $SCAN -l -F -e 'AVSpeechSynthesizer' -- 'Sources/*.swift' | wc -l | tr -d ' ')
+[ "${prose_files:-0}" -ge "$files" ] || { echo "GUARD VOID: code files ($files) > naming files ($prose_files) — filter inverted" >&2; exit 2; }
+[ "${prose_files:-0}" -ge 1 ] || { echo "GUARD VOID: POS control dead (zero files name the type at all)" >&2; exit 2; }
 
 # 2. Exactly one CODE occurrence. The doc comment above the class names the
 #    type too, so a raw count of 2 conflates the guard's subject with the
