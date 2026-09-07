@@ -396,7 +396,9 @@ final class G0EditorTests: XCTestCase {
             isPresented: .constant(true),
             onToast: { _ in })
         var seeded: String?
-        for child in Mirror(reflecting: resolved).children where child.label == "url" {
+        var matched = 0
+        for child in Mirror(reflecting: resolved).children where child.label == "_url" {
+            matched += 1
             // @State<String> reflects as State<String>; dig one level to
             // its wrappedValue. If SwiftUI ever seals this, the leg fails
             // loudly rather than passing on a nil it never compared.
@@ -404,6 +406,7 @@ final class G0EditorTests: XCTestCase {
                 seeded = inner.value as? String
             }
         }
+        XCTAssertEqual(matched, 1, "reflection walk read 0 children — VOID, not a seeding failure")
         XCTAssertEqual(seeded, "https://zeus.example.com")
 
         let malformed = GatewayEditorSheet(
@@ -412,11 +415,14 @@ final class G0EditorTests: XCTestCase {
             tokens: InMemoryTokenStore(),
             isPresented: .constant(true),
             onToast: { _ in })
-        for child in Mirror(reflecting: malformed).children where child.label == "url" {
+        var malformedMatched = 0
+        for child in Mirror(reflecting: malformed).children where child.label == "_url" {
+            malformedMatched += 1
             for inner in Mirror(reflecting: child.value).children where inner.label == "wrappedValue" {
                 seeded = inner.value as? String
             }
         }
+        XCTAssertEqual(malformedMatched, 1, "reflection walk read 0 children — VOID, not a seeding failure")
         XCTAssertEqual(seeded, "htps://broken")
     }
 }
