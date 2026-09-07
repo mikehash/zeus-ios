@@ -52,6 +52,69 @@ enum CommissioningStep: String, CaseIterable {
     }
 }
 
+/// Backward navigation over the step order.
+///
+/// The prototype's entire implementation is one line — `ZeusCommissioning.jsx:389`,
+/// a pure index decrement over `STEPS` (:303) — and it discards nothing. Ported
+/// as a value type rather than as a method on the view so the two questions an
+/// operator can actually see — *where does back go* and *what does it forget* —
+/// are answerable without rendering anything.
+///
+/// NO HISTORY STACK, deliberately. A stack is emptied by `LaunchArgs.initialStep`
+/// seeding a step directly, so the control would be absent in exactly the DEBUG
+/// launches the capture script photographs: the store frames would disagree with
+/// the shipped build about whether the affordance exists at all. Index-derived is
+/// total over every entry, seeded or walked.
+enum Backstep {
+
+    /// :389. `nil` at index 0 — which is also the prototype's hidden case.
+    static func previous(of step: CommissioningStep) -> CommissioningStep? {
+        let all = CommissioningStep.allCases
+        guard let i = all.firstIndex(of: step), i > 0 else { return nil }
+        return all[i - 1]
+    }
+
+    /// :452 — `stepIdx > 0 && step !== 'done'`.
+    ///
+    /// HIDDEN, NOT UNMOUNTED. The rail is laid out against a fixed leading well;
+    /// unmounting the button would re-centre the rail on two steps out of six, so
+    /// the progress bar would change width for a reason that has nothing to do
+    /// with progress. `done` is excluded even though index 4 has a predecessor —
+    /// commissioning is finished there and the value has been produced.
+    static func isAvailable(at step: CommissioningStep) -> Bool {
+        step != .done && previous(of: step) != nil
+    }
+
+    /// The mutable state a backward entry carries. Grouped so the discard policy
+    /// is one total function over the whole set rather than four assignments that
+    /// can each be forgotten independently.
+    struct Entry: Equatable {
+        var commission: Commission
+        var scanning: Bool
+        var authed: Bool
+    }
+
+    /// What survives a backward entry into `target`, and what does not.
+    ///
+    /// PRESERVED: `commission.route` and `commission.callsign` — operator choices
+    /// and typed input. `authed` — a completed verification. A state that vanishes
+    /// when you step back is a surprise, and re-verifying is not free to a user
+    /// whose passkey lives behind a biometric prompt.
+    ///
+    /// DISCARDED: `scanning`, pure label state (`SCAN NODE` → `SCANNING…`) that
+    /// records nothing. And `commission.nodeEnrolled` on re-entering `.nodes`,
+    /// because `false` there is not "no node" — it is *"I pressed SKIP"*, a
+    /// recorded decision, and a step you have deliberately returned to must be
+    /// re-askable. Discarding it on entry to `.nodes` only, so stepping back
+    /// past that step does not quietly rewrite it.
+    static func entering(_ target: CommissioningStep, from state: Entry) -> Entry {
+        var next = state
+        next.scanning = false
+        if target == .nodes { next.commission.nodeEnrolled = false }
+        return next
+    }
+}
+
 /// What commissioning produces. The whole point of the flow is this value.
 ///
 /// `Codable` is declared here rather than beside `CommissionStore` because
@@ -138,6 +201,31 @@ struct CommissioningView: View {
     /// Progress rail + voice toggle. :455-465.
     private var header: some View {
         HStack(spacing: 10) {
+            // A LEADING WELL THAT IS ALWAYS THERE. `.hidden()` keeps the frame
+            // and drops the hit test, so the rail's width is one number for all
+            // six steps instead of two. See `Backstep.isAvailable`.
+            Button { goBack() } label: {
+                Image(systemName: "chevron.left")
+                    .font(Theme.body(15))
+                    .foregroundStyle(Theme.w(0.6))
+                    // A TAP TARGET — floor is Theme.controlSize (44), not the 34
+                    // the prototype drew (:449), same rule as the voice toggle.
+                    .frame(minWidth: Theme.controlSize, minHeight: Theme.controlSize)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Theme.w(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9)
+                                    .stroke(Theme.r(0.2), lineWidth: 1)
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back")
+            .opacity(Backstep.isAvailable(at: step) ? 1 : 0)
+            .disabled(!Backstep.isAvailable(at: step))
+            .accessibilityHidden(!Backstep.isAvailable(at: step))
+
             HStack(spacing: 5) {
                 ForEach(Array(CommissioningStep.allCases.enumerated()), id: \.offset) { index, _ in
                     Capsule()
@@ -213,6 +301,10 @@ struct CommissioningView: View {
 
         case .auth:
             if authed {
+                // Two children now, so an explicit stack: a bare TupleView in a
+                // ViewBuilder branch has no layout of its own and would inherit
+                // whatever the caller happens to be.
+                VStack(spacing: 12) {
                 // Replaced in place — no modal, no page change (:509-515).
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark")
@@ -234,6 +326,26 @@ struct CommissioningView: View {
                         )
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
+
+                // THE VERIFIED BRANCH NOW HAS A CTA, and the defect it fixes is
+                // older than back-nav: before this, `authed == true` rendered a
+                // badge and nothing else, and the branch's only forward writer
+                // lived in `doAuth` (see below) behind a 1.2s timer reachable
+                // solely from the `else` arm's two buttons. Any entry here that
+                // did not come through that timer was a dead end: backward from
+                // the next step, and `LaunchArgs.initialStep` seeding this one
+                // while already verified. Fixed at the branch, not at the entry,
+                // because the defect is "this rendering has no forward
+                // affordance" and it bites every way in.
+                //
+                // THE COMMENT MUST NOT QUOTE THE WRITER. `BackstepTests`
+                // .testVerifiedAuthBranchHasAForwardWriterInShippingSource
+                // greps this slice for that assignment; spelling it out in prose
+                // here makes the guard pass on a branch with the button deleted.
+                // Fourth time tonight an explanation matched the needle meant
+                // for the code — cite the coordinate, never the string.
+                PrimaryButton("CONTINUE", glyph: "arrow.right") { step = .routes }
+                }
             } else {
                 VStack(spacing: 0) {
                     PrimaryButton("CONTINUE WITH PASSKEY", glyph: "touchid", action: doAuth)
@@ -333,6 +445,19 @@ struct CommissioningView: View {
     /// :371-375 — auth resolves, the block swaps in place, then the flow
     /// advances after 1.2s. The delay is deliberate: the operator is meant
     /// to read the verified line, so it is not a spinner artefact.
+    /// The only writer of a backward transition. :389, plus the discard policy
+    /// the prototype does not have because the prototype has no state to lose.
+    private func goBack() {
+        guard let target = Backstep.previous(of: step) else { return }
+        let next = Backstep.entering(
+            target, from: .init(commission: commission, scanning: scanning, authed: authed)
+        )
+        commission = next.commission
+        scanning = next.scanning
+        authed = next.authed
+        withAnimation { step = target }
+    }
+
     private func doAuth() {
         withAnimation { authed = true }
         Task {
