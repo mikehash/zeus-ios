@@ -41,7 +41,33 @@ cd "$ROOT" || { echo "VOID: cannot cd to repo root"; exit 2; }
 
 SCHEME="Zeus"
 DEST="generic/platform=iOS Simulator"
-SRC_DIR="Sources/ZeusApp"
+
+# ── The comparand's SCOPE is read from project.yml, not written here ───────
+# 🔴 RE-PIN, 2026-09-07. This was `SRC_DIR="Sources/ZeusApp"`, a hand-written
+#    single directory. `Sources/ZeusCoreFFI/zeus_core_bridge.swift` (the
+#    generated UniFFI bindings, checked in and compiled as app source) landed
+#    at 35b45ec, the driver compiled it, the tree-side set did not contain it,
+#    and the guard reported DRIFT rc=3 — CORRECTLY. The tree had grown a
+#    second source root and the guard's aperture had not.
+#
+#    Re-pinning by appending "Sources/ZeusCoreFFI" would fix this instance and
+#    rebuild the same defect for the third directory. The driver's input list
+#    is generated FROM project.yml; so is the app target. Reading the scope
+#    from the same declaration the build reads makes the two sides move
+#    together by construction rather than by anyone remembering.
+#
+#    Aperture: this parses the `sources:` block of the FIRST target under
+#    `targets:` (the app). It is a text parse of YAML, not a YAML parser — if
+#    project.yml grows a form this cannot read, the POS control at step 3
+#    fires VOID (zero files) rather than reporting a false clean.
+SRC_DIRS=()
+while read -r _d; do [ -n "$_d" ] && SRC_DIRS+=("$_d"); done < <(
+    awk '/^  '"$SCHEME"':$/{t=1; next}
+         t && /^    sources:/{s=1; next}
+         t && s && /^      - /{sub(/^      - /,""); print; next}
+         t && s && /^    [a-z]/{exit}' project.yml
+)
+[ "${#SRC_DIRS[@]}" -ge 1 ] || { echo "VOID: no sources: entries parsed from project.yml for target $SCHEME"; exit 2; }
 
 void() { echo "VOID: $*"; exit 2; }
 drift() { echo "DRIFT: $*"; exit 3; }
@@ -86,11 +112,11 @@ while read -r _l; do LISTS+=("$_l"); done < <(find "$OBJROOT" -name "$SCHEME.Swi
 
 # ── 3. The comparand — working tree, index-free ────────────────────────────
 tree_rc=0
-TREE=$(git ls-files --cached --others --exclude-standard -- "$SRC_DIR" \
+TREE=$(git ls-files --cached --others --exclude-standard -- "${SRC_DIRS[@]}" \
        | grep '[.]swift$' | sort -u) || tree_rc=$?
 [ "$tree_rc" -eq 0 ] || void "git ls-files rc=$tree_rc"
 TREE_N=$(printf '%s\n' "$TREE" | grep -c '[.]swift$')
-[ "$TREE_N" -gt 0 ] || void "POS control dead: zero .swift files found under $SRC_DIR"
+[ "$TREE_N" -gt 0 ] || void "POS control dead: zero .swift files found under ${SRC_DIRS[*]}"
 
 # ── 4. Compare every list, print the aperture beside every number ──────────
 status=0

@@ -14,9 +14,53 @@ the app.
 
 ```
 cd ~/zeus-ios
+./scripts/build-xcframework.sh         # ~5 min, FIRST TIME ON ANY MAC — see below
 xcodegen generate                      # the .xcodeproj is gitignored — regenerate it
 open Zeus.xcodeproj                    # then hit ⌘R in Xcode
 ```
+
+### The first line is not optional, and skipping it fails at LINK, not at build
+
+The app now contains a Rust core, and it is **linked in**, not talked to over a
+network. That archive — `Frameworks/ZeusCore.xcframework`, ~112 MB — is
+**deliberately not in git**: binaries are immortal once committed, and this one
+is fully reproducible from the crate, the lockfile, the pinned toolchain and
+the script, all four of which *are* tracked. So the first build on any Mac
+builds it.
+
+Skip it and Xcode gets a long way in before dying, with a message about a
+missing framework or `ZeusCore` not found — **not** a message that says "run
+the script". That is why this paragraph exists.
+
+**Three prerequisites, all one-time:**
+
+1. **Full Xcode** — not the Command Line Tools. `xcode-select -p` must print a
+   path ending in `Xcode.app/Contents/Developer`. If it prints
+   `/Library/Developer/CommandLineTools`, you have CLT only and there is no
+   iPhoneOS SDK on the box. *This one the script checks by name*: it exits with
+   `FATAL: no iphoneos SDK on this box` rather than letting you find out later.
+2. **Rust** — `rustup` and a working `cargo` (<https://rustup.rs>).
+3. **The two iOS targets** —
+   `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`.
+   Both of them: the device slice and the simulator slice are different
+   platforms, and an xcframework with one of them is half an artifact.
+
+Prerequisites 2 and 3 are **not** checked by name — measured, not assumed. With
+no `cargo` on `PATH` the script dies on a bare `command not found`; with a
+missing target it dies inside `cargo build` complaining it cannot find `std`
+for `aarch64-apple-ios`. Both are loud and both are exit-non-zero, so nothing
+proceeds on a broken toolchain — but neither message will tell you to run the
+`rustup` line above. That is what this list is for.
+
+**What you see:** ~5 minutes (two release builds of the core, one per slice),
+then the archive plus a `MANIFEST.txt` *inside* it recording the exact
+`rustc`, `xcodebuild`, SDK path and per-slice sha256 that produced it — so two
+machines' builds can be compared before anyone tries to explain a difference.
+
+**When to re-run it:** after changing anything under `rust/`, and never
+otherwise. It is not part of the normal edit-build-run loop — the generated
+Swift bindings (`Sources/ZeusCoreFFI/`) *are* checked in, so ordinary UI work
+needs no Rust toolchain at all. Only linking needs the archive.
 
 **What you see:** Xcode boots an iPhone simulator and the app launches into the
 ZEUS tab. Tabs at the bottom, live orb at the top.
