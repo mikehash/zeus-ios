@@ -30,7 +30,18 @@ enum CommissioningStep: String, CaseIterable {
         case .auth:
             return "First — you. Authenticate as operator."
         case .routes:
-            return "Now my brainstem. Pick how I reach the models."
+            // REWRITTEN because the previous line offered a *choice*, back
+            // when MANAGED was the second card (:356). With one option there
+            // is no pick, and the orb must not say there is on the step where
+            // the operator is about to hand over a key.
+            //
+            // THE COMMENT MUST NOT QUOTE THE OLD LINE. `ManagedDeferralTests`
+            // .testNoManagedCardStringSurvivesInTheShippingSource greps this
+            // file for it; pasting it here as an explanation makes the grep
+            // fail on a correct file — which is exactly what it did on the
+            // first run of this cut. Same defect the auth branch warns about
+            // at :339, committed within the hour of reading that warning.
+            return "Now my brainstem. Give me a provider key and I reach the models direct."
         case .nodes:
             return "Any hardware to enroll? Scan a node — or skip. I run fine solo."
         case .callsign:
@@ -127,22 +138,76 @@ enum Backstep {
 /// decision about stored data rather than a refactor that silently
 /// invalidates every persisted record.
 struct Commission: Equatable, Codable {
+    /// The route mode the operator chose.
+    ///
+    /// `managed` IS STILL HERE ON PURPOSE AND NO CODE PATH PRODUCES IT.
+    /// The second routes card was removed at :356 — its title is deliberately
+    /// NOT quoted here; `ManagedDeferralTests` greps this file for that string
+    /// and an explanation containing it fails a correct file. Third time in
+    /// one cut. (v1 is BYOK only;
+    /// MANAGED awaits merakizzz's product decision on a hosted, credit-billed
+    /// provider — `Provider::from_prefix` knows no such id and the bridge
+    /// exports no billing surface, so the card was an affordance with no
+    /// backing call). The CASE stays because `UserDefaultsCommissionStore.load`
+    /// treats a decode failure as "no commission" and returns nil
+    /// (CommissionStore.swift:78-84) — deleting it would make every install
+    /// already holding `{"route":"managed"}` silently re-onboard. Tidiness is
+    /// not worth a factory reset.
     enum Route: String, Codable { case managed, byok }
 
     enum CodingKeys: String, CodingKey {
         case route
+        case provider
         case callsign
         case nodeEnrolled = "node_enrolled"
     }
 
-    var route: Route = .managed
+    init(route: Route = .byok,
+         provider: String = "anthropic",
+         callsign: String = "",
+         nodeEnrolled: Bool = false) {
+        self.route = route
+        self.provider = provider
+        self.callsign = callsign
+        self.nodeEnrolled = nodeEnrolled
+    }
+
+    /// HAND-WRITTEN BECAUSE ADDING A FIELD IS A MIGRATION.
+    ///
+    /// Swift's synthesised `init(from:)` does NOT fall back to a property's
+    /// default value for a missing key — it throws `keyNotFound`, which
+    /// `CommissionStore.load` turns into nil, which re-onboards the operator.
+    /// So every record written before `provider` existed would have been
+    /// erased by the synthesised decoder: the same defect as deleting the
+    /// `managed` case, arriving through the opposite edit. `decodeIfPresent`
+    /// on the NEW key is the migration.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        route = try c.decode(Route.self, forKey: .route)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? "anthropic"
+        callsign = try c.decode(String.self, forKey: .callsign)
+        nodeEnrolled = try c.decode(Bool.self, forKey: .nodeEnrolled)
+    }
+
+    var route: Route = .byok
+    /// The provider id the routes step collected, lowercased. Fed to the
+    /// bridge's `setProvider` → `Provider::from_prefix` (zeus-core:8922);
+    /// there is deliberately no provider table on the Swift side, so this is
+    /// a string the CORE validates and not an enum this app invents.
+    var provider: String = "anthropic"
     var callsign: String = ""
     var nodeEnrolled: Bool = false
 
-    /// The `done` summary line at :623+ — `zeus core · 11 routes · managed ·
-    /// 1 node enrolled · operator miguel`, or `byok routes` / `solo`.
+    /// The `done` summary line.
+    ///
+    /// IT PRINTS ONLY VALUES SOMETHING WROTE. The prototype's
+    /// `11 routes · managed` (ZeusCommissioning.jsx, done step) was a route
+    /// count nothing measured — a fabricated number on the completion screen,
+    /// the same class as a latency on a pill no probe produced. What replaces
+    /// it is the provider the operator actually set at the routes step,
+    /// uppercased, and nothing else.
     var summary: String {
-        let routeText = route == .managed ? "11 routes · managed" : "byok routes"
+        let routeText = "\(provider.uppercased()) · BYOK"
         let nodeText = nodeEnrolled ? "1 node enrolled" : "solo"
         let operatorText = callsign.isEmpty ? "operator" : "operator \(callsign.lowercased())"
         return "zeus core · \(routeText) · \(nodeText) · \(operatorText)"
@@ -355,19 +420,16 @@ struct CommissioningView: View {
 
         case .routes:
             VStack(spacing: 10) {
-                RouteCard(
-                    title: "MANAGED — NOVA CREDITS",
-                    copy: "11 routes, zero keys. Metered via Atlas. Recommended.",
-                    selected: commission.route == .managed
-                ) { commission.route = .managed }
-
+                // ONE CARD, NOT TWO, AND NOTHING RENDERS FOR MANAGED —
+                // no greyed card, no "coming soon". A stated non-action is
+                // still a non-action on a screen the operator taps.
                 RouteCard(
                     title: "BYOK — OWN KEYS",
-                    copy: "Direct to providers. Keys stay in the secure enclave.",
-                    selected: commission.route == .byok
+                    copy: "Direct to providers. The key stays on this phone.",
+                    selected: true
                 ) { commission.route = .byok }
 
-                if commission.route == .byok {
+                do {
                     // The hint is part of the contract: the key field here is
                     // not the only place keys can be added.
                     Text("MORE ROUTES ANYTIME IN NODES → ROUTE")
@@ -378,15 +440,13 @@ struct CommissioningView: View {
                         .transition(.opacity)
                 }
 
-                // The CTA states whether a network round-trip will happen.
-                // BYOK validates a key; managed does not. Same button, and
-                // the label is the only warning the operator gets.
-                PrimaryButton(
-                    commission.route == .byok ? "VALIDATE + CONTINUE" : "CONTINUE",
-                    glyph: "arrow.right"
-                ) { step = .nodes }
+                // The CTA states that a network round-trip WILL happen — BYOK
+                // validates a key, and with MANAGED gone there is no branch
+                // where it does not. The label is the only warning there is.
+                PrimaryButton("VALIDATE + CONTINUE", glyph: "arrow.right") {
+                    step = .nodes
+                }
             }
-            .animation(.easeInOut(duration: 0.25), value: commission.route)
 
         case .nodes:
             VStack(spacing: 0) {

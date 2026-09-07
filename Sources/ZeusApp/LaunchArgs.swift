@@ -30,11 +30,35 @@ enum LaunchArgs {
     static var seededCommission: Commission? {
         #if DEBUG
         guard has("-zeusSeedCommission") else { return nil }
-        return Commission(route: .managed, callsign: "ATLAS", nodeEnrolled: true)
+        return captureSeed
         #else
         return nil
         #endif
     }
+
+    /// The seeded value, EXPOSED SEPARATELY FROM THE FLAG THAT GATES IT.
+    ///
+    /// `seededCommission` is unreachable from a test process: it is `nil`
+    /// unless `-zeusSeedCommission` is in `ProcessInfo.arguments`, and the
+    /// xctest runner's argv is not ours to set. So a test that asserts on a
+    /// LOCALLY RECONSTRUCTED `Commission(...)` literal is asserting on a copy
+    /// — it passes with this constant mutated back to `.managed`, which is
+    /// precisely the mutation the ruling's leg exists to kill. Measured: the
+    /// reconstruction survived; reading this constant kills it.
+    #if DEBUG
+    static var captureSeed: Commission {
+        // SEEDS A MODE THAT EXISTS. This was `.managed`, which meant every
+        // captured frame photographed the summary line of a route mode the
+        // shipping app can no longer produce. The provider id is one
+        // `Provider::from_prefix` accepts (zeus-core:8922) — never a literal
+        // the core would refuse, or the capture would document a state the
+        // bridge rejects on the first send.
+        return Commission(route: .byok,
+                          provider: "anthropic",
+                          callsign: "ATLAS",
+                          nodeEnrolled: true)
+    }
+    #endif
 
     /// `-zeusTab zeus|session|nodes` — which tab `RootView` opens on.
     ///

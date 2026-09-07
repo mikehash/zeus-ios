@@ -202,7 +202,11 @@ final class BackstepTests: XCTestCase {
     /// Walking all the way back to `.welcome` one step at a time keeps the
     /// operator's answers and clears only the re-askable one.
     func testWalkingBackFromDoneToWelcomeKeepsAnswersAndClearsTheSkip() {
-        var state = entry(route: .managed, callsign: "ATLAS", nodeEnrolled: true, scanning: true)
+        // Subject is BACKSTEP, not the route mode; `.managed` is decode-only
+        // (Commissioning.swift:120) so the fixture uses a mode the app can
+        // still produce. What is asserted below is that back-nav PRESERVES
+        // the route, whatever it is.
+        var state = entry(route: .byok, callsign: "ATLAS", nodeEnrolled: true, scanning: true)
         var step = CommissioningStep.done
 
         while let prev = Backstep.previous(of: step) {
@@ -211,7 +215,7 @@ final class BackstepTests: XCTestCase {
         }
 
         XCTAssertEqual(step, .welcome)
-        XCTAssertEqual(state.commission.route, .managed)
+        XCTAssertEqual(state.commission.route, .byok)
         XCTAssertEqual(state.commission.callsign, "ATLAS")
         XCTAssertFalse(state.commission.nodeEnrolled, "the walk passed through .nodes")
         XCTAssertFalse(state.scanning)

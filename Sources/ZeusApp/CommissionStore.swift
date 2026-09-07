@@ -13,7 +13,8 @@ import Foundation
 ///
 /// WHAT IS AND IS NOT STORED HERE
 /// ------------------------------
-/// `Commission` carries the route *mode* (`managed` / `byok`), the callsign,
+/// `Commission` carries the route *mode* (`byok`; `managed` is decode-only,
+/// Commissioning.swift:120), the provider id, the callsign,
 /// and whether a node was enrolled. It carries **no credential**: the BYOK key
 /// and the gateway token live in `GatewayConfig`'s environment source, and
 /// nothing on this path ever sees them. That is what makes `UserDefaults`
