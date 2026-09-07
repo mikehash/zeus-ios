@@ -170,4 +170,56 @@ final class CommissionStoreTests: XCTestCase {
         XCTAssertNil(UserDefaults.standard.data(forKey: UserDefaultsCommissionStore.key),
                      "and not the standard domain either")
     }
+
+    // MARK: - Schema migration (G0 step 1)
+
+    /// THE DECOMMISSION HAZARD, ASSERTED ON THE BYTES.
+    ///
+    /// A v1 blob has no `gateway_url` key. `load()` deletes the record on any
+    /// decode failure (`CommissionStore.swift:74-85`) and `ZeusApp.swift:89`
+    /// reads the resulting nil as "never commissioned" — so a throwing decode
+    /// is not a degraded read, it is an erasure plus a trip back to the splash.
+    /// This leg pins the v1 JSON verbatim rather than round-tripping the
+    /// current type: a round-trip writes the new key and would pass even if the
+    /// property were non-optional, which is exactly the defect.
+    func testV1BlobWithoutGatewayURLStillLoadsAndSurvives() throws {
+        let v1 = Data(#"{"route":"managed","callsign":"MIGUEL","node_enrolled":true}"#.utf8)
+        defaults.set(v1, forKey: UserDefaultsCommissionStore.key)
+
+        let loaded = makeStore().load()
+
+        XCTAssertNotNil(loaded, "a v1 record must not decode-fail")
+        XCTAssertEqual(loaded?.callsign, "MIGUEL", "and must not lose the callsign")
+        XCTAssertEqual(loaded?.route, .managed)
+        XCTAssertEqual(loaded?.nodeEnrolled, true)
+        XCTAssertNil(loaded?.gatewayURL, "absent key is nil, not a fabricated default")
+        XCTAssertNotNil(defaults.data(forKey: UserDefaultsCommissionStore.key),
+                        "and the blob must still be on disk — a failed decode ERASES it")
+    }
+
+    /// Vacuity control for the leg above: the store DOES delete on a genuinely
+    /// undecodable blob. Without this, a `load()` that never deleted anything
+    /// would pass the survival assertion for the wrong reason.
+    func testGarbageBlobIsStillErased() {
+        defaults.set(Data("{not json".utf8), forKey: UserDefaultsCommissionStore.key)
+        XCTAssertNil(makeStore().load())
+        XCTAssertNil(defaults.data(forKey: UserDefaultsCommissionStore.key),
+                     "control: the delete-on-failure path is alive")
+    }
+
+    /// The new key round-trips under its wire name. `gatewayURL` is spelled
+    /// `gateway_url` on disk by the hand-written `CodingKeys`; a rename that
+    /// dropped the mapping would still round-trip through the type and be
+    /// invisible without reading the bytes.
+    func testGatewayURLRoundTripsUnderItsWireName() throws {
+        var c = Commission(route: .byok, callsign: "K", nodeEnrolled: false)
+        c.gatewayURL = "http://192.168.1.100:8080"
+        makeStore().save(c)
+
+        let raw = try XCTUnwrap(defaults.data(forKey: UserDefaultsCommissionStore.key))
+        let json = try XCTUnwrap(String(data: raw, encoding: .utf8))
+        XCTAssertTrue(json.contains("gateway_url"), json)
+        XCTAssertFalse(json.contains("gatewayURL"), "the Swift name must not reach disk: \(json)")
+        XCTAssertEqual(makeStore().load()?.gatewayURL, "http://192.168.1.100:8080")
+    }
 }

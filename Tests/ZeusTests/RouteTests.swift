@@ -44,7 +44,7 @@ final class RouteTests: XCTestCase {
     }
 
     private static let endpoint = GatewayConfig.resolved(
-        .init(url: URL(string: "http://127.0.0.1:8080")!, token: nil)
+        .init(url: URL(string: "http://127.0.0.1:8080")!, token: nil, source: .environment)
     )
 
     // MARK: - no model versions anywhere in production

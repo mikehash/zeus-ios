@@ -36,7 +36,7 @@ final class LinkMonitorTests: XCTestCase {
     }
 
     private func endpoint(_ raw: String = "http://192.168.1.100:8080") -> GatewayConfig {
-        .resolved(.init(url: URL(string: raw)!, token: nil))
+        .resolved(.init(url: URL(string: raw)!, token: nil, source: .environment))
     }
 
     // MARK: - The fabrication guard

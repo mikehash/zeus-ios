@@ -228,4 +228,83 @@ final class GatewayConfigTests: XCTestCase {
             return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
         }
     }
+
+    // MARK: - Provenance (G0 step 1)
+
+    /// `source` is carried on the value, and the two suppliers are
+    /// DISTINGUISHABLE on the same input. Without the `assertNotEqual`, a
+    /// `source` hardcoded to `.environment` passes every other leg here —
+    /// the field would exist, decode, and render, and be a constant.
+    func testSourceDiscriminatesTheTwoSuppliersOnIdenticalInput() {
+        let fromEnv = GatewayConfig.resolve(from: [k: "http://192.168.1.100:8080"])
+        let fromStore = GatewayConfig.parse(raw: "http://192.168.1.100:8080",
+                                            token: nil,
+                                            source: .commissioning)
+        guard case let .resolved(e1) = fromEnv, case let .resolved(e2) = fromStore else {
+            return XCTFail("expected both resolved: \(fromEnv) \(fromStore)")
+        }
+        XCTAssertEqual(e1.url, e2.url, "same input must parse to the same URL")
+        XCTAssertEqual(e1.source, .environment)
+        XCTAssertEqual(e2.source, .commissioning)
+        XCTAssertNotEqual(e1, e2, "endpoints differing only in source must not compare equal")
+    }
+
+    /// Both suppliers reach the SAME parser, so the verdict for a given input
+    /// is identical on both arms.
+    ///
+    /// THE FIRST FORM OF THIS LEG TESTED ONE INPUT AND SURVIVED A MUTANT.
+    /// A `source == .commissioning` special case planted inside the
+    /// `missingScheme` branch went GREEN, because the single probe
+    /// (`192.168.1.100:8080`) resolves to `.notAURL` — the RFC-3986 parser
+    /// reaches a different gate first (see `testSchemelessIsRejected`). A leg
+    /// named "shared validation" that walks one branch is named after the
+    /// property and scoped to one example. The corpus below reaches several
+    /// distinct rejection branches plus a resolving input, so a divergence
+    /// planted in any of them has a probe standing on it.
+    func testBothSuppliersShareOneValidationAcrossEveryBranch() {
+        var reasonsSeen = Set<GatewayConfig.MalformedReason>()
+        var resolvedSeen = 0
+
+        for input in ["192.168.1.100:8080",
+                      "ftp://host",
+                      "http://",
+                      "http:///path",
+                      "not a url at all",
+                      "https://gw.example:8443"] {
+            let viaEnv = GatewayConfig.resolve(from: [k: input])
+            let viaStore = GatewayConfig.parse(raw: input, token: nil, source: .commissioning)
+
+            switch (viaEnv, viaStore) {
+            case let (.malformed(r1, reason1), .malformed(r2, reason2)):
+                XCTAssertEqual(reason1, reason2, "divergent reason for \(input)")
+                XCTAssertEqual(r1, r2, "divergent raw for \(input)")
+                reasonsSeen.insert(reason1)
+            case let (.resolved(e1), .resolved(e2)):
+                XCTAssertEqual(e1.url, e2.url, "divergent URL for \(input)")
+                resolvedSeen += 1
+            case (.absent, .absent):
+                XCTFail("no input in this corpus should be absent: \(input)")
+            default:
+                XCTFail("ARMS DIVERGED for \(input): env=\(viaEnv) store=\(viaStore)")
+            }
+        }
+
+        // Vacuity floor: the corpus must exercise both outcomes and more than
+        // one rejection branch, or "they agreed" is a statement about an empty
+        // walk.
+        XCTAssertGreaterThanOrEqual(reasonsSeen.count, 3,
+            "corpus must reach at least three distinct malformed branches, saw \(reasonsSeen)")
+        XCTAssertGreaterThan(resolvedSeen, 0, "corpus must contain a URL that resolves")
+    }
+
+    /// The summary names the source. A transcript that says which host was used
+    /// but not who supplied it cannot tell a desk build's env override from the
+    /// value typed on the phone.
+    func testSummaryNamesTheSource() {
+        let env = GatewayConfig.resolve(from: [k: "http://h.example"]).summary
+        let store = GatewayConfig.parse(raw: "http://h.example", token: nil, source: .commissioning).summary
+        XCTAssertTrue(env.contains(GatewayConfig.Source.environment.rawValue), env)
+        XCTAssertTrue(store.contains(GatewayConfig.Source.commissioning.rawValue), store)
+        XCTAssertNotEqual(env, store, "the two summaries must differ on the same host")
+    }
 }

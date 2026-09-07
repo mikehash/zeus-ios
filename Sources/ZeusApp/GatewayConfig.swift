@@ -31,12 +31,29 @@ enum GatewayConfig: Equatable {
         case missingHost      = "no host component"
     }
 
+    /// WHO supplied the endpoint. Carried on the value, not inferred at the
+    /// render site, because the two sources are indistinguishable once the URL
+    /// is parsed — and an operator who types a URL into commissioning while an
+    /// `ENV` override is winning sees nothing change and concludes the field is
+    /// broken. Provenance is the only thing that makes that cell legible.
+    ///
+    /// There is deliberately NO default value for this on `Endpoint.init`. A
+    /// default would let a future construction site claim `.environment`
+    /// silently, which is the silent-default defect this whole type was written
+    /// to delete — one enum case further in.
+    enum Source: String, Equatable {
+        case environment    // ZEUS_GATEWAY_URL in the process environment
+        case commissioning  // typed by the operator, persisted in CommissionStore
+    }
+
     struct Endpoint: Equatable {
         let url: URL
         /// Present only if a token was supplied. Absent is distinct from empty:
         /// an empty token is a *malformed* credential, not a missing one, and
         /// the parser refuses it below rather than sending `Bearer `.
         let token: String?
+        /// Where `url` came from. See `Source`.
+        let source: Source
     }
 
     // MARK: - Resolution
@@ -57,7 +74,24 @@ enum GatewayConfig: Equatable {
     static func resolve(
         from env: [String: String] = ProcessInfo.processInfo.environment
     ) -> GatewayConfig {
-        guard let raw = env[urlKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let raw = env[urlKey]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = env[tokenKey]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return parse(raw: raw, token: token, source: .environment)
+    }
+
+    /// The parser, source-agnostic. Split out of `resolve(from:)` so that a
+    /// second supplier (the persisted commissioning value) reaches the SAME
+    /// validation rather than a second copy of it — two parsers is how one
+    /// source starts accepting a URL the other rejects, and the divergence is
+    /// invisible until an operator hits the cell where they disagree.
+    ///
+    /// `source` is a parameter with no default: every caller states who it is.
+    static func parse(
+        raw rawInput: String?,
+        token tokenInput: String?,
+        source: Source
+    ) -> GatewayConfig {
+        guard let raw = rawInput?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else {
             return .absent
         }
@@ -80,10 +114,10 @@ enum GatewayConfig: Equatable {
         // would reject with a 401 that reads like a *wrong* token instead of an
         // absent one — the same wrong-subject error the whole taxonomy exists
         // to prevent.
-        let token = env[tokenKey]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let usableToken = (token?.isEmpty == false) ? token : nil
+        let trimmedToken = tokenInput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let usableToken = (trimmedToken?.isEmpty == false) ? trimmedToken : nil
 
-        return .resolved(Endpoint(url: url, token: usableToken))
+        return .resolved(Endpoint(url: url, token: usableToken, source: source))
     }
 
     /// One-line description for a receipt or a transcript. Never includes the
@@ -95,8 +129,13 @@ enum GatewayConfig: Equatable {
         case let .malformed(raw, reason):
             return "\(Self.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)"
         case let .resolved(endpoint):
+            // The source is named here and not only on the LINK surface: a
+            // transcript that says which host was used but not who supplied it
+            // cannot distinguish a desk build's env override from the value the
+            // operator typed on the phone.
             return "\(endpoint.url.absoluteString) "
                  + (endpoint.token == nil ? "(no token)" : "(token present)")
+                 + " [\(endpoint.source.rawValue)]"
         }
     }
 }

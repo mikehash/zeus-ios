@@ -133,11 +133,34 @@ struct Commission: Equatable, Codable {
         case route
         case callsign
         case nodeEnrolled = "node_enrolled"
+        case gatewayURL = "gateway_url"
     }
 
     var route: Route = .managed
     var callsign: String = ""
     var nodeEnrolled: Bool = false
+
+    /// The gateway the operator typed, or nil if they never did.
+    ///
+    /// OPTIONAL IS NOT A STYLE CHOICE HERE — IT IS THE MIGRATION.
+    /// `UserDefaultsCommissionStore.load()` (`CommissionStore.swift:74-85`)
+    /// does `defaults.removeObject(forKey:)` on a decode failure and then
+    /// returns nil, and `ZeusApp.swift:89` reads nil as "never commissioned".
+    /// A NON-optional property here — even one with a Swift default — makes the
+    /// synthesised `init(from:)` throw `keyNotFound` on every blob written
+    /// before this commit, which erases it and drops the operator back at the
+    /// splash with their callsign and route gone. Measured both arms in a
+    /// standalone `swift` process against a v1 blob: optional decodes to nil,
+    /// non-optional-with-default throws. There is no third option that keeps
+    /// existing installs.
+    ///
+    /// Stored raw and unvalidated. Validation belongs to
+    /// `GatewayConfig.parse(raw:token:source:)`, which is the SAME parser the
+    /// environment goes through — persisting a pre-validated value would let
+    /// the two sources drift into accepting different URLs.
+    ///
+    /// The TOKEN is deliberately not here. See the store's docstring.
+    var gatewayURL: String?
 
     /// The `done` summary line at :623+ — `zeus core · 11 routes · managed ·
     /// 1 node enrolled · operator miguel`, or `byok routes` / `solo`.

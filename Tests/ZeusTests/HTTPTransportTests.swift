@@ -17,7 +17,7 @@ import XCTest
 final class HTTPTransportTests: XCTestCase {
 
     private func endpoint(_ s: String, token: String? = nil) -> GatewayConfig.Endpoint {
-        GatewayConfig.Endpoint(url: URL(string: s)!, token: token)
+        GatewayConfig.Endpoint(url: URL(string: s)!, token: token, source: .environment)
     }
 
     // MARK: - URL construction
