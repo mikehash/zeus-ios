@@ -36,6 +36,10 @@ struct HomeView: View {
     /// conversation; it does not host one.
     let onOpenSession: () -> Void
 
+    /// Pending tool executions awaiting an answer. Read-only here; the store
+    /// owns the queue and re-reads the gateway after every decision.
+    @ObservedObject var approvals: ApprovalsStore
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -43,7 +47,8 @@ struct HomeView: View {
                 agent
                 LinkCard(state: link.state, onRetry: { Task { await link.probeOnce() } })
                 statusGrid
-            alertsRow
+                alertsRow
+                ApprovalsSection(store: approvals, now: Date())
                 resume
                 activityFeed
             }

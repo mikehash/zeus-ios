@@ -49,7 +49,7 @@ Ordered as merakizzz will touch it: **onboarding → session loop → nodes**.
 | B7 | Status line per state | `:477-481` | **PRESENT** | same 4-way switch |
 | B8 | **Orb on the ZEUS tab** | `:544` | **ABSENT** | `grep -c DeviceOrb HomeView.swift` = **0**. The orb is the app's centrepiece in the prototype's home screen; in the app it lives only in `Commissioning:110` and `SessionView:332` (glyph tuning). **Biggest single visual gap** |
 | B9 | **Big mic → voice query on ZEUS tab** | `:578-587` | **ABSENT** | `grep -ci mic HomeView.swift` = 0; `runVoiceQuery` 0 hits repo-wide |
-| B10 | **Proposal cards + APPROVE/DENY** | `:313-321`, `:618-640` | **ABSENT** | `proposal` = **0 hits repo-wide**. Prometheus proposals are an entire feature, absent |
+| B10 | **Proposal cards + APPROVE/DENY** | `:313-321`, `:618-640` | **PRESENT** | Landed on `GET /v1/approvals` (`routes.rs:722`). Needle: `ApprovalCard(` in `Sources` 0 → 1, `ApprovalsSection(` 0 → 1. The prototype's *proposal* framing has no producer; the gateway's queue is **pending tool executions**, so the card shows `tool_name` + `args` verbatim. `infer_risk` NOT ported. |
 | B11 | **LINK toggle HOME-LAN ↔ REMOTE** | `:533` `switchLink` | **ABSENT as a control** | `switchLink` 0 hits. Link *state* is present and **better** — `LinkMonitor` (311 lines) derives it from a real gateway probe rather than a toggle. The missing thing is the demo switch, which should probably stay missing |
 | B12 | `BROADCAST` button | `:590` | **ABSENT** | `broadcast` 0 hits repo-wide |
 | B13 | `PING` button (home) | `:598` | **PARTIAL** | absent on home; present in NODES as `NodeRow(icon:"mappin.and.ellipse", label:"Ping node")` `NodesView:177` |
@@ -236,3 +236,36 @@ promises. The row is a **device-local preference**:
 branch fires means PUTting a `providers` map with a model, which sets
 `state.config.model` on the gateway this agent's own inference runs through. Not
 run.
+
+
+## B10 addendum — what was NOT ported, and why
+
+* **`infer_risk` (`approvals_tab.rs:436`)** — the TUI derives a severity by
+  substring-matching the tool name and args. That is an assessment painted into
+  a slot the eye reads as one. The card renders tool + args verbatim; the
+  operator assesses. Leg: `testNoSeverityIsComputedInShippingSource`.
+* **`unwrap_or(&[])` (`approvals_tab.rs:95`)** — collapses `None` (gateway
+  unreachable) and `Some(&[])` (queue empty) into one green
+  `✓ no pending approvals`, with zero `with_live(None)` tests. "Gateway down ⇒
+  nothing to approve" is the highest-cost wrong answer on this surface. iOS
+  keeps them as separate cases with different strings and suppresses the header
+  count when the length is unknown. Leg: `testUnreachableIsNotEmpty`.
+* **The prototype's HOME/REMOTE split on proposals** — dropped; the queue is
+  one gateway's, and there is no per-origin field on the wire.
+
+### The three strings
+
+| condition | string |
+| --- | --- |
+| reachable, `[]`, gating configured | `NO PENDING APPROVALS` |
+| reachable, `[]`, `require_confirmation_for` empty | `NOTHING IS GATED — NO TOOL REQUIRES APPROVAL` |
+| unreachable | `APPROVALS UNREACHABLE — <reason>` (header count renders **nothing**) |
+
+### Reach wording rider
+
+`Reach.lanOnly` was `LAN ONLY · NO EGRESS` and is now `LAN BY DEFAULT · NO
+EGRESS`. It derives from `default_url` — the catalogue's default, not the URL
+the gateway is configured with. Deriving from the configured URL has no
+producer: all 226 leaves of `GET /v1/config` were walked and there is no
+`ollama.url`; `mnemosyne.ollama_url` is the embeddings host, a different
+subject. So the wording is the fix, not the wiring.

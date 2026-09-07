@@ -126,6 +126,13 @@ final class RouteTests: XCTestCase {
         let routes = try decoded()
         let byID = Dictionary(uniqueKeysWithValues: routes.map { ($0.id, $0.reach) })
         XCTAssertEqual(byID["ollama"], .lanOnly, "a loopback default_url is a LAN node")
+        // The RENDERED string may not out-claim its source. `default_url` is
+        // the catalogue's default, not the deployment's URL, so the sentence
+        // says "BY DEFAULT". A string asserting the running node never
+        // egresses would be a claim the field cannot support.
+        XCTAssertEqual(Route.Reach.lanOnly.rawValue, "LAN BY DEFAULT · NO EGRESS")
+        XCTAssertFalse(Route.Reach.lanOnly.rawValue.contains("LAN ONLY"),
+                       "over-reads default_url: asserts the deployment, not the default")
         XCTAssertEqual(byID["anthropic"], .direct)
         XCTAssertNotEqual(byID["ollama"], byID["anthropic"],
                           "derive() has collapsed to a constant")

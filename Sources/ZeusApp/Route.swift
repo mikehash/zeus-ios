@@ -84,7 +84,7 @@ struct Route: Identifiable, Equatable {
         /// Straight to the provider over the internet.
         case direct = "DIRECT FROM THIS NODE"
         /// Never leaves the local network.
-        case lanOnly = "LAN ONLY · NO EGRESS"
+        case lanOnly = "LAN BY DEFAULT · NO EGRESS"
 
         /// Derived from the two fetched fields that carry topology.
         ///
@@ -93,6 +93,20 @@ struct Route: Identifiable, Equatable {
         /// `http://localhost:11434`). Everything else egresses. Both operands
         /// come from the response, so the provenance of the rendered string is
         /// nameable: it is the gateway's own `requires_url` / `default_url`.
+        ///
+        /// ⚠️ IT IS THE **DEFAULT** URL, AND THE STRING SAYS SO. `default_url`
+        /// is the catalogue's default, NOT the URL this gateway is configured
+        /// with — the operator may run Ollama on a remote node, and a Tailscale
+        /// `100.64.x` host is not in the private-prefix list below either. The
+        /// string used to read `LAN ONLY · NO EGRESS`, which over-read the
+        /// source by one word: it asserted a fact about the running
+        /// deployment from a field that describes the catalogue.
+        ///
+        /// The alternative — derive from the CONFIGURED url — has no producer:
+        /// all 226 leaves of `GET /v1/config` were walked on this box and
+        /// there is no `ollama.url`. The only `ollama` paths are
+        /// `mnemosyne.ollama_url` (the EMBEDDINGS host — a different subject)
+        /// and `default_provider`. So the wording is the fix, not the wiring.
         static func derive(requiresURL: Bool, defaultURL: String) -> Reach {
             guard requiresURL,
                   let host = URLComponents(string: defaultURL)?.host?.lowercased()

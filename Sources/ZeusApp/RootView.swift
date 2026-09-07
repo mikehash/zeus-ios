@@ -66,6 +66,11 @@ struct RootView: View {
     /// consuming sites read its verdict rather than a literal.
     @StateObject private var link = LinkMonitor()
 
+    /// The approval queue. Owned here, beside `link`, because the queue
+    /// outlives any one render of HOME and a second owner would mean two
+    /// pictures of one gateway's state.
+    @StateObject private var approvals = ApprovalsStore()
+
     /// Push state, owned by `ZeusApp` and passed in — NOT constructed here.
     /// A registrar built by this view would be replaced whenever the view is
     /// reconstructed, and a token delivered to the old one would be lost with
@@ -101,6 +106,7 @@ struct RootView: View {
         // changes, and two poll loops would halve the effective interval with
         // nothing in the UI to show it.
         .task { link.start() }
+        .task { await approvals.load() }
         // Background behaviour. Three phases, and only `.active` and
         // `.background` are acted on:
         //
@@ -160,7 +166,8 @@ struct RootView: View {
             // `.zeus` unconditionally in release, so this is the cold-start
             // destination for every commissioned operator on every launch —
             // which is why it ships with restore rather than behind it.
-            HomeView(link: link, session: session, push: push, onOpenSession: { tab = .session })
+            HomeView(link: link, session: session, push: push,
+                     onOpenSession: { tab = .session }, approvals: approvals)
         case .session:
             SessionView(
                 messages: session.messages,
