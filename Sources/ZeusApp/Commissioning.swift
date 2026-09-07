@@ -322,7 +322,7 @@ struct Commission: Equatable, Codable {
         // nil is a real state, not a missing value to paper over: a legacy
         // record never held a provider, and the screen says so rather than
         // naming one the operator did not choose.
-        let routeText = provider.map { "\($0.uppercased()) · BYOK" } ?? "PROVIDER NOT SET"
+        let routeText = provider.map { "\($0.uppercased()) · BYOK" } ?? "NO PROVIDER — SET ONE IN ROUTES"
         let nodeText = nodeEnrolled ? "1 node enrolled" : "solo"
         let operatorText = callsign.isEmpty ? "operator" : "operator \(callsign.lowercased())"
         return "zeus core · \(routeText) · \(nodeText) · \(operatorText)"
@@ -516,7 +516,7 @@ struct CommissioningView: View {
                 // needle the claim is actually about.
                 RouteCard(
                     title: "LOCAL — THIS PHONE",
-                    copy: "The core runs in-process. No network, no gateway. Bring your own key.",
+                    copy: "The core runs in-process. No gateway hop — your key goes straight to the provider from this phone.",
                     selected: forkSelection == .local
                 ) { forkPick = .local }
 
@@ -603,7 +603,7 @@ struct CommissioningView: View {
                 // no greyed card, no "coming soon". A stated non-action is
                 // still a non-action on a screen the operator taps.
                 RouteCard(
-                    title: "BYOK — OWN KEYS",
+                    title: "YOUR OWN KEYS",
                     copy: "Direct to providers. The key stays on this phone.",
                     selected: true
                 ) { commission.route = .byok }

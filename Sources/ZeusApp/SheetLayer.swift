@@ -33,7 +33,7 @@ struct SheetLayer<Content: View>: View {
                 // The scrim is a dismiss control with no label of its own, so
                 // it needs one here or VoiceOver reads an unlabelled tap area.
                 .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("Dismiss")
+                .accessibilityLabel("CLOSE")
 
             VStack(spacing: 0) {
                 Text(title)

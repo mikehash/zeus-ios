@@ -121,9 +121,9 @@ struct NodesView: View {
     /// exercises this mapping directly.
     static func gatewayRowLabel(for config: GatewayConfig) -> String {
         switch config {
-        case .absent:    return "Use a remote gateway instead"
-        case .local:     return "Use a remote gateway instead"
-        case .malformed: return "Fix gateway URL"
+        case .absent:    return "NO GATEWAY — LINK ONE"
+        case .local:     return "CORE — THIS PHONE"
+        case .malformed: return "GATEWAY URL INVALID — FIX IT"
         case .resolved:  return "Change remote gateway"
         }
     }
@@ -134,7 +134,7 @@ struct NodesView: View {
     static func gatewayRowValue(for config: GatewayConfig) -> String? {
         switch config {
         case .absent:                    return nil
-        case .local:                     return nil
+        case .local:                     return "USE A REMOTE GATEWAY"
         case .malformed(let raw, _):     return raw
         case .resolved(let endpoint):    return endpoint.url.host ?? endpoint.url.absoluteString
         }

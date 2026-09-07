@@ -217,25 +217,25 @@ final class ManagedDeferralTests: XCTestCase {
         XCTAssertNil(c.provider, "a missing new key must not erase the record — and must not invent a value")
         // The screen is the point: nil must SAY not-set, never name a provider
         // the operator did not choose.
-        XCTAssertTrue(c.summary.contains("PROVIDER NOT SET"), c.summary)
+        XCTAssertTrue(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
         XCTAssertFalse(c.summary.uppercased().contains("ANTHROPIC"),
                        "a record that never set a provider must not print one: \(c.summary)")
     }
 
     /// THE WRITER. `provider` is nil until an operator action names one, so
     /// the routes step must WRITE it — a fresh commission that reached `done`
-    /// without this call would print `PROVIDER NOT SET` on the summary.
+    /// without this call would print the unset-provider marker on the summary.
     func testTheRoutesStepWritesTheProviderAndTheRouteTogether() {
         var c = Commission()
         XCTAssertNil(c.provider, "nothing has chosen yet")
-        XCTAssertTrue(c.summary.contains("PROVIDER NOT SET"), c.summary)
+        XCTAssertTrue(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
 
         c.recordRoutesChoice()
 
         XCTAssertEqual(c.route, .byok)
         XCTAssertEqual(c.provider, Commission.routesProviderID)
         XCTAssertTrue(c.summary.contains("ANTHROPIC · BYOK"), c.summary)
-        XCTAssertFalse(c.summary.contains("PROVIDER NOT SET"), c.summary)
+        XCTAssertFalse(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
     }
 
     /// APERTURE, STATED: the function above is guarded; the ONE LINE that calls
@@ -359,10 +359,91 @@ final class ManagedDeferralTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(src.contains("BYOK — OWN KEYS"), "POS control: the grep can find a card title")
+        XCTAssertTrue(src.contains("YOUR OWN KEYS"), "POS control: the grep can find a card title")
         XCTAssertFalse(src.contains("MANAGED — NOVA CREDITS"), "the MANAGED card must not render")
         XCTAssertFalse(src.contains("11 routes, zero keys"), "its copy must go with it")
         XCTAssertFalse(src.contains("Pick how I reach the models"),
                        "one option is not a pick — the narration must not offer a choice")
+    }
+}
+
+// MARK: - ZM's copy register: the retired strings, and the caption's gate
+
+/// Two legs for the copy commit, both about strings that must read ZERO in
+/// the shipping source — and a zero is the reading a DEAD WALK produces too.
+/// Every leg here therefore carries a control proving the walk saw the file.
+final class CopyRegisterTests: XCTestCase {
+
+    private func source(_ name: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/\(name)")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// Code lines only. A retired string pasted into a comment as an
+    /// explanation is exactly the defect `Commissioning.swift:44` warns
+    /// about, and a comment-blind grep cannot tell the two apart.
+    private func codeLines(_ src: String) -> [String] {
+        src.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+    }
+
+    /// S1. `PROVIDER NOT SET` is retired in favour of
+    /// `NO PROVIDER — SET ONE IN ROUTES`. The POS is the replacement: a zero
+    /// on the old string only means removal if the same walk can find the
+    /// new one in the same file.
+    func testRetiredUnsetProviderStringIsGoneFromTheSource() throws {
+        let src = try source("Commissioning.swift")
+        let code = codeLines(src)
+        XCTAssertEqual(code.filter { $0.contains("NO PROVIDER — SET ONE IN ROUTES") }.count, 1,
+                       "POS: the walk reads the REPLACEMENT — without this a dead walk passes")
+        XCTAssertEqual(code.filter { $0.contains("PROVIDER NOT SET") }.count, 0,
+                       "the retired unset-provider marker must not ship")
+    }
+
+    /// E3, gated. The old SAVE caption named the work that would enable the
+    /// disabled half; ZM's rule is that a disabled control states what it
+    /// DOES, never what is coming. The new caption is honest ONLY while the
+    /// URL half really is read-only — so a zero-count on the old string is
+    /// uninformative until the wiring exists.
+    ///
+    /// POS-A is the wiring census: does `GatewayEditor` write
+    /// `Commission.gatewayURL` yet? Today it does not (the editor holds no
+    /// `store` at all — the four `store` mentions in that file are prose,
+    /// including a `WRITES` docstring describing a write that does not
+    /// exist). While POS-A reads 0 this leg VOIDs rather than passing: a
+    /// pass before ③c would be a pass for the wrong reason.
+    func testSaveCaptionIsHonestAboutWhatTheButtonWrites() throws {
+        let src = try source("GatewayEditor.swift")
+        let code = codeLines(src)
+
+        // POS-B: the comment-stripped walk is live. A known-present code
+        // needle, so a filter bug VOIDs instead of greening every count.
+        XCTAssertGreaterThan(code.filter { $0.contains("tokens.") }.count, 0,
+                             "VOID: the comment-stripped walk read nothing")
+
+        // POS-A: the URL-write wiring, code lines only.
+        let writesURL = code.filter {
+            $0.contains("gatewayURL") && ($0.contains("store") || $0.contains("save"))
+        }.count
+
+        guard writesURL > 0 else {
+            // Not a failure — an honest abstention. The caption's truth
+            // value is undefined until the wiring lands (③c), and the
+            // current caption states exactly the state measured here.
+            XCTAssertEqual(code.filter { $0.contains("TOKEN SAVES NOW — URL IS READ-ONLY IN THIS BUILD") }.count, 1,
+                           "while the URL half is unwired the caption must say so")
+            XCTAssertEqual(code.filter { $0.contains("URL SAVES WHEN COMMISSION WIRING LANDS") }.count, 0,
+                           "the retired caption named future work — ZM's rule, and it must not ship")
+            return
+        }
+
+        // ③c has landed: the URL half writes, so the read-only caption is
+        // now itself a lie and must be gone.
+        XCTAssertEqual(code.filter { $0.contains("URL IS READ-ONLY IN THIS BUILD") }.count, 0,
+                       "the editor writes the URL now — the read-only caption is stale")
     }
 }

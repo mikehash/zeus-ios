@@ -91,10 +91,10 @@ struct GatewayEditorSheet: View {
     /// label and tint, never in shape; a fifth shape is a defect here.
     private func preflightLabel(_ state: PreflightState) -> (String, Color) {
         switch state {
-        case .tokenOK:            return ("TOKEN OK", Theme.ok)
-        case .tokenRejected:      return ("TOKEN REJECTED", Theme.danger)
-        case .noTokenBlocked:     return ("NO TOKEN — API BLOCKED", Theme.warn)
-        case .gatewayUnreachable: return ("GATEWAY UNREACHABLE", Theme.warn)
+        case .tokenOK:            return ("TOKEN OK — GATEWAY REACHABLE", Theme.ok)
+        case .tokenRejected:      return ("TOKEN REJECTED — REPLACE IT ABOVE", Theme.danger)
+        case .noTokenBlocked:     return ("NO TOKEN — ADD ONE ABOVE TO UNBLOCK", Theme.warn)
+        case .gatewayUnreachable: return ("GATEWAY UNREACHABLE — CHECK THE URL", Theme.warn)
         }
     }
 
@@ -176,7 +176,7 @@ struct GatewayEditorSheet: View {
                 .font(Theme.mono(8.5, .semibold))
                 .tracking(1.2)
                 .foregroundStyle(Theme.w(0.5))
-            SecureField("api token", text: $newToken)
+            SecureField("API TOKEN", text: $newToken)
                 .font(Theme.mono(11))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -284,7 +284,7 @@ struct GatewayEditorSheet: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            Text("URL SAVES WHEN COMMISSION WIRING LANDS — TOKEN SAVES NOW")
+            Text("TOKEN SAVES NOW — URL IS READ-ONLY IN THIS BUILD")
                 .font(Theme.mono(8))
                 .tracking(0.7)
                 .foregroundStyle(Theme.w(0.4))

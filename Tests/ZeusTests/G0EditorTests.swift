@@ -173,13 +173,18 @@ final class G0EditorTests: XCTestCase {
             XCTAssertFalse(label.isEmpty, "no label under \(arm)")
         }
 
-        // The distinct set is exactly the ruled mapping: two arms share the
-        // *use a remote gateway instead* label (deliberate), and the other
-        // two are distinct from everything.
-        XCTAssertEqual(Set(labels).count, 3,
-                       "absent/local share one label; malformed and resolved are their own")
-        XCTAssertEqual(labels[0], labels[1],
-                       ".absent and .local share the remote-instead label (ruled)")
+        // FOUR distinct labels after ZM's N2/N3/N4 rewrite. `.absent` and
+        // `.local` previously SHARED *use a remote gateway instead*; they no
+        // longer do, because the two arms are not the same state — `.local`
+        // says WHAT is running (`CORE — THIS PHONE`) and carries the action
+        // in its value slot, `.absent` says what is missing. The share was
+        // ruled deliberate then and the split is ruled deliberate now, so
+        // this leg asserts the CURRENT mapping and would fail if a future
+        // edit collapsed the two arms back into one string.
+        XCTAssertEqual(Set(labels).count, 4,
+                       "every arm has its own label: \(labels)")
+        XCTAssertNotEqual(labels[0], labels[1],
+                          ".absent and .local must not collapse into one label")
         XCTAssertTrue(labels[3].lowercased().contains("change"),
                       ".resolved offers change, not first-time setup: \(labels[3])")
         XCTAssertTrue(labels[2].lowercased().contains("fix"),
@@ -192,7 +197,10 @@ final class G0EditorTests: XCTestCase {
         XCTAssertEqual(NodesView.gatewayRowValue(for: resolved()), "zeus.example.com")
         XCTAssertEqual(NodesView.gatewayRowValue(for: malformed()), "zeus dot local")
         XCTAssertNil(NodesView.gatewayRowValue(for: .absent))
-        XCTAssertNil(NodesView.gatewayRowValue(for: local()))
+        // N2 puts the ACTION in the value slot for `.local`: the title is
+        // the state, the value is what the tap does. `.absent` keeps nil —
+        // its own title already carries the action (`LINK ONE`).
+        XCTAssertEqual(NodesView.gatewayRowValue(for: local()), "USE A REMOTE GATEWAY")
     }
 
     /// THE ROW ITSELF, guarded by TEXT: the gateway row is constructed in
