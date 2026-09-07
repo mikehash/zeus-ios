@@ -333,4 +333,129 @@ final class GatewayResolutionTests: XCTestCase {
         }
         XCTAssertEqual(endpoint.token, "sekret")
     }
+
+    // MARK: - The no-default enumeration (②)
+
+    /// Every `config`/`makeTransport`/`store` default is deleted, so the
+    /// COMPILER enumerates the set of sites that must be handed a resolution.
+    /// This leg guards the property the compiler cannot: that no site
+    /// re-acquires one later.
+    ///
+    /// Shape: a CARDINALITY leg, not an absence leg. `GatewayConfig.resolve`
+    /// must exist and must be CALLED, so "the string is absent" is
+    /// unachievable. Two needles, each naming a defect that cannot be written
+    /// any other way:
+    ///
+    /// 1. `: GatewayConfig =` — a DEFAULTED PARAMETER of config type. This is
+    ///    the only syntax that can put resolution back into a parameter list,
+    ///    which is the exact position where no store is in scope.
+    /// 2. `resolveFromEnvironment` outside `GatewayConfig.swift` — the
+    ///    env-only half leaking back out to a caller. It is `internal` by
+    ///    necessity (the seam calls it), so visibility cannot enforce this.
+    ///
+    /// My first draft used `= GatewayConfig.resolve`, which failed on
+    /// `RootView.swift:101` — the one legitimate call site, an ASSIGNMENT. A
+    /// needle that cannot separate a default from an assignment is measuring
+    /// the wrong subject; recorded because the failure was the instrument's,
+    /// not the tree's.
+    ///
+    /// POS control in the same invocation: the declaration `static func
+    /// resolve(` reads 1, so a wrong path VOIDs instead of falsely passing.
+    func testNoProductionSiteDefaultsItsConfig() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp")
+
+        let files = try FileManager.default
+            .contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 5,
+                             "POS control: the directory scan found the sources")
+
+        var defaulted: [String] = []
+        var envOnlyLeaks: [String] = []
+        var declarations = 0
+        var configParameters = 0
+        for f in files {
+            let src = try String(contentsOf: f, encoding: .utf8)
+            let isSeamFile = f.lastPathComponent == "GatewayConfig.swift"
+            for (n, line) in src.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                // Comments describe the rule; only code can break it. (This
+                // very test's docstring names both needles — the self-match
+                // class, avoided by skipping comment lines rather than by
+                // asking the docstring not to say what it guards.)
+                let code = line.trimmingCharacters(in: .whitespaces)
+                if code.hasPrefix("//") { continue }
+                if code.contains(": GatewayConfig =") {
+                    defaulted.append("\(f.lastPathComponent):\(n + 1)")
+                }
+                if code.contains(": GatewayConfig") { configParameters += 1 }
+                if !isSeamFile, code.contains("resolveFromEnvironment") {
+                    envOnlyLeaks.append("\(f.lastPathComponent):\(n + 1)")
+                }
+                // Scoped to the SEAM FILE. This control counted every file
+                // and read 2 the moment `RootView.resolve(store:)` was
+                // extracted for MUT-C — a correct file failing a control that
+                // measured a wider subject than it named. The control's claim
+                // is "I am reading GatewayConfig.swift", so that is what it
+                // counts.
+                if isSeamFile, code.contains("static func resolve(") { declarations += 1 }
+            }
+        }
+
+        XCTAssertEqual(declarations, 1,
+                       "POS control: exactly one `static func resolve(` declaration was read")
+        XCTAssertGreaterThan(configParameters, 3,
+                             "POS control: config-typed properties/parameters exist to be defaulted")
+        XCTAssertEqual(defaulted, [],
+                       "a production site re-acquired a defaulted config: \(defaulted)")
+        XCTAssertEqual(envOnlyLeaks, [],
+                       "the env-only half leaked outside the seam: \(envOnlyLeaks)")
+    }
+
+    /// `AppState.store` must be readable by `RootView` — the seam is useless
+    /// if the app cannot hand down the very store it was built with. Guards
+    /// the visibility, which is the part a compile error would only surface
+    /// at the one call site.
+    func testAppStateExposesItsStoreReadOnly() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/ZeusApp.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(src.contains("final class AppState"),
+                      "POS control: the grep is reading the right file")
+        XCTAssertTrue(src.contains("let store: CommissionStoring"),
+                      "the store must be exposed for RootView to pass down")
+        XCTAssertFalse(src.contains("private let store: CommissionStoring"),
+                       "read-only exposure, not private")
+        XCTAssertFalse(src.contains("var store: CommissionStoring"),
+                       "read-only: a second writer would mean two pictures of one commission")
+    }
+
+    /// The repair for MUT-C. `RootView.resolve(store:)` must HONOUR the store
+    /// it is given — a fresh `UserDefaultsCommissionStore()` inside would read
+    /// the phone's real defaults while the capture harness's seeded
+    /// `InMemoryCommissionStore` says LOCAL, and every screenshot would be a
+    /// lie with green legs. That is the precise failure Zeus100 ruled the
+    /// no-default shape against, arriving one level below the parameter list.
+    ///
+    /// Vacuity guard: the seeded store and an empty one must resolve
+    /// DIFFERENTLY, or this assertion is satisfied by an identity.
+    func testRootViewResolutionHonoursTheInjectedStore() {
+        let seeded = InMemoryCommissionStore()
+        seeded.save(Commission(route: .byok, provider: "anthropic",
+                               callsign: "TEST", nodeEnrolled: false))
+        let empty = InMemoryCommissionStore()
+
+        let fromSeeded = RootView.resolve(store: seeded)
+        let fromEmpty = RootView.resolve(store: empty)
+
+        XCTAssertNotEqual(fromSeeded.config, fromEmpty.config,
+                          "vacuity guard: the two stores must resolve differently")
+        XCTAssertEqual(fromSeeded.config, .local(.ready),
+                       "the injected store's commission is the one that resolves")
+        XCTAssertEqual(fromSeeded.source, .commission)
+    }
 }

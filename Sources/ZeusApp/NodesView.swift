@@ -55,7 +55,12 @@ struct NodesView: View {
     /// default to fall back to and **no selection until the operator makes
     /// one**: the row reads the gateway's ACTIVE provider when nothing is
     /// selected, and says so.
-    @StateObject private var routes = RouteCatalogStore()
+    /// RECEIVED, not owned. It was `@StateObject private var routes =
+    /// RouteCatalogStore()` — a construction inside a view body, which has no
+    /// commission store in scope and so could only ever resolve from the
+    /// environment. `RootView` builds it from the one resolution and hands it
+    /// down; `@ObservedObject` because the lifetime belongs to the parent.
+    @ObservedObject var routes: RouteCatalogStore
 
     /// `:410` / `:408` — the two sheets. Separate flags: the prototype can
     /// have neither open, and nothing in either flow opens both.

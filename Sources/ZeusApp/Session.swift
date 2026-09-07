@@ -250,15 +250,16 @@ final class SessionEngine: ObservableObject {
 
     /// Seeded from the prototype's initial transcript, :411-412.
     ///
-    /// The `makeTransport` DEFAULT is the opposite case to `HTTPTransport`'s
-    /// non-defaulted `sessionID:`, and the discriminator is one question: does
-    /// the default expression MANUFACTURE identity state, or RECEIVE it? A
-    /// `sessionID: SessionIDBox()` default manufactures — the defect. This one
-    /// receives `box` and only picks a construction strategy, and it lets the
-    /// single production call site vanish entirely (RootView now writes
-    /// `SessionEngine()`), and a vanished call site cannot drift.
-    init(makeTransport: @escaping (SessionIDBox) -> SessionTransport
-            = { box in Zeus.makeTransport(for: GatewayConfig.resolveFromEnvironment(), sessionID: box) },
+    /// The `makeTransport` default is DELETED, and the argument that used to
+    /// justify it is worth keeping beside the deletion because it was sound
+    /// about the wrong axis. It asked: does the default expression MANUFACTURE
+    /// identity state, or RECEIVE it? This one received `box`, so it passed —
+    /// but it also *resolved config*, and resolution is exactly the thing that
+    /// cannot be defaulted: the env-only half is the only half reachable
+    /// without a store, so the default silently answered LOCAL-vs-REMOTE with
+    /// "neither" no matter what the operator chose. A defaulted call site does
+    /// not drift; it is simply wrong from the first build.
+    init(makeTransport: @escaping (SessionIDBox) -> SessionTransport,
          seed: [Message] = [
             Message(role: .agent,
                     text: "Operator link established. All systems nominal — "

@@ -16,7 +16,14 @@ final class AppState: ObservableObject {
     /// produces.
     @Published private(set) var commission: Commission?
 
-    private let store: CommissionStoring
+    /// Exposed READ-ONLY (`let`, non-private) because `RootView` must hand the
+    /// same store to `GatewayConfig.resolve(from:store:)` that this object was
+    /// built with. Read-only and not `var`: a second writer would mean two
+    /// pictures of one commission, and the write path stays `commission(_:)` /
+    /// `decommission()` on this type. The capture harness seeds an
+    /// `InMemoryCommissionStore` here, and that is precisely the object the
+    /// resolution seam has to see.
+    let store: CommissionStoring
 
     /// Resolution order, and each rung is deliberate:
     ///
@@ -73,7 +80,7 @@ struct ZeusApp: App {
     var body: some Scene {
         WindowGroup {
             if let commission = state.commission {
-                RootView(push: push)
+                RootView(store: state.store, push: push)
                     .transition(.opacity)
                     // Carried so the ZEUS tab header can read `OPERATOR ·
                     // <callsign>` and the LINK pill can tell solo from

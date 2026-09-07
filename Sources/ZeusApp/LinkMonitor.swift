@@ -254,7 +254,13 @@ final class LinkMonitor: ObservableObject {
     /// cannot change under a running app, and re-resolving per poll would make
     /// every verdict depend on a read that always returns the same thing —
     /// work whose only possible effect is a bug.
-    init(config: GatewayConfig = GatewayConfig.resolveFromEnvironment(),
+    /// `config` has NO DEFAULT. A default here would call the ENV-ONLY half
+    /// of resolution (`resolveFromEnvironment`) and silently bypass the
+    /// commission the operator chose — and worse, bypass the seeded
+    /// `InMemoryCommissionStore` that `ZeusApp.swift` builds for capture and
+    /// test launches, so a screenshot would photograph a config the seed
+    /// never wrote. Required parameter, so the compiler enumerates the set.
+    init(config: GatewayConfig,
          probe: LinkProbe = HTTPLinkProbe(),
          interval: Duration = .seconds(10)) {
         self.config = config

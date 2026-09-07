@@ -351,7 +351,11 @@ final class ApprovalsStore: ObservableObject {
     private let config: GatewayConfig
     private let service: ApprovalsServicing
 
-    init(config: GatewayConfig = GatewayConfig.resolveFromEnvironment(),
+    /// `config` has NO DEFAULT — see `LinkMonitor.init` for the reason at
+    /// length. Short form: a default reaches the env-only half of resolution
+    /// and cannot see the commission, so it would answer a question the
+    /// operator already answered elsewhere.
+    init(config: GatewayConfig,
          service: ApprovalsServicing = HTTPApprovalsService()) {
         self.config = config
         self.service = service

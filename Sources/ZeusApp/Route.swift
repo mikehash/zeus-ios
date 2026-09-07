@@ -285,7 +285,11 @@ final class RouteCatalogStore: ObservableObject {
     private let config: GatewayConfig
     private let fetcher: RouteCatalogFetching
 
-    init(config: GatewayConfig = GatewayConfig.resolveFromEnvironment(),
+    /// `config` has NO DEFAULT — see `LinkMonitor.init`. This store is built
+    /// by `RootView` and handed DOWN to `NodesView`, which used to construct
+    /// it itself; a view-owned construction had no store in scope and so
+    /// could only ever have read the environment.
+    init(config: GatewayConfig,
          fetcher: RouteCatalogFetching = HTTPRouteCatalogFetcher()) {
         self.config = config
         self.fetcher = fetcher

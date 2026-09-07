@@ -60,27 +60,70 @@ struct RootView: View {
     /// The session loop. RootView READS the transcript and calls `send`; it
     /// cannot append a message or set an agent state, because neither is
     /// writable from here. The seed lives in the engine's initialiser.
-    // No transport argument. The engine's DEFAULT factory resolves config and
-    // builds a transport per turn, handing it the engine-owned session id — so
-    // there is no production call site here to drift out of step with the
-    // seam. A call site that does not exist cannot be forgotten during an edit.
-    @StateObject private var session = SessionEngine()
+    // The engine's factory is now supplied HERE, closing over the resolved
+    // config, because the resolution seam needs a store and a property
+    // initialiser has no store in scope. The comment that stood here argued
+    // that a vanished call site cannot drift; true, and beside the point — the
+    // vanished site was resolving from the environment alone, so it could
+    // never produce `.local` at all.
+    @StateObject private var session: SessionEngine
 
     /// Link state, MEASURED — the source `statusLine` did not have. The
     /// monitor resolves config once at construction and polls `/health`; both
     /// consuming sites read its verdict rather than a literal.
-    @StateObject private var link = LinkMonitor()
+    @StateObject private var link: LinkMonitor
 
     /// The approval queue. Owned here, beside `link`, because the queue
     /// outlives any one render of HOME and a second owner would mean two
     /// pictures of one gateway's state.
-    @StateObject private var approvals = ApprovalsStore()
+    @StateObject private var approvals: ApprovalsStore
+
+    /// The route catalogue. Built HERE and handed DOWN to `NodesView`, which
+    /// used to own it as its own `@StateObject` — a view-scoped construction
+    /// with no store in scope, and therefore permanently on the env-only half
+    /// of resolution.
+    @StateObject private var routes: RouteCatalogStore
+
+    /// The one resolution this view performs, kept so `content` reads a value
+    /// rather than re-resolving per render.
+    private let resolution: GatewayConfig.Resolution
 
     /// Push state, owned by `ZeusApp` and passed in — NOT constructed here.
     /// A registrar built by this view would be replaced whenever the view is
     /// reconstructed, and a token delivered to the old one would be lost with
     /// no error anywhere.
     @ObservedObject var push: PushRegistrar
+
+    /// EXTRACTED so the store-honouring write has a leg. Inlined in `init`
+    /// it was structurally unguardable — a `View` initialiser is not callable
+    /// from this test target, and the mutation that swapped `store` for a
+    /// fresh `UserDefaultsCommissionStore()` left all 294 tests green: the
+    /// resolution legs assert what `resolve` RETURNS, and said nothing about
+    /// whether the caller passes the store it was handed. Fifth instance of
+    /// the value-asserted / call-site-unguarded shape on this branch.
+    ///
+    /// The one line that calls it (`init`, above) remains guarded only by the
+    /// source-cardinality leg — a `View` init is not observable in-process
+    /// without ViewInspector. Smaller unguarded surface, not a closed one.
+    static func resolve(store: CommissionStoring) -> GatewayConfig.Resolution {
+        GatewayConfig.resolve(from: ProcessInfo.processInfo.environment, store: store)
+    }
+
+    /// `store` has NO DEFAULT, and neither does anything it feeds. Every
+    /// observable below is constructed from ONE resolution, so the tabs cannot
+    /// disagree about which gateway this app is talking to.
+    init(store: CommissionStoring, push: PushRegistrar) {
+        let resolution = RootView.resolve(store: store)
+        self.resolution = resolution
+        self.push = push
+        let config = resolution.config
+        _session = StateObject(wrappedValue: SessionEngine(
+            makeTransport: { box in Zeus.makeTransport(for: config, sessionID: box) }
+        ))
+        _link = StateObject(wrappedValue: LinkMonitor(config: config))
+        _approvals = StateObject(wrappedValue: ApprovalsStore(config: config))
+        _routes = StateObject(wrappedValue: RouteCatalogStore(config: config))
+    }
 
     var body: some View {
         ZStack {
@@ -223,10 +266,10 @@ struct RootView: View {
                 // reason `voiceState` is: a `View` body cannot read the
                 // environment, and a config read in a body would re-run on
                 // every render. One read, one owner, rendered downstream.
-                disarmReason: GatewayConfig.resolveFromEnvironment().disarmReason
+                disarmReason: resolution.config.disarmReason
             )
         case .nodes:
-            NodesView(link: link.state, onToast: showToast)
+            NodesView(link: link.state, routes: routes, onToast: showToast)
         }
     }
 }
