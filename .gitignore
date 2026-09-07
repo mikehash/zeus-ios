@@ -2,3 +2,6 @@
 .DS_Store
 DerivedData/
 build/
+
+# Rust build artifacts — the bridge target dir is ~1.5GB of git deps + objects.
+rust/**/target/
