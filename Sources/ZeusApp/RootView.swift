@@ -306,11 +306,11 @@ struct RootView: View {
             )
         case .nodes:
             NodesView(link: link.state, routes: routes, onToast: showToast,
-                      resolution: resolution,
                       onOpenGatewayEditor: { config in
                           gatewayEditorConfig = config
                           gatewayEditor = true
-                      })
+                      },
+                      resolution: resolution)
         }
     }
 }
