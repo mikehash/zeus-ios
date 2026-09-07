@@ -184,10 +184,17 @@ struct Commission: Equatable, Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         route = try c.decode(Route.self, forKey: .route)
-        // NO `?? "anthropic"`. A record written before this key existed did
-        // not hold a provider, and defaulting one here would print a provider
-        // the operator never chose onto the completion screen — the fabricated
-        // `11 routes` class, one field over. Absent decodes to absent.
+        // NO nil-coalesce to a provider literal here. (The forbidden shape is
+        // deliberately NOT spelled out: a comment that quotes the string a
+        // guard greps for is itself a hit, and this file has already tripped
+        // that three times tonight. Cite the shape, not the string.)
+        // A record written before this key existed did not hold a provider,
+        // and defaulting one here would print a provider the operator never
+        // chose onto the completion screen — the fabricated route-count class
+        // of `Commission.summary`, one field over. Absent decodes to absent.
+        // The one legitimate provider literal in this file is
+        // `routesProviderID` (below), a constant of the STEP, reachable only
+        // by an operator action.
         provider = try c.decodeIfPresent(String.self, forKey: .provider)
         callsign = try c.decode(String.self, forKey: .callsign)
         nodeEnrolled = try c.decode(Bool.self, forKey: .nodeEnrolled)

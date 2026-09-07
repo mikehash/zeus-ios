@@ -255,6 +255,33 @@ final class ManagedDeferralTests: XCTestCase {
                       "the routes CTA must write the choice, not leave provider nil")
     }
 
+    /// THE DEFAULT MUST NOT CREEP BACK, and this is the leg that says so in a
+    /// form a grep can hold: `Commissioning.swift` may name a provider in
+    /// exactly ONE place — `routesProviderID`, the constant of the routes step,
+    /// reachable only by an operator action. Any second occurrence is either a
+    /// decoder default (the fabrication this commit removed) or a comment
+    /// quoting the literal, which is the self-match that tripped this file
+    /// three times: the guard cannot tell them apart, so the file carries none.
+    /// The count is the invariant, not the absence.
+    func testCommissioningNamesAProviderInExactlyOnePlace() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(src.contains("static let routesProviderID"),
+                      "POS control: the grep is reading the right file")
+        let literal = "\"" + Commission.routesProviderID + "\""
+        let hits = src.components(separatedBy: literal).count - 1
+        XCTAssertEqual(hits, 1,
+                       """
+                       exactly one site may name a provider literal. Found \(hits). \
+                       A second is either a decoder default — nil means nobody chose — \
+                       or a comment quoting the literal, and this guard cannot tell \
+                       them apart. Cite the shape, not the string.
+                       """)
+    }
+
     /// POSITIVE CONTROL for the leg above: the same decoder, same store shape,
     /// WITH the key present — so the nil result is a property of the absent
     /// key and not of a decoder that drops the field on every input.
