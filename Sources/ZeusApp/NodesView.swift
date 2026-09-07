@@ -69,6 +69,19 @@ struct NodesView: View {
 
     let onToast: (String) -> Void
 
+    /// Opens the gateway editor for the arm this console was built from.
+    /// The row's label is computed from that arm; the action is the same
+    /// sheet for every arm — "switchable anytime" is the product ruling,
+    /// and the row must exist for the operator who most needs the switch:
+    /// the one already looking at a LOCAL console.
+    var onOpenGatewayEditor: (GatewayConfig) -> Void = { _ in }
+
+    /// The arm the console was built from. RECEIVED, not re-derived —
+    /// `RootView` measured it once at `init`; a second resolver call over
+    /// the same store here would be two pictures of one decision.
+    var resolution: GatewayConfig.Resolution =
+        GatewayConfig.Resolution(config: .absent, source: .unset)
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -94,6 +107,40 @@ struct NodesView: View {
         .animation(.easeOut(duration: 0.28), value: confirmRevoke)
         .task { await routes.load() }
     }
+
+    // MARK: - The gateway row (label by arm)
+
+    /// One label per arm, so the row says what the tap will DO rather than
+    /// what the app wishes were true. `.absent` and `.local` share *use a
+    /// remote gateway instead* deliberately: both are consoles with no
+    /// remote endpoint, and the operator action is identical.
+    ///
+    /// Static for the reason every derivation in this tree is static: a
+    /// SwiftUI body is not observable in-process, so the four-arm leg
+    /// exercises this mapping directly.
+    static func gatewayRowLabel(for config: GatewayConfig) -> String {
+        switch config {
+        case .absent:    return "Use a remote gateway instead"
+        case .local:     return "Use a remote gateway instead"
+        case .malformed: return "Fix gateway URL"
+        case .resolved:  return "Change remote gateway"
+        }
+    }
+
+    /// The value slot: the endpoint's host when resolved, the raw operand
+    /// when malformed (so the operator can see WHAT is broken), and the
+    /// un-set marker otherwise. Same aperture note as the label.
+    static func gatewayRowValue(for config: GatewayConfig) -> String? {
+        switch config {
+        case .absent:                    return nil
+        case .local:                     return nil
+        case .malformed(let raw, _):     return raw
+        case .resolved(let endpoint):    return endpoint.url.host ?? endpoint.url.absoluteString
+        }
+    }
+
+    private var gatewayRowLabel: String  { Self.gatewayRowLabel(for: resolution.config) }
+    private var gatewayRowValue: String? { Self.gatewayRowValue(for: resolution.config) }
 
     // MARK: - :754-790  route select
 
@@ -231,6 +278,18 @@ struct NodesView: View {
                         value: routes.selected?.name ?? "TAP TO SELECT",
                         last: true) {
                     routeSheet = true
+                }
+                // THE GATEWAY ROW — present under EVERY config arm, labelled
+                // by arm (the four-arm leg asserts the four labels differ).
+                // It sits OUTSIDE any per-arm conditional because
+                // "switchable anytime" is a product ruling about
+                // reachability, not a rendering decision this view gets to
+                // make: a row that exists only in `.absent` hides the switch
+                // from the operator running `.local`, who is exactly the one
+                // the ruling was made for.
+                NodeRow(icon: "globe", label: gatewayRowLabel,
+                        value: gatewayRowValue, last: true) {
+                    onOpenGatewayEditor(resolution.config)
                 }
             }
             .padding(.vertical, 5)
