@@ -341,6 +341,15 @@ struct CommissioningView: View {
     @State private var commission = Commission()
     @State private var authed = false
 
+    /// The fork card the operator has TAPPED, held in the view and nowhere else.
+    ///
+    /// This exists because the tap had been writing `commission.deployment`
+    /// directly, which made "highlighted" and "chose" the same state in the
+    /// stored record and left a REMOTE tap behind after backing out. A
+    /// preselection is view state by nature: it is what the screen is showing,
+    /// not what the flow has produced.
+    @State private var forkPick: Commission.Deployment? = nil
+
     /// What the fork screen HIGHLIGHTS, which is not what the record holds.
     ///
     /// LOCAL is the default rendering because it is the option that needs
@@ -350,7 +359,7 @@ struct CommissioningView: View {
     /// stored record, which is the same distinction `provider: String?` buys
     /// one field over.
     private var forkSelection: Commission.Deployment {
-        commission.deployment ?? .local
+        forkPick ?? commission.deployment ?? .local
     }
     @State private var scanning = false
 
@@ -493,22 +502,29 @@ struct CommissioningView: View {
 
         case .fork:
             VStack(alignment: .leading, spacing: 10) {
-                // Preselection is RENDERED, never stored. `deployment` stays
-                // nil until CONTINUE writes it, so "the operator looked at a
+                // Preselection is RENDERED, never stored: the taps below
+                // write `forkPick`, which is view state, and CONTINUE is the
+                // only line that touches the record. "The operator looked at a
                 // screen where LOCAL was highlighted" and "the operator chose
-                // LOCAL" are different states in the record — the second is
-                // the only one that resolves.
+                // LOCAL" stay different states.
+                //
+                // This comment previously asserted that while the two closures
+                // beneath it assigned the record field directly. It was not
+                // caught by the census leg because that leg counts the WRITER's
+                // NAME, not the FIELD's ASSIGNMENTS — so the guard below now
+                // counts assignments to `deployment` in this file, which is the
+                // needle the claim is actually about.
                 RouteCard(
                     title: "LOCAL — THIS PHONE",
                     copy: "The core runs in-process. No network, no gateway. Bring your own key.",
                     selected: forkSelection == .local
-                ) { commission.deployment = .local }
+                ) { forkPick = .local }
 
                 RouteCard(
                     title: "REMOTE — EXISTING GATEWAY",
                     copy: "Point this phone at a Zeus gateway you already run.",
                     selected: forkSelection == .remote
-                ) { commission.deployment = .remote }
+                ) { forkPick = .remote }
 
                 Text("SWITCHABLE ANYTIME IN NODES → LINK")
                     .font(Theme.mono(8.5))
@@ -687,6 +703,10 @@ struct CommissioningView: View {
         commission = next.commission
         scanning = next.scanning
         authed = next.authed
+        // The rendered preselection is view state, so `Backstep.entering` —
+        // which is a total function over the RECORD — cannot reach it. Cleared
+        // here at the same site, or a discarded choice stays highlighted.
+        if target == .fork { forkPick = nil }
         withAnimation { step = target }
     }
 

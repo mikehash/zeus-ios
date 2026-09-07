@@ -166,6 +166,41 @@ final class ForkStepTests: XCTestCase {
                        "the fork screen's CONTINUE is the sole caller")
     }
 
+    /// The needle the CLAIM is about: assignments to the FIELD, not calls to
+    /// the writer's NAME.
+    ///
+    /// The leg above counts `commission.recordDeployment(` == 1 and passed
+    /// while two `RouteCard` closures wrote `commission.deployment` directly on
+    /// tap — a writer census is blind to every assignment that bypasses the
+    /// writer, which is precisely the defect a sole-writer claim asserts is
+    /// impossible. Cardinality, not absence: the field must be assigned, so
+    /// this counts the assignments a production path is allowed to make.
+    ///
+    /// Permitted in `Sources`: the memberwise init (`self.deployment =`), the
+    /// decoder (`deployment = try`), `recordDeployment`'s body, and the
+    /// backstep clear (`next.commission.deployment = nil`). A fifth is the
+    /// defect. `commission.deployment =` — an assignment THROUGH the view's
+    /// record — must read exactly 0.
+    func testNoViewSiteAssignsTheDeploymentField() throws {
+        let src = try source("Commissioning.swift")
+        let code = codeLines(src)
+
+        XCTAssertGreaterThan(code.filter { $0.contains("deployment") }.count, 4,
+                             "POS control: `deployment` is live in this file — 0 here means a wrong path, VOID not pass")
+
+        // The backstep clear is the ONE permitted assignment through a
+        // `commission.` path and it is pinned by its whole trimmed line, not
+        // excluded by a substring: an exclusion wide enough to spare it is wide
+        // enough to spare the defect it was written to catch.
+        let permitted = "next.commission.deployment = nil"
+        let through = code.map { $0.trimmingCharacters(in: .whitespaces) }
+                          .filter { $0.contains("commission.deployment =") }
+        XCTAssertEqual(through.filter { $0 == permitted }.count, 1,
+                       "POS control: the backstep clear is present — 0 means the needle stopped reading this file")
+        XCTAssertEqual(through.filter { $0 != permitted }, [],
+                       "a view site assigning the record field bypasses recordDeployment: \(through)")
+    }
+
     /// Preselection is rendered, not stored: a fresh commission has made no
     /// choice, and the highlight is derived.
     func testPreselectionIsNotAStoredChoice() {
