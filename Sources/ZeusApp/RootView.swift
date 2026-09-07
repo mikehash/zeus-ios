@@ -57,6 +57,13 @@ struct RootView: View {
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
 
+    /// The gateway editor sheet. ONE flag and ONE capture of the arm, both
+    /// owned here: the LINK pill and the NODES gateway row are two
+    /// affordances for one sheet, and a per-tab flag would let both tabs
+    /// believe their own editor was open.
+    @State private var gatewayEditor = false
+    @State private var gatewayEditorConfig: GatewayConfig = .absent
+
     /// The session loop. RootView READS the transcript and calls `send`; it
     /// cannot append a message or set an agent state, because neither is
     /// writable from here. The seed lives in the engine's initialiser.
@@ -147,6 +154,19 @@ struct RootView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(70)
             }
+
+            // The gateway editor, over both tabs. Same overlay layer as the
+            // toast but a higher zIndex so an editor opened while a toast is
+            // up draws above it — the editor is a decision, the toast is a
+            // receipt, and the decision outranks it.
+            if gatewayEditor {
+                GatewayEditorSheet(config: gatewayEditorConfig,
+                                   resolution: resolution,
+                                   isPresented: $gatewayEditor,
+                                   onToast: showToast)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(80)
+            }
         }
         .animation(.easeOut(duration: 0.22), value: toast)
         .preferredColorScheme(.dark)
@@ -231,7 +251,12 @@ struct RootView: View {
             // destination for every commissioned operator on every launch —
             // which is why it ships with restore rather than behind it.
             HomeView(link: link, session: session, push: push,
-                     onOpenSession: { tab = .session }, approvals: approvals)
+                     onOpenSession: { tab = .session }, approvals: approvals,
+                     onOpenGatewayEditor: { config in
+                         gatewayEditorConfig = config
+                         gatewayEditor = true
+                     },
+                     resolution: resolution)
         case .session:
             SessionView(
                 messages: session.messages,
@@ -269,7 +294,12 @@ struct RootView: View {
                 disarmReason: resolution.config.disarmReason
             )
         case .nodes:
-            NodesView(link: link.state, routes: routes, onToast: showToast)
+            NodesView(link: link.state, routes: routes, onToast: showToast,
+                      onOpenGatewayEditor: { config in
+                          gatewayEditorConfig = config
+                          gatewayEditor = true
+                      },
+                      resolution: resolution)
         }
     }
 }

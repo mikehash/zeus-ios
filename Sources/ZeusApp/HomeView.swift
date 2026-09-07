@@ -36,9 +36,22 @@ struct HomeView: View {
     /// conversation; it does not host one.
     let onOpenSession: () -> Void
 
+    /// Opens the gateway editor sheet, handed the config arm the console was
+    /// built from. The pill is the affordance; the sheet itself lives in
+    /// `RootView`, which owns the one `@State` flag — a second owner would
+    /// mean two truths about whether the editor is open.
+    var onOpenGatewayEditor: (GatewayConfig) -> Void = { _ in }
+
     /// Pending tool executions awaiting an answer. Read-only here; the store
     /// owns the queue and re-reads the gateway after every decision.
     @ObservedObject var approvals: ApprovalsStore
+
+    /// The `Resolution` the whole console was built from — the same one
+    /// `RootView` measured at `init`. Read here (not re-derived) so the LINK
+    /// pill's open-action can label the editor with the config's arm WITHOUT
+    /// a second resolver call: two calls over one store is two pictures of
+    /// one decision.
+    let resolution: GatewayConfig.Resolution
 
     var body: some View {
         ScrollView {
@@ -171,7 +184,12 @@ struct HomeView: View {
     private var statusGrid: some View {
         HStack(spacing: 10) {
             StatCell(caption: "AGENT", value: session.state.badgeText, tint: session.state.badgeColor)
-            StatCell(caption: "LINK", value: link.state.badgeText, tint: link.state.badgeColor)
+            // LINK is the one control in the grid: the pill that opens the
+            // gateway editor. The census leg (`HomeViewTests`) holds this at
+            // exactly one `action:` across the four sites.
+            StatCell(caption: "LINK", value: link.state.badgeText,
+                     tint: link.state.badgeColor,
+                     action: { onOpenGatewayEditor(resolution.config) })
             StatCell(caption: "TURNS", value: turnsValue, tint: Theme.w(0.8))
             StatCell(caption: "LATENCY", value: latencyValue, tint: Theme.w(0.8))
         }
