@@ -6,9 +6,14 @@ import Foundation
 ///
 /// `HTTPTransport` speaks to a gateway somewhere else. `EmbeddedTransport`
 /// speaks to `ZeusCore` — the UniFFI bridge over the Rust core, linked into
-/// this binary as a static archive (`rust/zeus-core-bridge`, pinned to
-/// `mikehash/Zeus@2a2168cd`). Same protocol, no network, no endpoint, no
-/// reachability.
+/// this binary as a static archive (`rust/zeus-core-bridge`). Same protocol,
+/// no network, no endpoint, no reachability.
+///
+/// THE PIN IS NOT NAMED HERE. It said `2a2168cd` through two commits that
+/// moved it — a sha in prose is a claim with no reader. The readers are
+/// `rev =` in `rust/zeus-core-bridge/Cargo.toml`, the manifest's `dep-pin:`
+/// and `crate-tree:`, and `scripts/check_crate_tree.sh`, which is the one
+/// that can fail.
 ///
 /// ## THE NARROWER WIRE — declared here, not discovered in a transcript
 ///

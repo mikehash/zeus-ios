@@ -230,9 +230,12 @@ final class ManagedDeferralTests: XCTestCase {
         XCTAssertNil(c.provider, "nothing has chosen yet")
         XCTAssertTrue(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
 
-        c.recordRoutesChoice()
+        // `model` has no default: the caller must have ASKED the provider.
+        // This leg names the writer's contract, not the CTA's plumbing.
+        c.recordRoutesChoice(model: "claude-x")
 
         XCTAssertEqual(c.route, .byok)
+        XCTAssertEqual(c.model, "claude-x")
         XCTAssertEqual(c.provider, Commission.routesProviderID)
         XCTAssertTrue(c.summary.contains("ANTHROPIC · OWN KEY"), c.summary)
         XCTAssertFalse(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
@@ -251,8 +254,13 @@ final class ManagedDeferralTests: XCTestCase {
         let src = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(src.contains("mutating func recordRoutesChoice"),
                       "POS control: the grep is reading the right file")
-        XCTAssertTrue(src.contains("commission.recordRoutesChoice()"),
+        // The needle moved with the cut: the CTA now passes the model it
+        // obtained from the provider, so the argument-less spelling would read
+        // 0 forever. Widened to the call, not the exact argument list.
+        XCTAssertTrue(src.contains("commission.recordRoutesChoice(providerID:"),
                       "the routes CTA must write the choice, not leave provider nil")
+        XCTAssertTrue(src.contains("CoreArming.firstModel("),
+                      "the model must come from the provider at the step, never from a literal")
     }
 
     /// THE DEFAULT MUST NOT CREEP BACK, and this is the leg that says so in a

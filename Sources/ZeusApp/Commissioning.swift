@@ -212,6 +212,7 @@ struct Commission: Equatable, Codable {
         case nodeEnrolled = "node_enrolled"
         case deployment
         case gatewayURL = "gateway_url"
+        case model
     }
 
     init(route: Route = .byok,
@@ -219,13 +220,15 @@ struct Commission: Equatable, Codable {
          callsign: String = "",
          nodeEnrolled: Bool = false,
          deployment: Deployment? = nil,
-         gatewayURL: String? = nil) {
+         gatewayURL: String? = nil,
+         model: String? = nil) {
         self.route = route
         self.provider = provider
         self.callsign = callsign
         self.nodeEnrolled = nodeEnrolled
         self.deployment = deployment
         self.gatewayURL = gatewayURL
+        self.model = model
     }
 
     /// HAND-WRITTEN BECAUSE ADDING A FIELD IS A MIGRATION.
@@ -256,6 +259,10 @@ struct Commission: Equatable, Codable {
         nodeEnrolled = try c.decode(Bool.self, forKey: .nodeEnrolled)
         deployment = try c.decodeIfPresent(Deployment.self, forKey: .deployment)
         gatewayURL = try c.decodeIfPresent(String.self, forKey: .gatewayURL)
+        // Same migration shape as `provider`: a record written before this key
+        // existed did not hold a model, and `decode` would throw keyNotFound →
+        // CommissionStore.load returns nil → the operator re-onboards.
+        model = try c.decodeIfPresent(String.self, forKey: .model)
     }
 
     var route: Route = .byok
@@ -274,6 +281,15 @@ struct Commission: Equatable, Codable {
     /// `GatewayConfig.parseEndpoint` is the only parser, and pre-validating
     /// here would be the second one this cut exists to prevent.
     var gatewayURL: String?
+
+    /// The model ROUTES obtained FROM THE PROVIDER, never a literal.
+    ///
+    /// `nil` means the provider answered no listing — v1's `list_models` is
+    /// Ollama-only, so a keyed provider legitimately has none and
+    /// `CoreArming.arm` names that state rather than inventing a model name.
+    /// A hardcoded default here would be a claim about someone else's
+    /// catalogue with no reader to catch it going stale.
+    var model: String?
 
     /// The `done` summary line.
     ///
@@ -330,9 +346,17 @@ struct Commission: Equatable, Codable {
         gatewayURL = trimmed.isEmpty ? nil : trimmed
     }
 
-    mutating func recordRoutesChoice(providerID: String = Commission.routesProviderID) {
+    /// THE STEP WRITES BOTH THE PROVIDER AND THE MODEL.
+    ///
+    /// `model` has NO default: the caller must have asked the provider. Passing
+    /// nil is representable and means "the provider listed nothing", which is a
+    /// state `CoreArming.arm` renders — it is not the same as a model the app
+    /// chose.
+    mutating func recordRoutesChoice(providerID: String = Commission.routesProviderID,
+                                     model chosenModel: String?) {
         route = .byok
         provider = providerID
+        model = chosenModel
     }
 
     var summary: String {
@@ -648,7 +672,19 @@ struct CommissioningView: View {
                     // (zeus-core:8922) — the picker that lets him choose among
                     // them arrives with the first `setProvider` caller; until
                     // it does, this single card IS the choice he made.
-                    commission.recordRoutesChoice()
+                    // The model comes FROM THE PROVIDER, asked here, at the
+                    // one moment an operator names a provider. v1 takes the
+                    // first entry; the picker that lets him choose among them
+                    // is the next cut. nil is a real answer (a keyed provider
+                    // whose `list_models` is Unsupported in v1) and is stored
+                    // as such — `CoreArming.arm` renders it, nothing guesses.
+                    let id = Commission.routesProviderID
+                    let model = CoreArming.firstModel(
+                        for: id,
+                        core: try? EmbeddedCore.shared.get(),
+                        key: nil,
+                        baseURL: nil)
+                    commission.recordRoutesChoice(providerID: id, model: model)
                     step = .nodes
                 }
             }

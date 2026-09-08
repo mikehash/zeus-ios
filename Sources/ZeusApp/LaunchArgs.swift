@@ -124,6 +124,42 @@ enum LaunchArgs {
         #endif
     }
 
+    /// `-zeusProvider <id> <model> [<baseURL>]` — seed the commission's
+    /// provider/model so THE PRODUCTION PATH arms the core.
+    ///
+    /// ## It seeds the COMMISSION, it does not call `setProvider`
+    ///
+    /// The point of the seam is that the sole production `setProvider` call
+    /// (`RootView.init` → `CoreArming.arm`) is the one that runs. A DEBUG flag
+    /// that armed the core itself would prove the bridge works and say nothing
+    /// about the app a person launches — which is exactly the gap the live
+    /// streamed-reply test had: it armed the core FROM THE TEST.
+    ///
+    /// APERTURE: same as every member here — `#if DEBUG`, inert in release,
+    /// inert unless passed. And it seeds STATE: a frame captured through it
+    /// proves the console sends given a provider, never that ROUTES can
+    /// obtain one.
+    static var seededProvider: (id: String, model: String, baseURL: String?)? {
+        #if DEBUG
+        guard let id = value(for: "-zeusProvider") else { return nil }
+        // The model is the SECOND positional, read explicitly rather than via
+        // `value(for:)` — a flag with one operand is a malformed invocation
+        // here, and defaulting the model would put a literal model name back
+        // into the app through the debug door.
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-zeusProvider"),
+              args.index(i, offsetBy: 2, limitedBy: args.endIndex) != nil else { return nil }
+        let model = args[args.index(i, offsetBy: 2)]
+        guard !model.hasPrefix("-") else { return nil }
+        let urlIndex = args.index(i, offsetBy: 3, limitedBy: args.endIndex)
+        var baseURL: String? = nil
+        if let u = urlIndex, u < args.endIndex, !args[u].hasPrefix("-") { baseURL = args[u] }
+        return (id, model, baseURL)
+        #else
+        return nil
+        #endif
+    }
+
     /// Reads `-flag value`. Returns `nil` when the flag is absent OR is the
     /// final argument — a trailing flag with no operand is a malformed
     /// invocation, and answering it with the *next* flag's name would be a

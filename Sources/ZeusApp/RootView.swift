@@ -168,7 +168,31 @@ struct RootView: View {
     /// observable below is constructed from ONE resolution, so the tabs cannot
     /// disagree about which gateway this app is talking to.
     init(store: CommissionStoring, push: PushRegistrar) {
+        // THE SOLE PRODUCTION `setProvider` CALL, AND IT RUNS BEFORE THE
+        // RESOLVE THAT MEASURES IT.
+        //
+        // Order is load-bearing: readiness is now the core's answer
+        // (`hasProvider()`), so arming after the resolve would render
+        // `NO PROVIDER` on a core that was armed one line later. This is the
+        // first act of the view for that reason.
+        //
+        // Census invariant: `setProvider(` production callers == 1, reached
+        // from here through `CoreArming.arm`, outside any `#if DEBUG`. The
+        // DEBUG seam seeds the COMMISSION this call reads — it does not arm
+        // the core itself, so the path a person launches is the path measured.
+        let core = try? EmbeddedCore.shared.get()
+        let seeded = LaunchArgs.seededProvider
+        var commissionForArming = store.load()
+        if let seeded {
+            commissionForArming?.recordRoutesChoice(providerID: seeded.id,
+                                                    model: seeded.model)
+        }
+        CoreArming.arm(commission: commissionForArming,
+                       core: core,
+                       providerKey: nil,
+                       baseURL: seeded?.baseURL)
         let resolution = RootView.resolve(store: store)
+            .withCoreReadiness(EmbeddedCoreArming(core: core))
         self.store = store
         self.push = push
         self.tokens = LaunchArgs.useInMemoryTokens
