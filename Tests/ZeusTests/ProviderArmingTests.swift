@@ -254,6 +254,41 @@ final class ProviderArmingTests: XCTestCase {
                        "the production arming path must not be inside a DEBUG block")
     }
 
+    /// THE SAVE PATH KEEPS THE CORE'S ANSWER.
+    ///
+    /// The incident: at `a06bbe4` the composition lived in `init` only, and
+    /// the editor's `onSaved` re-resolve called `RootView.resolve(store:)`
+    /// bare — so one gateway SAVE reverted the `.local` readiness arm to
+    /// `commission.provider == nil`, the disk-derived value the commit
+    /// existed to retire. `GatewayConfigSource.adopt` is the sole writer of
+    /// `resolution`, so nothing downstream could observe the revert.
+    ///
+    /// Aperture, stated: this is a SOURCE CENSUS, weaker than a type change.
+    /// It asserts that every production entry point routes through the one
+    /// helper, not that the helper is correct — the behavioural legs above
+    /// (`testAnUnarmedCoreIsNotReadyEvenWithAProvider`, `testAnArmedCoreIsReady`)
+    /// are what measure the helper itself.
+    func testEveryProductionEntryPointResolvesThroughTheArmedHelper() throws {
+        let root = try sourceFile("RootView.swift")
+        let lines = root.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") }
+
+        // POS control, same invocation: a call form known present.
+        XCTAssertEqual(lines.filter { $0.contains("armedResolution(store: store)") }.count, 2,
+                       "VOID or drift: expected exactly two entry points (init + onSaved) into the armed helper")
+
+        // The bare resolver may appear ONLY inside the helper — one call, and
+        // it is the one the helper composes onto.
+        let bare = lines.filter { $0.contains("RootView.resolve(store: store)") }
+        XCTAssertEqual(bare.count, 1,
+                       "a bare `RootView.resolve` outside the helper drops the core's readiness answer; found \(bare.count)")
+
+        // And composition happens exactly once, in that same helper.
+        XCTAssertEqual(occurrences(of: ".withCoreReadiness(", in: root), 1,
+                       "readiness must be composed in ONE place; a second site is a second policy")
+    }
+
     /// The bridge call itself has ONE production caller, in `ProviderArming`.
     func testSetProviderHasExactlyOneProductionCaller() throws {
         var total = 0

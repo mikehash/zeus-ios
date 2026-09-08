@@ -164,6 +164,51 @@ struct RootView: View {
         GatewayConfig.resolve(from: ProcessInfo.processInfo.environment, store: store)
     }
 
+    /// ARM, THEN RESOLVE, THEN COMPOSE — as one act, because a caller that
+    /// remembers two of the three ships the defect this file was cut to fix.
+    ///
+    /// ## The incident
+    ///
+    /// `a06bbe4` composed the core's answer in `init` only. The SAVE
+    /// re-resolve at `:262` called `RootView.resolve(store:)` bare, so the
+    /// `.local` readiness arm silently reverted to `commission.provider == nil`
+    /// — the disk-derived value the commit existed to retire — and
+    /// `GatewayConfigSource.adopt` is the SOLE writer of `resolution`, so
+    /// nothing downstream could notice. Composition-by-convention is exactly
+    /// what `adopt`'s own doc comment refuses four `reconfigure(config:)`
+    /// setters for.
+    ///
+    /// ## Two callers, ONE arming path
+    ///
+    /// `init` (first launch of the view) and the editor's `onSaved` re-resolve.
+    /// They are two ENTRY POINTS to this one helper, NOT two arming paths: the
+    /// census invariant is `setProvider(` production callers == 1, outside any
+    /// `#if DEBUG`, reached only from `CoreArming.arm` below.
+    ///
+    /// ## Why there is no third caller
+    ///
+    /// "The commission gains a provider while the app is running" has no
+    /// reachable trigger: `ZeusApp:82` renders `RootView` and
+    /// `CommissioningView` as EXCLUSIVE arms of one `if let`, so finishing
+    /// ROUTES swaps the arm and constructs a fresh `RootView` — this `init`
+    /// runs again. `recordRoutesChoice` production callers = 2, and both are
+    /// upstream of this helper. A third call site would be unreachable code.
+    static func armedResolution(store: CommissionStoring) -> GatewayConfig.Resolution {
+        let core = try? EmbeddedCore.shared.get()
+        let seeded = LaunchArgs.seededProvider
+        var commissionForArming = store.load()
+        if let seeded {
+            commissionForArming?.recordRoutesChoice(providerID: seeded.id,
+                                                    model: seeded.model)
+        }
+        CoreArming.arm(commission: commissionForArming,
+                       core: core,
+                       providerKey: nil,
+                       baseURL: seeded?.baseURL)
+        return RootView.resolve(store: store)
+            .withCoreReadiness(EmbeddedCoreArming(core: core))
+    }
+
     /// `store` has NO DEFAULT, and neither does anything it feeds. Every
     /// observable below is constructed from ONE resolution, so the tabs cannot
     /// disagree about which gateway this app is talking to.
@@ -180,19 +225,7 @@ struct RootView: View {
         // from here through `CoreArming.arm`, outside any `#if DEBUG`. The
         // DEBUG seam seeds the COMMISSION this call reads — it does not arm
         // the core itself, so the path a person launches is the path measured.
-        let core = try? EmbeddedCore.shared.get()
-        let seeded = LaunchArgs.seededProvider
-        var commissionForArming = store.load()
-        if let seeded {
-            commissionForArming?.recordRoutesChoice(providerID: seeded.id,
-                                                    model: seeded.model)
-        }
-        CoreArming.arm(commission: commissionForArming,
-                       core: core,
-                       providerKey: nil,
-                       baseURL: seeded?.baseURL)
-        let resolution = RootView.resolve(store: store)
-            .withCoreReadiness(EmbeddedCoreArming(core: core))
+        let resolution = RootView.armedResolution(store: store)
         self.store = store
         self.push = push
         self.tokens = LaunchArgs.useInMemoryTokens
@@ -259,7 +292,7 @@ struct RootView: View {
                                    store: store,
                                    isPresented: $gatewayEditor,
                                    credentials: credentials,
-                                   onSaved: { configSource.adopt(RootView.resolve(store: store)) },
+                                   onSaved: { configSource.adopt(RootView.armedResolution(store: store)) },
                                    onToast: showToast)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(80)

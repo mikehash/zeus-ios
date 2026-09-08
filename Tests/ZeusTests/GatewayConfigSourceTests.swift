@@ -285,8 +285,10 @@ final class GatewayConfigSourceTests: XCTestCase {
         }
         let adopts = code(rootView).filter { $0.contains("configSource.adopt(") }
         XCTAssertEqual(adopts.count, 1, "exactly ONE assignment site: the re-resolve after SAVE")
-        XCTAssertTrue(adopts[0].contains("RootView.resolve(store: store)"),
-                      "the re-resolve must read the store this view was handed, not a fresh one")
+        XCTAssertTrue(adopts[0].contains("RootView.armedResolution(store: store)"),
+                      "the re-resolve must read the store this view was handed, not a fresh one, "
+                      + "and it must go through the ARMED helper: a bare `resolve` reverts the "
+                      + "`.local` readiness arm to `commission.provider == nil` on every SAVE")
         XCTAssertEqual(code(editor).filter { $0.contains("onSaved()") }.count, 1,
                        "the editor must call back exactly once, after the write")
         XCTAssertEqual(code(rootView).filter { $0.contains("onSaved:") }.count, 1,
