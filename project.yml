@@ -15,6 +15,19 @@ targets:
       # for anyone with Xcode and no Rust toolchain at all. Regenerate with
       # scripts/build-xcframework.sh — never hand-edit; the file says so too.
       - Sources/ZeusCoreFFI
+    postCompileScripts:
+      # Producer half of the source-freshness stamp read by
+      # scripts/check_membership.sh. POST-COMPILE, not post-build: it must run
+      # in the same invocation that wrote Zeus.SwiftFileList, so the stamp and
+      # the list describe the same compile. It writes the tree object of the
+      # sources ON DISK (temp index, not HEAD — a dirty build compiles the
+      # worktree, so keying on HEAD would stamp code the compiler never read).
+      # It NEVER fails the build: an unwritable stamp leaves no stamp, and the
+      # consumer reads an absent stamp as VOID (unmeasured) rather than OK.
+      - script: "\"$SRCROOT/scripts/stamp-sources-tree.sh\""
+        name: Stamp source tree identity
+        basedOnDependencyAnalysis: false
+
     dependencies:
       # The static archive the bindings call into. `embed: false` because a
       # staticlib is LINKED, not embedded — embedding it would put a .a inside

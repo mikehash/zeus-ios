@@ -166,12 +166,70 @@ done
 # OMITS a tree file (the case actually hit) but NOT one that is stale and
 # happens to contain every current file. That world passes silently, so at n=1
 # we say so in the output rather than printing a bare OK.
-if [ "${#LISTS[@]}" -le 1 ]; then
-    echo "NOTE: ${#LISTS[@]} list — cardinality leg VACUOUS (needs >1); a stale list containing every current file passes here"
-fi
 if [ "${#LISTS[@]}" -gt 1 ]; then
     counts=$(for FL in "${LISTS[@]}"; do tr ' ' '\n' < "$FL" | grep -c '[.]swift$'; done | sort -u | wc -l | tr -d ' ')
     [ "$counts" -eq 1 ] || drift "arch lists DISAGREE on input count — at least one is stale"
+fi
+
+# ── 5b. FRESHNESS BY IDENTITY — the leg cardinality could not carry ────────
+#
+# Membership is a property of an ELEMENT; staleness is a property of the SET,
+# and specifically of its CONTENT. Steps 4 and 5 are both blind to a list that
+# names every current file while describing a tree whose files have since been
+# REWRITTEN — the world measured at da274673, where this guard printed OK over
+# a list produced 9h44m and nine rewritten files earlier.
+#
+# 🔴 mtime IS NOT THE INSTRUMENT. It was the first thing reached for and it is
+# a second proxy, wrong in both directions: `git checkout`, `touch`, `cp -p`, a
+# clock skew, or a rebuild that rewrites the list unchanged all move a stamp
+# with no content change; and content can change under an older stamp. The
+# `touch` leg below exists precisely to separate this instrument from that one
+# — mtime CANNOT pass it.
+#
+# Freshness is IDENTITY. The producer (scripts/stamp-sources-tree.sh, a
+# post-compile phase of the target) stamps the build with the tree object of
+# the sources it compiled, computed from the WORKTREE via a temp index. This
+# recomputes the same hash now and compares. Equal = the list describes the
+# tree on disk. Different = DRIFT, and the guard can now name exactly what it
+# previously had to apologise for.
+STAMP="$OBJROOT/zeus-sources-tree.txt"
+SEEN_STAMP=0
+if [ -f "$STAMP" ]; then
+    SEEN_STAMP=1
+    DECLARED=$(awk '/^sources-tree:/{print $2; exit}' "$STAMP")
+    [ -n "${DECLARED:-}" ] || void "$STAMP carries no \`sources-tree:\` line"
+
+    # Same recipe as the producer. `mktemp -u` — a NAME, not a file: an
+    # existing zero-byte index is REJECTED by git (`index file smaller than
+    # expected`, rc=128) on both `add` and `write-tree`, and that failure is
+    # loud in stderr and invisible in a value-capture. Measured on this box.
+    IDX=$(mktemp -u)
+    add_rc=0
+    GIT_INDEX_FILE="$IDX" git add -- "${SRC_DIRS[@]}" 2>/tmp/membership.stamp.err || add_rc=$?
+    ACTUAL=""
+    [ "$add_rc" -eq 0 ] && { ACTUAL=$(GIT_INDEX_FILE="$IDX" git write-tree 2>>/tmp/membership.stamp.err) || ACTUAL=""; }
+    rm -f "$IDX"
+
+    # VOID, never OK: a recompute that yields no tree is the ABSENCE of a
+    # measurement, and reporting it as agreement would be the false green this
+    # whole guard exists to refuse.
+    [ -n "$ACTUAL" ] || void "worktree tree recompute produced nothing (add rc=$add_rc): $(cat /tmp/membership.stamp.err 2>/dev/null | tr '\n' ' ')"
+
+    if [ "$DECLARED" != "$ACTUAL" ]; then
+        echo "DRIFT: the driver input list describes a DIFFERENT source tree than the one on disk."
+        echo "  stamped at build time : $DECLARED"
+        echo "  worktree now          : $ACTUAL"
+        echo "  covered paths         : ${SRC_DIRS[*]}"
+        echo "  Every number taken from this build is about code that is no longer here."
+        status=3
+    else
+        echo "FRESH: sources-tree $ACTUAL == stamp (${SRC_DIRS[*]})"
+    fi
+fi
+
+if [ "${#LISTS[@]}" -le 1 ] && [ "${SEEN_STAMP:-0}" -eq 0 ]; then
+    echo "NOTE: ${#LISTS[@]} list — cardinality leg VACUOUS (needs >1) and NO SOURCE STAMP present;"
+    echo "      a stale list containing every current file passes here. Rebuild to write the stamp."
 fi
 
 # ── 6. NEG control: a needle that cannot be present ────────────────────────
