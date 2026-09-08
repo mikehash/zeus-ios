@@ -102,6 +102,42 @@ enum LaunchArgs {
         #endif
     }
 
+    /// `-zeusAutoSend` — commit the prefilled prompt once, through the
+    /// composer's OWN send action.
+    ///
+    /// WHY IT EXISTS: `simctl` has no tap primitive and this project has no
+    /// XCUITest target (`project.yml`: `bundle.ui-testing` == 0), so a
+    /// capture script can seed a prompt into the composer via
+    /// `zeus://session?prompt=…` and then has no way to press SEND. Without
+    /// this the strongest obtainable frame photographs a composer HOLDING a
+    /// prompt — which proves the deep link, and proves nothing about a reply.
+    ///
+    /// WHAT IT DOES NOT DO: it commits nothing of its own. It invokes
+    /// `SessionView.send`, the exact function the SEND button's `action:`
+    /// invokes, so the guard inside `send()` (`canSend`) refuses a disarmed
+    /// composer here identically. A seam that built its own turn would be
+    /// measuring itself.
+    ///
+    /// WHY A LAUNCH ARGUMENT AND NEVER A URL FIELD: `zeus://` is reachable by
+    /// any app on the phone. An `&autosend=1` parameter would let a third
+    /// party make Zeus send a prompt of their choosing. Launch arguments are
+    /// settable only by whoever launches the process, which on a device is
+    /// the operator with a debug build. Refused in production by construction:
+    /// `#if DEBUG` like every other member, `false` in release.
+    ///
+    /// APERTURE: this commits a turn, it does not simulate a tap. A frame
+    /// captured through it proves the send PATH — composer → `onSend` →
+    /// engine → transport → transcript — and proves nothing about whether the
+    /// SEND button is hittable, positioned, or enabled on screen. That claim
+    /// needs the XCUITest target this seam exists because we do not have.
+    static var autoSend: Bool {
+        #if DEBUG
+        return has("-zeusAutoSend")
+        #else
+        return false
+        #endif
+    }
+
     // MARK: - Primitives
 
     private static func has(_ flag: String) -> Bool {

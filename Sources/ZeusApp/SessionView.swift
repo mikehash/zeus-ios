@@ -174,6 +174,17 @@ struct SessionView: View {
         guard let pending = prefill.wrappedValue, !pending.isEmpty else { return }
         input = pending
         prefill.wrappedValue = nil
+
+        // CAPTURE SEAM, `#if DEBUG` and inert unless `-zeusAutoSend` is passed.
+        // Calls `send` — the SAME function the SEND button's `action:` calls —
+        // so `canSend`'s refusal of a disarmed composer applies here
+        // identically. A seam that assembled its own turn would be measuring
+        // itself rather than the production path. Single-shot by inheritance:
+        // `prefill` is nilled above, so this fires once per deep link and not
+        // on the re-render that follows.
+        #if DEBUG
+        if LaunchArgs.autoSend { send() }
+        #endif
     }
 
     // MARK: - Header (:868-878)
