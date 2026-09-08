@@ -422,18 +422,22 @@ final class CopyRegisterTests: XCTestCase {
                        "the retired unset-provider marker must not ship")
     }
 
-    /// E3, gated. The old SAVE caption named the work that would enable the
-    /// disabled half; ZM's rule is that a disabled control states what it
-    /// DOES, never what is coming. The new caption is honest ONLY while the
-    /// URL half really is read-only — so a zero-count on the old string is
-    /// uninformative until the wiring exists.
+    /// E3, gated — and the gate FLIPPED at c1.
     ///
-    /// POS-A is the wiring census: does `GatewayEditor` write
-    /// `Commission.gatewayURL` yet? Today it does not (the editor holds no
-    /// `store` at all — the four `store` mentions in that file are prose,
-    /// including a `WRITES` docstring describing a write that does not
-    /// exist). While POS-A reads 0 this leg VOIDs rather than passing: a
-    /// pass before ③c would be a pass for the wrong reason.
+    /// The old SAVE caption named the work that would enable the disabled
+    /// half; ZM's rule is that a disabled control states what it DOES, never
+    /// what is coming. The new caption is honest ONLY while the URL half
+    /// really is read-only, so a zero-count on the old string is
+    /// uninformative until the wiring exists — hence POS-A.
+    ///
+    /// 🔴 POS-A's FIRST FORM WAS A FALSE ABSTENTION WAITING TO HAPPEN. It
+    /// needled `gatewayURL` (lower-case `g`) beside `store`/`save`; the
+    /// wiring that landed spells the call `recordGatewayURL(` — capital G —
+    /// so the census would have read 0 against a file that writes the URL on
+    /// every SAVE, and VOIDed while reporting the abstention as the honest
+    /// outcome. A needle whose spelling is guessed before the code exists is
+    /// a forecast, not a census. It now needles the NAMED WRITER, which is
+    /// the thing the sole-writer census is about.
     func testSaveCaptionIsHonestAboutWhatTheButtonWrites() throws {
         let src = try source("GatewayEditor.swift")
         let code = codeLines(src)
@@ -443,15 +447,16 @@ final class CopyRegisterTests: XCTestCase {
         XCTAssertGreaterThan(code.filter { $0.contains("tokens.") }.count, 0,
                              "VOID: the comment-stripped walk read nothing")
 
-        // POS-A: the URL-write wiring, code lines only.
-        let writesURL = code.filter {
-            $0.contains("gatewayURL") && ($0.contains("store") || $0.contains("save"))
-        }.count
+        // POS-A: the URL-write wiring, code lines only — the named writer
+        // called AND the store written, both in this file.
+        let callsWriter = code.filter { $0.contains("recordGatewayURL(") }.count
+        let savesStore  = code.filter { $0.contains("store.save(") }.count
+        let writesURL = min(callsWriter, savesStore)
 
         guard writesURL > 0 else {
             // Not a failure — an honest abstention. The caption's truth
-            // value is undefined until the wiring lands (③c), and the
-            // current caption states exactly the state measured here.
+            // value is undefined until the wiring lands, and the caption
+            // then in place states exactly the state measured here.
             XCTAssertEqual(code.filter { $0.contains("TOKEN SAVES NOW — URL IS READ-ONLY IN THIS BUILD") }.count, 1,
                            "while the URL half is unwired the caption must say so")
             XCTAssertEqual(code.filter { $0.contains("URL SAVES WHEN COMMISSION WIRING LANDS") }.count, 0,
@@ -459,9 +464,49 @@ final class CopyRegisterTests: XCTestCase {
             return
         }
 
-        // ③c has landed: the URL half writes, so the read-only caption is
+        // c1 has landed: the URL half writes, so the read-only caption is
         // now itself a lie and must be gone.
         XCTAssertEqual(code.filter { $0.contains("URL IS READ-ONLY IN THIS BUILD") }.count, 0,
                        "the editor writes the URL now — the read-only caption is stale")
+        XCTAssertEqual(code.filter { $0.contains("URL SAVES WHEN COMMISSION WIRING LANDS") }.count, 0,
+                       "the retired caption named future work — ZM's rule, and it must not ship")
+    }
+
+    /// THE c1 STRING, WRITTEN LIKE E3 — true now, false at c2.
+    ///
+    /// c1 persists a URL the running session does not follow: `resolution`
+    /// is computed once in `RootView.init` and the transport is built once
+    /// inside `StateObject(wrappedValue:)`, so a saved URL is read at the
+    /// NEXT launch and not before. `APPLIES ON NEXT LAUNCH` is therefore the
+    /// honest register — and it becomes a lie the moment c2 lands.
+    ///
+    /// The gate is the substrate fact the string depends on: `resolution`
+    /// held as `private let`. When c2 makes it `@State` and the engine
+    /// follows a re-resolved endpoint, this leg demands the string be gone
+    /// rather than merely permitting it — the same self-flipping shape as
+    /// E3, in the opposite direction.
+    func testTheNextLaunchCaveatIsPresentExactlyWhileItIsTrue() throws {
+        let editor = codeLines(try source("GatewayEditor.swift"))
+        let root   = codeLines(try source("RootView.swift"))
+
+        // POS: both walks are live.
+        XCTAssertGreaterThan(editor.filter { $0.contains("store.") }.count, 0,
+                             "VOID: the editor walk read nothing")
+        XCTAssertGreaterThan(root.filter { $0.contains("resolution") }.count, 0,
+                             "VOID: the RootView walk read nothing")
+
+        let resolvedOnce = root.filter {
+            $0.contains("let resolution: GatewayConfig.Resolution")
+        }.count
+
+        let caveat = editor.filter { $0.contains("APPLIES ON NEXT LAUNCH") }.count
+
+        if resolvedOnce > 0 {
+            XCTAssertGreaterThan(caveat, 0,
+                                 "the engine still resolves once per launch — SAVE must say so")
+        } else {
+            XCTAssertEqual(caveat, 0,
+                           "c2 landed: the engine follows a saved URL, so the caveat is a lie")
+        }
     }
 }

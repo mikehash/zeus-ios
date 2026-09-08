@@ -313,6 +313,23 @@ struct Commission: Equatable, Codable {
         if choice == .local { gatewayURL = nil }
     }
 
+    /// The sole writer of `gatewayURL`, and the third of this shape beside
+    /// `recordDeployment` above and `recordRoutesChoice` below. Same reason:
+    /// a mutation that lives only inside a SwiftUI SAVE closure is
+    /// unreachable from any in-process test, so deleting it costs nothing
+    /// measurable and every leg stays green. Named, it has a call site a
+    /// census can count.
+    ///
+    /// NORMALISES ABSENCE TO `nil`. An empty or whitespace-only field is the
+    /// operator clearing the endpoint, not the operator setting it to "";
+    /// `GatewayConfig.resolve` reads the commission arm as a URL string and
+    /// `""` there is `malformed`, which would render GATEWAY URL INVALID —
+    /// FIX IT for a field he deliberately emptied.
+    mutating func recordGatewayURL(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        gatewayURL = trimmed.isEmpty ? nil : trimmed
+    }
+
     mutating func recordRoutesChoice(providerID: String = Commission.routesProviderID) {
         route = .byok
         provider = providerID

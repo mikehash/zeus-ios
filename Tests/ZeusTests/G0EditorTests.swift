@@ -352,6 +352,7 @@ final class G0EditorTests: XCTestCase {
             config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
             resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
             tokens: InMemoryTokenStore(),
+            store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             transport: transport,
             onToast: { _ in })
@@ -385,6 +386,7 @@ final class G0EditorTests: XCTestCase {
             config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
             resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
             tokens: tokens,
+            store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             transport: transport,
             seedToken: seedToken,
@@ -456,6 +458,7 @@ final class G0EditorTests: XCTestCase {
             config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
             resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
             tokens: tokens,
+            store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             onToast: { toasts.append($0) })
         // SAVE with an EMPTY token field: the stored credential survives.
@@ -476,6 +479,7 @@ final class G0EditorTests: XCTestCase {
             config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
             resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
             tokens: InMemoryTokenStore(),
+            store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             onToast: { _ in })
         var seeded: String?
@@ -499,6 +503,7 @@ final class G0EditorTests: XCTestCase {
             config: .malformed(raw: "htps://broken", reason: .missingScheme),
             resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
             tokens: InMemoryTokenStore(),
+            store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             onToast: { _ in })
         var malformedMatched = 0
@@ -514,4 +519,176 @@ final class G0EditorTests: XCTestCase {
         XCTAssertEqual(malformedMatched, 1, "reflection walk read 0 children — VOID, not a seeding failure")
         XCTAssertEqual(seeded, "htps://broken")
     }
+    // MARK: - source walk (comment-stripped)
+
+    private func source(_ name: String) throws -> String {
+        let here = URL(fileURLWithPath: #filePath)
+        let root = here.deletingLastPathComponent()   // ZeusTests
+            .deletingLastPathComponent()              // Tests
+            .deletingLastPathComponent()              // repo root
+        return try String(contentsOf: root.appending(path: "Sources/ZeusApp/\(name)"),
+                          encoding: .utf8)
+    }
+
+    /// Comment lines stripped. A doc comment is an unverified assertion
+    /// sitting inside the artifact it describes — counted, it can green the
+    /// very guard that the assertion is kept.
+    private func codeLines(_ src: String) -> [String] {
+        src.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") && !$0.hasPrefix("*") }
+    }
+
+    // MARK: - c1: the URL half
+
+    /// STORE IDENTITY, finally guarded. `RootView`'s `:113-118` docstring
+    /// records the defect this leg exists for: swapping the injected store
+    /// for a fresh `UserDefaultsCommissionStore()` left all 294 tests green,
+    /// because every leg asserted what `resolve` RETURNED and none asserted
+    /// which store the caller handed on.
+    ///
+    /// The mutation this kills: pass a DIFFERENT store instance to the sheet
+    /// than the one asserted here. Reading the write back from THIS object —
+    /// not from the sheet, not from a re-load of a fresh store — is what
+    /// makes instance identity the subject.
+    @MainActor
+    func testSaveWritesTheURLThroughTheINJECTEDStoreInstance() {
+        let store = InMemoryCommissionStore(seed: Commission(route: .byok,
+                                                             deployment: .remote))
+        let sheet = GatewayEditorSheet(
+            config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://typed.example.com")!,
+                                                     token: nil)),
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: InMemoryTokenStore(),
+            store: store,
+            isPresented: .constant(true),
+            transport: RecordingTransport(),
+            onToast: { _ in })
+
+        let outcome = sheet.commitURL()
+
+        XCTAssertEqual(outcome, .wrote)
+        // The assertion is on the instance the CALLER owns. A sheet writing
+        // to a store of its own construction leaves this nil.
+        XCTAssertEqual(store.load()?.gatewayURL, "https://typed.example.com",
+                       "the editor must persist through the store it was HANDED")
+    }
+
+    /// THE CALL SITE, not the value. The behavioural leg above proves the
+    /// SHEET honours the store it is handed; it is structurally incapable of
+    /// saying anything about what `RootView` hands it — a `View` initialiser
+    /// is not callable from this target, which is the whole reason the
+    /// `:113-118` docstring exists (the mutation that swapped the store for
+    /// a fresh `UserDefaultsCommissionStore()` left 294 tests green).
+    ///
+    /// Measured: with `store: store` replaced by `store: UserDefaultsCommissionStore()`
+    /// at the sheet call site, the behavioural leg above STILL PASSES. So
+    /// this census is the only instrument that sees it. A source grep is a
+    /// weaker instrument than a test and is stated as such — it is here
+    /// because the stronger one cannot reach.
+    func testRootViewHandsTheEditorTheStoreItRetainsRatherThanAFreshOne() throws {
+        let code = codeLines(try source("RootView.swift"))
+
+        // POS: the walk is live and the sheet is actually constructed here.
+        XCTAssertGreaterThan(code.filter { $0.contains("GatewayEditorSheet(") }.count, 0,
+                             "VOID: no editor construction found in RootView")
+
+        XCTAssertEqual(code.filter { $0.contains("store: store,") }.count, 1,
+                       "the editor must be handed the RETAINED store")
+        // No store may be CONSTRUCTED anywhere in this file. `ZeusApp` owns
+        // the one construction; a second here is a store the operator's
+        // record never reaches.
+        XCTAssertEqual(code.filter { $0.contains("UserDefaultsCommissionStore(") }.count, 0,
+                       "RootView must not construct a store — it is handed one")
+        XCTAssertEqual(code.filter { $0.contains("InMemoryCommissionStore(") }.count, 0,
+                       "RootView must not construct a store — it is handed one")
+        // And it must RETAIN it: consumed-and-dropped is the pre-c1 state,
+        // in which the editor had nothing to write through.
+        XCTAssertEqual(code.filter { $0.contains("let store: CommissionStoring") }.count, 1,
+                       "the store must be a retained property, not a consumed argument")
+    }
+
+    /// A URL SAVE with no commission on disk is its own outcome, not a
+    /// silent no-op: the operator typed an endpoint and the app had nowhere
+    /// to put it, and the receipt must not claim a persistence it did not
+    /// perform.
+    @MainActor
+    func testSaveWithNoCommissionOnDiskReportsItRatherThanClaimingAWrite() {
+        let store = InMemoryCommissionStore()
+        let sheet = GatewayEditorSheet(
+            config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://typed.example.com")!,
+                                                     token: nil)),
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: InMemoryTokenStore(),
+            store: store,
+            isPresented: .constant(true),
+            transport: RecordingTransport(),
+            onToast: { _ in })
+
+        XCTAssertEqual(sheet.commitURL(), .noCommission)
+        XCTAssertNil(store.load(), "no commission must not be fabricated by a URL save")
+        XCTAssertTrue(GatewayEditorSheet.saveToast(savedToken: false, url: .noCommission)
+                        .contains("NO COMMISSION"),
+                      "the receipt must name the outcome it actually had")
+    }
+
+    /// An emptied field CLEARS rather than storing `""`. `GatewayConfig`
+    /// reads the commission arm as a URL string, and `""` there resolves
+    /// `malformed` — GATEWAY URL INVALID — FIX IT for a field the operator
+    /// deliberately emptied. POS: the same seam writes a real URL, so a
+    /// `commitURL` that did nothing at all cannot green the clear.
+    @MainActor
+    func testAnEmptiedURLFieldClearsTheRecordRatherThanStoringMalformedEmpty() {
+        let store = InMemoryCommissionStore(seed: Commission(route: .byok,
+                                                             deployment: .remote,
+                                                             gatewayURL: "https://old.example.com"))
+        let sheet = GatewayEditorSheet(
+            config: .absent,          // seedURL == "" for this arm
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: InMemoryTokenStore(),
+            store: store,
+            isPresented: .constant(true),
+            transport: RecordingTransport(),
+            onToast: { _ in })
+
+        XCTAssertEqual(sheet.commitURL(), .cleared)
+        XCTAssertNil(store.load()?.gatewayURL,
+                     "an empty field is a CLEAR; \"\" would resolve malformed")
+    }
+
+    /// The receipt is total and says what the SAVE did — both halves, and
+    /// never a half it did not perform. `APPLIES ON NEXT LAUNCH` is true
+    /// only while the engine re-resolves at launch only (c2 retires it).
+    func testTheSaveReceiptNamesEveryHalfItActuallyPerformed() {
+        XCTAssertEqual(GatewayEditorSheet.saveToast(savedToken: true, url: .wrote),
+                       "TOKEN SAVED · URL SAVED — APPLIES ON NEXT LAUNCH")
+        XCTAssertEqual(GatewayEditorSheet.saveToast(savedToken: false, url: .wrote),
+                       "URL SAVED — APPLIES ON NEXT LAUNCH")
+        XCTAssertEqual(GatewayEditorSheet.saveToast(savedToken: false, url: .cleared),
+                       "URL CLEARED — APPLIES ON NEXT LAUNCH")
+        // A token-only save must not claim a URL write.
+        XCTAssertFalse(GatewayEditorSheet.saveToast(savedToken: true, url: .noCommission)
+                        .contains("URL SAVED"))
+        // Every arm distinct: a receipt that collapsed would be uninformative
+        // and every equality above would still pass on a constant.
+        let all = Set([GatewayEditorSheet.saveToast(savedToken: true, url: .wrote),
+                       GatewayEditorSheet.saveToast(savedToken: false, url: .wrote),
+                       GatewayEditorSheet.saveToast(savedToken: true, url: .cleared),
+                       GatewayEditorSheet.saveToast(savedToken: false, url: .cleared),
+                       GatewayEditorSheet.saveToast(savedToken: true, url: .noCommission),
+                       GatewayEditorSheet.saveToast(savedToken: false, url: .noCommission)])
+        XCTAssertEqual(all.count, 6, "each outcome pair must be distinguishable")
+    }
+
+    /// `recordGatewayURL` is the sole writer, and it normalises absence.
+    func testRecordGatewayURLNormalisesWhitespaceToAbsence() {
+        var c = Commission(route: .byok, deployment: .remote)
+        c.recordGatewayURL("  https://a.b  ")
+        XCTAssertEqual(c.gatewayURL, "https://a.b")
+        c.recordGatewayURL("   ")
+        XCTAssertNil(c.gatewayURL)
+        c.recordGatewayURL("")
+        XCTAssertNil(c.gatewayURL)
+    }
+
 }

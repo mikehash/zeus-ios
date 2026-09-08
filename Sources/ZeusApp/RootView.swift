@@ -100,6 +100,15 @@ struct RootView: View {
     /// The one credential provider. See `Credential.swift`.
     private let credentials: CredentialProviding
 
+    /// The commission store this view was HANDED, RETAINED rather than used
+    /// once and dropped. Until c1 it was consumed at `resolve` and discarded,
+    /// so the editor had nothing to write through; now the sheet persists the
+    /// URL through THIS instance. Retaining it is what makes the store
+    /// identity assertable — the docstring below records the mutation that
+    /// swapped it for a fresh `UserDefaultsCommissionStore()` with 294 tests
+    /// green, and the leg that finally guards it reads this property.
+    let store: CommissionStoring
+
     /// The one resolution this view performs, kept so `content` reads a value
     /// rather than re-resolving per render.
     private let resolution: GatewayConfig.Resolution
@@ -157,6 +166,7 @@ struct RootView: View {
     /// disagree about which gateway this app is talking to.
     init(store: CommissionStoring, push: PushRegistrar) {
         let resolution = RootView.resolve(store: store)
+        self.store = store
         self.resolution = resolution
         self.push = push
         self.tokens = LaunchArgs.useInMemoryTokens
@@ -214,6 +224,7 @@ struct RootView: View {
                 GatewayEditorSheet(config: config,
                                    resolution: resolution,
                                    tokens: tokens,
+                                   store: store,
                                    isPresented: $gatewayEditor,
                                    credentials: credentials,
                                    onToast: showToast)

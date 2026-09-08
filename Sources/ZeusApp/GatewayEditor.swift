@@ -40,6 +40,16 @@ struct GatewayEditorSheet: View {
     /// call site silently ship an editor writing to a throwaway store.
     let tokens: GatewayTokenStoring
 
+    /// The commission store the URL half writes through — INJECTED, no
+    /// default, for the same reason `tokens` has none: a default here would
+    /// let a call site ship an editor persisting to a throwaway store, and
+    /// the write would be invisible at every leg that asserts what the
+    /// WRITER returns rather than which store the caller handed it. That is
+    /// the exact defect `RootView`'s own docstring records (it swapped the
+    /// store for a fresh `UserDefaultsCommissionStore()` and 294 tests
+    /// stayed green); this is the surface that stops it recurring.
+    let store: CommissionStoring
+
     @Binding var isPresented: Bool
 
     /// The SAME precedence the wire uses. Injected rather than constructed so
@@ -66,6 +76,7 @@ struct GatewayEditorSheet: View {
     init(config: GatewayConfig,
          resolution: GatewayConfig.Resolution,
          tokens: GatewayTokenStoring,
+         store: CommissionStoring,
          isPresented: Binding<Bool>,
          transport: PreflightTransporting = URLSessionPreflight(),
          credentials: CredentialProviding = KeychainCredentialProvider(),
@@ -74,12 +85,59 @@ struct GatewayEditorSheet: View {
         self.config = config
         self.resolution = resolution
         self.tokens = tokens
+        self.store = store
         self._isPresented = isPresented
         self.transport = transport
         self.credentials = credentials
         self.onToast = onToast
         _url = State(initialValue: Self.seedURL(for: config))
         _newToken = State(initialValue: seedToken)
+    }
+
+    /// What a URL SAVE actually did. Three outcomes, not a `Bool`, because
+    /// "no commission on disk" is not "nothing changed": it is the one case
+    /// where the operator typed an endpoint and the app has nowhere to put
+    /// it, and a surface that reports it as a plain no-op would be claiming
+    /// a persistence it did not perform.
+    enum URLWrite: Equatable { case wrote, cleared, noCommission }
+
+    /// The URL half of SAVE. EXTRACTED FROM THE BUTTON CLOSURE for the
+    /// reason recorded at `Commission.recordDeployment`: a mutation living
+    /// only inside a SwiftUI closure is unreachable in-process, so deleting
+    /// it costs nothing measurable and every leg stays green. As a method it
+    /// has a call site a census can count and a return value a leg can read.
+    ///
+    /// Writes through `store` — the instance this sheet was HANDED, never a
+    /// fresh one — and through `Commission.recordGatewayURL`, the sole
+    /// writer of that field.
+    @discardableResult
+    func commitURL() -> URLWrite {
+        guard var commission = store.load() else { return .noCommission }
+        commission.recordGatewayURL(urlOrSeed)
+        store.save(commission)
+        return commission.gatewayURL == nil ? .cleared : .wrote
+    }
+
+    /// The SAVE receipt. Static and total over the two halves so the string
+    /// is testable without a renderer.
+    ///
+    /// `APPLIES ON NEXT LAUNCH` IS TRUE ONLY UNTIL THE ENGINE FOLLOWS A
+    /// SAVED URL. The resolution is computed once in `RootView.init` and the
+    /// transport is built once inside `StateObject`, so a URL persisted now
+    /// is read at the next launch and not before. When that changes, this
+    /// string is a lie and its leg says so: `CommissionStoreTests` asserts
+    /// it present while the engine still re-resolves at launch only, and
+    /// `== 0` once it does not.
+    static func saveToast(savedToken: Bool, url: URLWrite) -> String {
+        switch (savedToken, url) {
+        case (_, .noCommission):
+            return savedToken ? "TOKEN SAVED · NO COMMISSION — URL NOT STORED"
+                              : "NO COMMISSION — URL NOT STORED"
+        case (true, .wrote):    return "TOKEN SAVED · URL SAVED — APPLIES ON NEXT LAUNCH"
+        case (true, .cleared):  return "TOKEN SAVED · URL CLEARED — APPLIES ON NEXT LAUNCH"
+        case (false, .wrote):   return "URL SAVED — APPLIES ON NEXT LAUNCH"
+        case (false, .cleared): return "URL CLEARED — APPLIES ON NEXT LAUNCH"
+        }
     }
 
     /// The four preflight outcomes. TRANSPORT FAILURE IS ITS OWN STATE: a
@@ -325,10 +383,15 @@ struct GatewayEditorSheet: View {
             // reports exactly what was written, never a persistence it did
             // not perform.
             let host = Self.hostKey(for: config)
+            let savedToken: Bool
             if !newToken.isEmpty, !host.isEmpty {
                 tokens.save(token: newToken, host: host)
-                onToast("TOKEN SAVED")
+                savedToken = true
+            } else {
+                savedToken = false
             }
+            let urlOutcome = commitURL()
+            onToast(Self.saveToast(savedToken: savedToken, url: urlOutcome))
             isPresented = false
         } label: {
             Text("SAVE")
@@ -341,7 +404,7 @@ struct GatewayEditorSheet: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            Text("TOKEN SAVES NOW — URL IS READ-ONLY IN THIS BUILD")
+            Text("SAVED URL APPLIES ON NEXT LAUNCH")
                 .font(Theme.mono(8))
                 .tracking(0.7)
                 .foregroundStyle(Theme.w(0.4))
