@@ -236,11 +236,17 @@ enum ApprovalsState: Equatable {
 // MARK: - fetch + act
 
 protocol ApprovalsServicing: Sendable {
-    func fetch(_ endpoint: GatewayConfig.Endpoint) async -> ApprovalsState
+    func fetch(_ endpoint: GatewayConfig.Endpoint,
+               credentials: CredentialProviding) async -> ApprovalsState
     /// Returns the gateway's own answer, rendered. Never reports a dispatch as
     /// an outcome.
+    /// The ACT path takes the provider too. It builds its POST through the
+    /// same bearer helper as `fetch`, so leaving it out would ship an
+    /// unauthenticated APPROVE/DENY against an authenticated queue — the
+    /// two-precedence defect inside a single type.
     func resolve(id: String, approve: Bool, reason: String?,
-                 endpoint: GatewayConfig.Endpoint) async -> String
+                 endpoint: GatewayConfig.Endpoint,
+                 credentials: CredentialProviding) async -> String
 }
 
 struct HTTPApprovalsService: ApprovalsServicing {
@@ -248,14 +254,15 @@ struct HTTPApprovalsService: ApprovalsServicing {
     var timeout: TimeInterval = 6
 
     private func request(_ path: String, method: String,
-                         body: Data?, endpoint: GatewayConfig.Endpoint) -> URLRequest {
+                         body: Data?, endpoint: GatewayConfig.Endpoint,
+                         credentials: CredentialProviding) -> URLRequest {
         var r = URLRequest(url: endpoint.url.appendingPathComponent(path))
         r.httpMethod = method
         r.timeoutInterval = timeout
         // A cached approval queue is worse than none: it renders decisions the
         // operator may already have made. Same reasoning as `LinkMonitor:172`.
         r.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        if let token = endpoint.token {
+        if let token = credentials.credential(for: endpoint) {
             r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         if let body {
@@ -265,10 +272,12 @@ struct HTTPApprovalsService: ApprovalsServicing {
         return r
     }
 
-    func fetch(_ endpoint: GatewayConfig.Endpoint) async -> ApprovalsState {
+    func fetch(_ endpoint: GatewayConfig.Endpoint,
+               credentials: CredentialProviding) async -> ApprovalsState {
         do {
             let (data, response) = try await URLSession.shared.data(
-                for: request("v1/approvals", method: "GET", body: nil, endpoint: endpoint))
+                for: request("v1/approvals", method: "GET", body: nil, endpoint: endpoint,
+                             credentials: credentials))
             guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             guard (200..<300).contains(http.statusCode) else {
                 throw NSError(domain: "gateway", code: http.statusCode,
@@ -278,7 +287,7 @@ struct HTTPApprovalsService: ApprovalsServicing {
             // Separately fallible and separately optional: a queue that arrived
             // is renderable whether or not the gating config did. `nil` means
             // UNKNOWN and suppresses the stronger "nothing is gated" string.
-            let gating = try? await gatingConfigured(endpoint)
+            let gating = try? await gatingConfigured(endpoint, credentials: credentials)
             return .loaded(pending: records.map(\.approval), gatingConfigured: gating)
         } catch {
             return .unavailable(
@@ -286,9 +295,11 @@ struct HTTPApprovalsService: ApprovalsServicing {
         }
     }
 
-    private func gatingConfigured(_ endpoint: GatewayConfig.Endpoint) async throws -> Bool {
+    private func gatingConfigured(_ endpoint: GatewayConfig.Endpoint,
+                                  credentials: CredentialProviding) async throws -> Bool {
         let (data, _) = try await URLSession.shared.data(
-            for: request("v1/config", method: "GET", body: nil, endpoint: endpoint))
+            for: request("v1/config", method: "GET", body: nil, endpoint: endpoint,
+                     credentials: credentials))
         struct Config: Decodable {
             struct Aegis: Decodable {
                 let requireConfirmationFor: [String]?
@@ -303,7 +314,8 @@ struct HTTPApprovalsService: ApprovalsServicing {
     }
 
     func resolve(id: String, approve: Bool, reason: String?,
-                 endpoint: GatewayConfig.Endpoint) async -> String {
+                 endpoint: GatewayConfig.Endpoint,
+                 credentials: CredentialProviding) async -> String {
         let path = "v1/approvals/\(id)/\(approve ? "approve" : "deny")"
         var body: Data?
         if !approve, let reason, !reason.isEmpty {
@@ -311,7 +323,8 @@ struct HTTPApprovalsService: ApprovalsServicing {
         }
         do {
             let (data, response) = try await URLSession.shared.data(
-                for: request(path, method: "POST", body: body, endpoint: endpoint))
+                for: request(path, method: "POST", body: body, endpoint: endpoint,
+                             credentials: credentials))
             let http = response as? HTTPURLResponse
             return Self.outcome(status: http?.statusCode ?? 0, body: data, approve: approve)
         } catch {
@@ -351,14 +364,22 @@ final class ApprovalsStore: ObservableObject {
     private let config: GatewayConfig
     private let service: ApprovalsServicing
 
+    /// The ONE precedence, injected. Stored on the STORE (which has a
+    /// lifetime) rather than on `HTTPApprovalsService` (a stateless struct
+    /// taking `endpoint:` per call — a stored collaborator there would invent
+    /// a lifetime the type does not have), and handed to the service per call.
+    private let credentials: CredentialProviding
+
     /// `config` has NO DEFAULT — see `LinkMonitor.init` for the reason at
     /// length. Short form: a default reaches the env-only half of resolution
     /// and cannot see the commission, so it would answer a question the
     /// operator already answered elsewhere.
     init(config: GatewayConfig,
-         service: ApprovalsServicing = HTTPApprovalsService()) {
+         service: ApprovalsServicing = HTTPApprovalsService(),
+         credentials: CredentialProviding = KeychainCredentialProvider()) {
         self.config = config
         self.service = service
+        self.credentials = credentials
         switch config {
         case .absent, .malformed: self.state = .unconfigured(config.summary)
         case .resolved:           self.state = .loading
@@ -377,13 +398,14 @@ final class ApprovalsStore: ObservableObject {
     func load() async {
         guard case .resolved(let endpoint) = config else { return }
         state = .loading
-        state = await service.fetch(endpoint)
+        state = await service.fetch(endpoint, credentials: credentials)
     }
 
     func resolve(_ approval: Approval, approve: Bool, reason: String? = nil) async {
         guard case .resolved(let endpoint) = config else { return }
         lastOutcome = await service.resolve(id: approval.id, approve: approve,
-                                            reason: reason, endpoint: endpoint)
+                                            reason: reason, endpoint: endpoint,
+                                            credentials: credentials)
         // Re-read rather than mutating locally: the local list is a picture of
         // the gateway's queue, and after an answer the gateway is the only
         // thing that knows what is left in it.

@@ -210,7 +210,8 @@ struct StatusResponse: Decodable {
 }
 
 protocol RouteCatalogFetching: Sendable {
-    func fetch(_ endpoint: GatewayConfig.Endpoint) async -> RouteCatalogState
+    func fetch(_ endpoint: GatewayConfig.Endpoint,
+               credentials: CredentialProviding) async -> RouteCatalogState
 }
 
 struct HTTPRouteCatalogFetcher: RouteCatalogFetching {
@@ -219,14 +220,15 @@ struct HTTPRouteCatalogFetcher: RouteCatalogFetching {
 
     private func get<T: Decodable>(_ type: T.Type,
                                    path: String,
-                                   endpoint: GatewayConfig.Endpoint) async throws -> T {
+                                   endpoint: GatewayConfig.Endpoint,
+                                   credentials: CredentialProviding) async throws -> T {
         var request = URLRequest(url: endpoint.url.appendingPathComponent(path))
         request.httpMethod = "GET"
         request.timeoutInterval = timeout
         // A cached catalogue would render providers the gateway dropped an
         // hour ago — same reasoning as `LinkMonitor:172`.
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        if let token = endpoint.token {
+        if let token = credentials.credential(for: endpoint) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -240,16 +242,19 @@ struct HTTPRouteCatalogFetcher: RouteCatalogFetching {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    func fetch(_ endpoint: GatewayConfig.Endpoint) async -> RouteCatalogState {
+    func fetch(_ endpoint: GatewayConfig.Endpoint,
+               credentials: CredentialProviding) async -> RouteCatalogState {
         do {
             let catalogue = try await get(ProvidersResponse.self,
-                                          path: "v1/providers", endpoint: endpoint)
+                                          path: "v1/providers", endpoint: endpoint,
+                                          credentials: credentials)
             // The status fetch is SEPARATELY fallible and separately optional:
             // a catalogue that arrived is renderable whether or not the active
             // model did. Folding them into one `try` would blank the whole
             // sheet because a decorative line failed.
             let model = try? await get(StatusResponse.self,
-                                       path: "v1/status", endpoint: endpoint).model
+                                       path: "v1/status", endpoint: endpoint,
+                                       credentials: credentials).model
             return .loaded(routes: catalogue.providers.map(\.route), activeModel: model)
         } catch {
             return .unavailable(reason: "\(endpoint.url.host ?? "gateway") · \(error.localizedDescription)")
@@ -285,14 +290,20 @@ final class RouteCatalogStore: ObservableObject {
     private let config: GatewayConfig
     private let fetcher: RouteCatalogFetching
 
+    /// See `ApprovalsStore.credentials` — same reason, same precedence, one
+    /// provider type for both.
+    private let credentials: CredentialProviding
+
     /// `config` has NO DEFAULT — see `LinkMonitor.init`. This store is built
     /// by `RootView` and handed DOWN to `NodesView`, which used to construct
     /// it itself; a view-owned construction had no store in scope and so
     /// could only ever have read the environment.
     init(config: GatewayConfig,
-         fetcher: RouteCatalogFetching = HTTPRouteCatalogFetcher()) {
+         fetcher: RouteCatalogFetching = HTTPRouteCatalogFetcher(),
+         credentials: CredentialProviding = KeychainCredentialProvider()) {
         self.config = config
         self.fetcher = fetcher
+        self.credentials = credentials
         switch config {
         case .absent, .malformed:
             self.state = .unconfigured(config.summary)
@@ -316,7 +327,7 @@ final class RouteCatalogStore: ObservableObject {
     func load() async {
         guard case .resolved(let endpoint) = config else { return }
         state = .loading
-        let next = await fetcher.fetch(endpoint)
+        let next = await fetcher.fetch(endpoint, credentials: credentials)
         state = next
         // A selection that is not in the catalogue we just fetched cannot
         // highlight a row, and the operator cannot tell that from a bug. Drop

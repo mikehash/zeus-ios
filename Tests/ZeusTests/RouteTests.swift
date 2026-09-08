@@ -40,7 +40,8 @@ final class RouteTests: XCTestCase {
 
     private struct StubFetcher: RouteCatalogFetching {
         let result: RouteCatalogState
-        func fetch(_ endpoint: GatewayConfig.Endpoint) async -> RouteCatalogState { result }
+        func fetch(_ endpoint: GatewayConfig.Endpoint,
+                   credentials: CredentialProviding) async -> RouteCatalogState { result }
     }
 
     private static let endpoint = GatewayConfig.resolved(

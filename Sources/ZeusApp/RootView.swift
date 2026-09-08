@@ -97,6 +97,9 @@ struct RootView: View {
     /// take the deterministic branch without a second construction site.
     private let tokens: GatewayTokenStoring
 
+    /// The one credential provider. See `Credential.swift`.
+    private let credentials: CredentialProviding
+
     /// The one resolution this view performs, kept so `content` reads a value
     /// rather than re-resolving per render.
     private let resolution: GatewayConfig.Resolution
@@ -118,6 +121,33 @@ struct RootView: View {
     /// The one line that calls it (`init`, above) remains guarded only by the
     /// source-cardinality leg — a `View` init is not observable in-process
     /// without ViewInspector. Smaller unguarded surface, not a closed one.
+    /// The SessionView header, with the credential PROVENANCE appended.
+    ///
+    /// GATED ON `.linked` AND ONLY `.linked`. Appending ungated would put a
+    /// provenance word on `LINKING…` and on `NO GATEWAY · SET
+    /// ZEUS_GATEWAY_URL` — a claim about a credential for a config that has
+    /// no endpoint to hold one. The word is composed HERE rather than inside
+    /// `LinkState.statusLine` because `LinkState` is a pure function of
+    /// REACHABILITY (`LinkMonitor.swift:30-50`) and the credential source is
+    /// not a reachability fact; widening the enum to carry it would make
+    /// every arm answerable for a property only one arm has.
+    ///
+    /// APERTURE, stated so its silence is never read as a miss: this is the
+    /// SessionView header only. The NODES pill (`LinkState.badgeText`) and
+    /// its subtitle stay TOPOLOGY-ONLY and carry no provenance by design.
+    ///
+    /// The word, never the bytes: `ENV` or `KEYCHAIN`, and nothing appended
+    /// when the provider has no credential for the endpoint.
+    static func statusLine(_ state: LinkState,
+                           resolution: GatewayConfig.Resolution,
+                           credentials: CredentialProviding) -> String {
+        let base = state.statusLine
+        guard case .linked = state,
+              case .resolved(let endpoint) = resolution.config,
+              let source = credentials.source(for: endpoint) else { return base }
+        return "\(base) · \(source.rawValue)"
+    }
+
     static func resolve(store: CommissionStoring) -> GatewayConfig.Resolution {
         GatewayConfig.resolve(from: ProcessInfo.processInfo.environment, store: store)
     }
@@ -132,13 +162,25 @@ struct RootView: View {
         self.tokens = LaunchArgs.useInMemoryTokens
             ? InMemoryTokenStore()
             : GatewayTokenStore()
+        // ONE provider instance for the whole view: the transport, the
+        // approvals queue, the route catalogue and the editor's preflight all
+        // read THIS object, so no two surfaces can disagree about what the
+        // request carried. See `Credential.swift` for the precedence.
+        let credentials: CredentialProviding = LaunchArgs.useInMemoryTokens
+            ? StubCredentialProvider()
+            : KeychainCredentialProvider()
+        self.credentials = credentials
         let config = resolution.config
         _session = StateObject(wrappedValue: SessionEngine(
-            makeTransport: { box in Zeus.makeTransport(for: config, sessionID: box) }
+            makeTransport: { box in
+                Zeus.makeTransport(for: config, sessionID: box, credentials: credentials)
+            }
         ))
         _link = StateObject(wrappedValue: LinkMonitor(config: config))
-        _approvals = StateObject(wrappedValue: ApprovalsStore(config: config))
-        _routes = StateObject(wrappedValue: RouteCatalogStore(config: config))
+        _approvals = StateObject(wrappedValue: ApprovalsStore(config: config,
+                                                             credentials: credentials))
+        _routes = StateObject(wrappedValue: RouteCatalogStore(config: config,
+                                                             credentials: credentials))
     }
 
     var body: some View {
@@ -173,6 +215,7 @@ struct RootView: View {
                                    resolution: resolution,
                                    tokens: tokens,
                                    isPresented: $gatewayEditor,
+                                   credentials: credentials,
                                    onToast: showToast)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(80)
@@ -276,7 +319,9 @@ struct RootView: View {
                 // LINKED with no gateway configured, none reachable, and none
                 // answering. It is now the probe's verdict; the `remote`
                 // ternary the prototype had is subsumed by `LinkState`.
-                statusLine: link.state.statusLine,
+                statusLine: Self.statusLine(link.state,
+                                            resolution: resolution,
+                                            credentials: credentials),
                 state: session.state,
                 // The gateway-named id, mirrored off the engine. The header
                 // printed the literal "SESSION-01" while this value existed.

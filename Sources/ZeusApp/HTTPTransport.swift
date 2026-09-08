@@ -70,6 +70,13 @@ struct HTTPTransport: SessionTransport {
     let endpoint: GatewayConfig.Endpoint
     let session: URLSession
 
+    /// The bearer source. STORED, not defaulted: the transport and the
+    /// preflight must not be able to disagree about what was sent, and a
+    /// default here would let a call site construct a transport with a
+    /// different precedence than the sheet's. `endpoint.token` is NOT read
+    /// by this type any more — see `Credential.swift`.
+    let credentials: CredentialProviding
+
     /// Carried across turns so the gateway threads context. `nil` until the
     /// first reply names one. This is a `let` holding a reference type on
     /// purpose — the transport is `Sendable` and must not grow mutable value
@@ -85,10 +92,12 @@ struct HTTPTransport: SessionTransport {
     /// Required, the compiler enumerates every site instead.
     init(endpoint: GatewayConfig.Endpoint,
          session: URLSession = .shared,
-         sessionID: SessionIDBox) {
+         sessionID: SessionIDBox,
+         credentials: CredentialProviding) {
         self.endpoint = endpoint
         self.session = session
         self.sessionID = sessionID
+        self.credentials = credentials
     }
 
     // MARK: - Wire
@@ -131,7 +140,7 @@ struct HTTPTransport: SessionTransport {
         var request = URLRequest(url: Self.chatURL(base: endpoint.url))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = endpoint.token {
+        if let token = credentials.credential(for: endpoint) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try Self.encodeBody(prompt: prompt,

@@ -41,6 +41,13 @@ struct GatewayEditorSheet: View {
     let tokens: GatewayTokenStoring
 
     @Binding var isPresented: Bool
+
+    /// The SAME precedence the wire uses. Injected rather than constructed so
+    /// the preflight and the transport cannot disagree about what was sent —
+    /// a verdict computed over a different credential than the session will
+    /// carry is a verdict about a request nobody makes.
+    let credentials: CredentialProviding
+
     let onToast: (String) -> Void
 
     /// The URL field is SEEDED IN INIT, not on appear and not lazily: seed
@@ -61,6 +68,7 @@ struct GatewayEditorSheet: View {
          tokens: GatewayTokenStoring,
          isPresented: Binding<Bool>,
          transport: PreflightTransporting = URLSessionPreflight(),
+         credentials: CredentialProviding = KeychainCredentialProvider(),
          seedToken: String = "",
          onToast: @escaping (String) -> Void) {
         self.config = config
@@ -68,6 +76,7 @@ struct GatewayEditorSheet: View {
         self.tokens = tokens
         self._isPresented = isPresented
         self.transport = transport
+        self.credentials = credentials
         self.onToast = onToast
         _url = State(initialValue: Self.seedURL(for: config))
         _newToken = State(initialValue: seedToken)
@@ -90,7 +99,7 @@ struct GatewayEditorSheet: View {
     /// production `URLSession` sits behind — the four mapping legs assert
     /// `preflightState(...)` directly; the button legs assert the CALL
     /// reaches it, which a direct-mapping test cannot see.
-    var transport: PreflightTransporting = URLSessionPreflight()
+    let transport: PreflightTransporting
 
     /// The run's verdict. `@State` because it is sheet-local: two sheets
     /// open in one process (impossible today, one flag) would not share a
@@ -285,11 +294,26 @@ struct GatewayEditorSheet: View {
     /// working token. The store answers a DIFFERENT question than the one
     /// the verdict asks, and the two coincide only while the field is full.
     func computePreflight() async -> PreflightState {
-        let bearer: String? = newToken.isEmpty ? nil : newToken
+        // TYPED FIELD WINS, then the provider. A token the operator just
+        // typed is the thing he is asking about; with the field empty the
+        // preflight must exercise what the SESSION would send, which is the
+        // provider's answer and nothing else. `hadToken` is still read off
+        // this one binding, so the verdict describes the request that was
+        // actually made — including the reachable case where the presence
+        // store says PRESENT and the provider hands back nothing (an item the
+        // Keychain will not return data for), which is NO TOKEN, not REJECTED.
+        let bearer: String? = newToken.isEmpty ? providerCredential : newToken
         let reply = await transport.status(url: urlOrSeed, bearer: bearer)
         return Self.preflightState(httpStatus: reply.httpStatus,
                                    hadToken: bearer != nil,
                                    transportFailed: reply.transportFailed)
+    }
+
+    /// The provider's answer for the endpoint under edit. Nil for every
+    /// non-resolved arm — there is no endpoint to hold a credential for.
+    private var providerCredential: String? {
+        guard case .resolved(let endpoint) = config else { return nil }
+        return credentials.credential(for: endpoint)
     }
 
     private var saveButton: some View {

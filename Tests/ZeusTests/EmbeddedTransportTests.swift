@@ -264,19 +264,20 @@ final class EmbeddedTransportTests: XCTestCase {
     func testMakeTransportRoutesAllFourArms() {
         let box = SessionIDBox()
 
-        XCTAssertTrue(makeTransport(for: .absent, sessionID: box)
+        XCTAssertTrue(makeTransport(for: .absent, sessionID: box, credentials: StubCredentialProvider())
                       is UnconfiguredTransport)
         XCTAssertTrue(makeTransport(for: .malformed(raw: "x", reason: .notAURL),
-                                    sessionID: box) is MisconfiguredTransport)
+                                    sessionID: box, credentials: StubCredentialProvider()) is MisconfiguredTransport)
         XCTAssertTrue(makeTransport(
             for: .resolved(.init(url: URL(string: "http://a.b")!, token: nil)),
-            sessionID: box) is HTTPTransport)
+            sessionID: box,
+            credentials: StubCredentialProvider()) is HTTPTransport)
 
         // Both readiness values return the SAME transport: `.noProvider` is
         // rendered by the surface before a send, not by handing back a
         // crippled wire.
         for readiness: GatewayConfig.LocalReadiness in [.ready, .noProvider] {
-            let transport = makeTransport(for: .local(readiness), sessionID: box)
+            let transport = makeTransport(for: .local(readiness), sessionID: box, credentials: StubCredentialProvider())
             // `EmbeddedCore.shared` may legitimately fail in a test process
             // that cannot create its Application Support directory, and that
             // arm returns `MisconfiguredTransport` by design. Accept either,

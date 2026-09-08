@@ -161,7 +161,9 @@ struct MisconfiguredTransport: SessionTransport {
 /// start, so there is nothing to talk to, and that is a *misconfiguration*
 /// with a quotable reason rather than an absence. It routes to
 /// `MisconfiguredTransport` naming the bridge's own error.
-func makeTransport(for config: GatewayConfig, sessionID: SessionIDBox) -> SessionTransport {
+func makeTransport(for config: GatewayConfig,
+                   sessionID: SessionIDBox,
+                   credentials: CredentialProviding) -> SessionTransport {
     switch config {
     case .absent:
         return UnconfiguredTransport()
@@ -169,7 +171,7 @@ func makeTransport(for config: GatewayConfig, sessionID: SessionIDBox) -> Sessio
         return MisconfiguredTransport(
             detail: "\(GatewayConfig.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)")
     case let .resolved(endpoint):
-        return HTTPTransport(endpoint: endpoint, sessionID: sessionID)
+        return HTTPTransport(endpoint: endpoint, sessionID: sessionID, credentials: credentials)
     case .local:
         switch EmbeddedCore.shared {
         case let .success(core):

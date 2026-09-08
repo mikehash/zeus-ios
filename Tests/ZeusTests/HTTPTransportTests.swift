@@ -231,7 +231,8 @@ final class HTTPTransportTests: XCTestCase {
     /// reverted to a stub.
     func testResolvedConfigYieldsHTTPTransport() {
         let transport = makeTransport(for: .resolved(endpoint("http://10.0.0.5:8080")),
-                                  sessionID: SessionIDBox())
+                                  sessionID: SessionIDBox(),
+                                  credentials: StubCredentialProvider())
         XCTAssertTrue(transport is HTTPTransport,
                       "resolved config must produce the real client, got \(type(of: transport))")
     }
@@ -240,9 +241,9 @@ final class HTTPTransportTests: XCTestCase {
     /// leg above is satisfied by a `makeTransport` that returns
     /// `HTTPTransport` unconditionally.
     func testAbsentAndMalformedDoNotYieldHTTPTransport() {
-        XCTAssertFalse(makeTransport(for: .absent, sessionID: SessionIDBox()) is HTTPTransport)
+        XCTAssertFalse(makeTransport(for: .absent, sessionID: SessionIDBox(), credentials: StubCredentialProvider()) is HTTPTransport)
         let bad = GatewayConfig.malformed(raw: "ftp://x", reason: .unsupportedScheme)
-        XCTAssertFalse(makeTransport(for: bad, sessionID: SessionIDBox()) is HTTPTransport)
+        XCTAssertFalse(makeTransport(for: bad, sessionID: SessionIDBox(), credentials: StubCredentialProvider()) is HTTPTransport)
     }
 
     /// The token reaches the transport. A dropped token produces a 401 that
@@ -250,7 +251,8 @@ final class HTTPTransportTests: XCTestCase {
     func testEndpointTokenIsCarriedIntoTheTransport() throws {
         let transport = try XCTUnwrap(
             makeTransport(for: .resolved(endpoint("http://h:1", token: "abc")),
-                          sessionID: SessionIDBox())
+                          sessionID: SessionIDBox(),
+                          credentials: StubCredentialProvider())
                 as? HTTPTransport)
         XCTAssertEqual(transport.endpoint.token, "abc")
     }
