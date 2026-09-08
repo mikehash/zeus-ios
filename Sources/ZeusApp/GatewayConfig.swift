@@ -300,8 +300,24 @@ enum GatewayConfig: Equatable {
         case let .malformed(raw, reason):
             return "\(Self.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)"
         case let .resolved(endpoint):
-            return "\(endpoint.url.absoluteString) "
-                 + (endpoint.token == nil ? "(no token)" : "(token present)")
+            // PRESENCE-ONLY READER of `endpoint.token`, and the ONLY one
+            // outside the credential provider. It prints a BOOLEAN about the
+            // config, never the bytes — the same contract `GatewayTokenStore`
+            // keeps with its `kSecReturnData`-less read.
+            //
+            // WHY NOT "(no token)": under the credential seam
+            // `endpoint.token == nil` no longer means the request will carry
+            // nothing — a Keychain-backed remote resolves with a nil endpoint
+            // token and still sends a bearer. `summary` is a pure function of
+            // the CONFIG, so it may only say what the config knows: the env
+            // carried one, or silence. The KEYCHAIN/none word belongs to the
+            // provider and is composed at the LINK surface, not here.
+            //
+            // The space rides INSIDE the suffix: an empty false arm on a
+            // trailing-space prefix renders "http://a.b " with a dangling
+            // space into `Text(config.summary)`.
+            return endpoint.url.absoluteString
+                 + (endpoint.token == nil ? "" : " (env token)")
         }
     }
 }

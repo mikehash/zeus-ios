@@ -113,7 +113,41 @@ final class GatewayConfigTests: XCTestCase {
         let summary = GatewayConfig.resolveFromEnvironment(from: [k: "http://a.b", t: secret]).summary
         XCTAssertFalse(summary.contains(secret), "summary leaked the token")
         XCTAssertTrue(summary.contains("http://a.b"), "summary must still name the endpoint")
-        XCTAssertTrue(summary.contains("token present"))
+        XCTAssertTrue(summary.contains("(env token)"))
+    }
+
+    /// 🔴 THE WORD IS ABOUT THE CONFIG, NOT ABOUT THE REQUEST. Under the
+    /// credential seam a nil `endpoint.token` no longer means "nothing will be
+    /// sent" — a Keychain-backed remote resolves nil here and still carries a
+    /// bearer. So `summary` may never print "(no token)": that string is a
+    /// claim about the REQUEST made by a surface that only knows the CONFIG,
+    /// and it would read "(no token)" over a credential the operator saved.
+    ///
+    /// POS in the same walk: the env-token arm must still print "(env token)"
+    /// — a summary that returned "" for BOTH arms would satisfy the absence
+    /// assertion alone.
+    func testSummaryNeverClaimsTheRequestCarriesNothing() {
+        let withToken = GatewayConfig
+            .resolveFromEnvironment(from: [k: "http://a.b", t: "sk-1"]).summary
+        let without = GatewayConfig
+            .resolveFromEnvironment(from: [k: "http://a.b"]).summary
+
+        XCTAssertFalse(withToken.contains("(no token)"))
+        XCTAssertFalse(without.contains("(no token)"),
+                       "the tokenless arm must be SILENT about the request, not claim it carries nothing")
+        XCTAssertTrue(withToken.contains("(env token)"),
+                      "POS: the env arm still names its source — otherwise both arms are empty and the absence leg is vacuous")
+        XCTAssertNotEqual(withToken, without,
+                          "the two arms must remain distinguishable")
+    }
+
+    /// The empty false arm cannot leave a dangling separator. Asserted as
+    /// EQUALITY, not `hasPrefix` — a trailing space passes every `contains`
+    /// leg and renders into `Text(config.summary)`.
+    func testTheTokenlessResolvedSummaryIsExactlyTheURL() {
+        let summary = GatewayConfig
+            .resolveFromEnvironment(from: [k: "http://a.b"]).summary
+        XCTAssertEqual(summary, "http://a.b")
     }
 
     func testMalformedSummaryQuotesTheOperand() {
