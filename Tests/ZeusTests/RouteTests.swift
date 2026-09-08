@@ -239,7 +239,7 @@ final class RouteTests: XCTestCase {
     /// scope word and refuses the fabricated one.
     @MainActor
     func testSelectionIsDeviceLocalAndTheToastSaysSo() {
-        let store = RouteCatalogStore(config: Self.endpoint,
+        let store = RouteCatalogStore(source: .fixed(Self.endpoint),
                                       fetcher: StubFetcher(result: .loading),
                                       credentials: StubCredentialProvider())
         let route = Route(id: "ollama", name: "OLLAMA", tagline: "", reach: .lanOnly)
@@ -259,7 +259,7 @@ final class RouteTests: XCTestCase {
         let gone = Route(id: "groq", name: "GROQ", tagline: "", reach: .direct)
         let kept = Route(id: "ollama", name: "OLLAMA", tagline: "", reach: .lanOnly)
         let store = RouteCatalogStore(
-            config: Self.endpoint,
+            source: .fixed(Self.endpoint),
             fetcher: StubFetcher(result: .loaded(routes: [kept], activeModel: nil)),
             credentials: StubCredentialProvider())
 
@@ -278,7 +278,7 @@ final class RouteTests: XCTestCase {
     /// fetch is in flight when none was ever issued.
     @MainActor
     func testUnconfiguredGatewayNamesItselfRatherThanSpinning() async {
-        let store = RouteCatalogStore(config: .absent,
+        let store = RouteCatalogStore(source: .fixed(.absent),
                                       fetcher: StubFetcher(result: .loaded(routes: [], activeModel: nil)),
                                       credentials: StubCredentialProvider())
         if case .unconfigured(let why) = store.state {

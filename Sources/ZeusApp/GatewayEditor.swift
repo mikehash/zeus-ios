@@ -58,6 +58,13 @@ struct GatewayEditorSheet: View {
     /// carry is a verdict about a request nobody makes.
     let credentials: CredentialProviding
 
+    /// Re-resolve. Called AFTER the write, so the source adopts a config
+    /// derived from what is now on disk rather than from the field. NO
+    /// DEFAULT: an empty closure default is how a SAVE that persists and does
+    /// not apply looks green — the four surfaces stay on the launch host and
+    /// nothing says so.
+    let onSaved: () -> Void
+
     let onToast: (String) -> Void
 
     /// The URL field is SEEDED IN INIT, not on appear and not lazily: seed
@@ -87,6 +94,7 @@ struct GatewayEditorSheet: View {
          transport: PreflightTransporting = URLSessionPreflight(),
          credentials: CredentialProviding,
          seedToken: String = "",
+         onSaved: @escaping () -> Void,
          onToast: @escaping (String) -> Void) {
         self.config = config
         self.resolution = resolution
@@ -95,6 +103,7 @@ struct GatewayEditorSheet: View {
         self._isPresented = isPresented
         self.transport = transport
         self.credentials = credentials
+        self.onSaved = onSaved
         self.onToast = onToast
         _url = State(initialValue: Self.seedURL(for: config))
         _newToken = State(initialValue: seedToken)
@@ -127,22 +136,22 @@ struct GatewayEditorSheet: View {
     /// The SAVE receipt. Static and total over the two halves so the string
     /// is testable without a renderer.
     ///
-    /// `APPLIES ON NEXT LAUNCH` IS TRUE ONLY UNTIL THE ENGINE FOLLOWS A
-    /// SAVED URL. The resolution is computed once in `RootView.init` and the
-    /// transport is built once inside `StateObject`, so a URL persisted now
-    /// is read at the next launch and not before. When that changes, this
-    /// string is a lie and its leg says so: `CommissionStoreTests` asserts
-    /// it present while the engine still re-resolves at launch only, and
-    /// `== 0` once it does not.
+    /// `LIVE NOW` replaced `APPLIES ON NEXT LAUNCH` at c2, and the swap is
+    /// the whole point of that commit: the four byte-sending surfaces now
+    /// observe `GatewayConfigSource` and re-derive on `onSaved()`, so the
+    /// old caption became the lie its own leg promised to catch. The leg
+    /// inverted with it — `APPLIES ON NEXT LAUNCH` must now read 0 in
+    /// `Sources`, and `LIVE NOW` may only be said by a build where
+    /// `RootView` holds no `private let config` for those surfaces.
     static func saveToast(savedToken: Bool, url: URLWrite) -> String {
         switch (savedToken, url) {
         case (_, .noCommission):
             return savedToken ? "TOKEN SAVED · NO COMMISSION — URL NOT STORED"
                               : "NO COMMISSION — URL NOT STORED"
-        case (true, .wrote):    return "TOKEN SAVED · URL SAVED — APPLIES ON NEXT LAUNCH"
-        case (true, .cleared):  return "TOKEN SAVED · URL CLEARED — APPLIES ON NEXT LAUNCH"
-        case (false, .wrote):   return "URL SAVED — APPLIES ON NEXT LAUNCH"
-        case (false, .cleared): return "URL CLEARED — APPLIES ON NEXT LAUNCH"
+        case (true, .wrote):    return "TOKEN SAVED · URL SAVED — LIVE NOW"
+        case (true, .cleared):  return "TOKEN SAVED · URL CLEARED — LIVE NOW"
+        case (false, .wrote):   return "URL SAVED — LIVE NOW"
+        case (false, .cleared): return "URL CLEARED — LIVE NOW"
         }
     }
 
@@ -397,6 +406,10 @@ struct GatewayEditorSheet: View {
                 savedToken = false
             }
             let urlOutcome = commitURL()
+            // Order is load-bearing: the write, THEN the re-resolve, THEN the
+            // receipt. Re-resolving first would adopt the config still on
+            // disk and report a URL that never applied.
+            onSaved()
             onToast(Self.saveToast(savedToken: savedToken, url: urlOutcome))
             isPresented = false
         } label: {
@@ -410,7 +423,7 @@ struct GatewayEditorSheet: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            Text("SAVED URL APPLIES ON NEXT LAUNCH")
+            Text("SAVE APPLIES IMMEDIATELY")
                 .font(Theme.mono(8))
                 .tracking(0.7)
                 .foregroundStyle(Theme.w(0.4))

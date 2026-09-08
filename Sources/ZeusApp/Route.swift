@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 /// A selectable inference route — **one provider identity, as the gateway
 /// names it**.
@@ -287,7 +288,10 @@ final class RouteCatalogStore: ObservableObject {
     /// unnoticed — and the toast may not say LOCKED, because nothing is.
     @Published var selected: Route?
 
-    private let config: GatewayConfig
+    /// THE shared current config, observed — see `GatewayConfigSource`.
+    private let source: GatewayConfigSource
+    private var config: GatewayConfig { source.config }
+    private var follow: AnyCancellable?
     private let fetcher: RouteCatalogFetching
 
     /// See `ApprovalsStore.credentials` — same reason, same precedence, one
@@ -304,17 +308,30 @@ final class RouteCatalogStore: ObservableObject {
     /// Keychain it answers `nil` to everything, so every "no credential was
     /// attached" leg passes on the empty store rather than on the wiring.
     /// The one live construction is `RootView.swift` (`Sources` census == 1).
-    init(config: GatewayConfig,
+    init(source: GatewayConfigSource,
          fetcher: RouteCatalogFetching = HTTPRouteCatalogFetcher(),
          credentials: CredentialProviding) {
-        self.config = config
+        self.source = source
         self.fetcher = fetcher
         self.credentials = credentials
+        self.state = Self.state(for: source.config)
+        self.follow = source.$resolution
+            .dropFirst()
+            .sink { [weak self] next in
+                guard let self else { return }
+                self.state = Self.state(for: next.config)
+                Task { @MainActor in await self.load() }
+            }
+    }
+
+    /// The catalogue's state as a pure function of configuration. ONE
+    /// expression for init and for the change path.
+    static func state(for config: GatewayConfig) -> RouteCatalogState {
         switch config {
         case .absent, .malformed:
-            self.state = .unconfigured(config.summary)
+            return .unconfigured(config.summary)
         case .resolved:
-            self.state = .loading
+            return .loading
         // The route catalogue is `GET /v1/providers` — an HTTP surface the
         // embedded core does not have. The v1 bridge exports `setProvider` and
         // NO enumeration (`zeus_core_bridge.swift:492-547`), so there is no
@@ -326,7 +343,7 @@ final class RouteCatalogStore: ObservableObject {
         // rather than `config.summary`, so the reader is told what is missing
         // instead of where the core is.
         case .local:
-            self.state = .unconfigured("local core enumerates no providers yet")
+            return .unconfigured("local core enumerates no providers yet")
         }
     }
 

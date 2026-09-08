@@ -356,6 +356,7 @@ final class G0EditorTests: XCTestCase {
             isPresented: .constant(true),
             transport: transport,
             credentials: StubCredentialProvider(),
+            onSaved: {},
             onToast: { _ in })
         // Aperture: @State values are not settable without a renderer, so
         // the path is exercised from its INIT-SEEDED state — which is the
@@ -392,6 +393,7 @@ final class G0EditorTests: XCTestCase {
             transport: transport,
             credentials: StubCredentialProvider(),
             seedToken: seedToken,
+            onSaved: {},
             onToast: { _ in })
     }
 
@@ -463,6 +465,7 @@ final class G0EditorTests: XCTestCase {
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             credentials: StubCredentialProvider(),
+            onSaved: {},
             onToast: { toasts.append($0) })
         // SAVE with an EMPTY token field: the stored credential survives.
         // (The button body is not directly callable; the contract it holds
@@ -485,6 +488,7 @@ final class G0EditorTests: XCTestCase {
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             credentials: StubCredentialProvider(),
+            onSaved: {},
             onToast: { _ in })
         var seeded: String?
         var matched = 0
@@ -510,6 +514,7 @@ final class G0EditorTests: XCTestCase {
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             credentials: StubCredentialProvider(),
+            onSaved: {},
             onToast: { _ in })
         var malformedMatched = 0
         for child in Mirror(reflecting: malformed).children where child.label == "_url" {
@@ -569,6 +574,7 @@ final class G0EditorTests: XCTestCase {
             isPresented: .constant(true),
             transport: RecordingTransport(),
             credentials: StubCredentialProvider(),
+            onSaved: {},
             onToast: { _ in })
 
         let outcome = sheet.commitURL()
@@ -630,6 +636,7 @@ final class G0EditorTests: XCTestCase {
             isPresented: .constant(true),
             transport: RecordingTransport(),
             credentials: StubCredentialProvider(),
+            onSaved: {},
             onToast: { _ in })
 
         XCTAssertEqual(sheet.commitURL(), .noCommission)
@@ -657,6 +664,7 @@ final class G0EditorTests: XCTestCase {
             isPresented: .constant(true),
             transport: RecordingTransport(),
             credentials: StubCredentialProvider(),
+            onSaved: {},
             onToast: { _ in })
 
         XCTAssertEqual(sheet.commitURL(), .cleared)
@@ -665,15 +673,18 @@ final class G0EditorTests: XCTestCase {
     }
 
     /// The receipt is total and says what the SAVE did — both halves, and
-    /// never a half it did not perform. `APPLIES ON NEXT LAUNCH` is true
-    /// only while the engine re-resolves at launch only (c2 retires it).
+    /// never a half it did not perform. `LIVE NOW` replaced
+    /// `APPLIES ON NEXT LAUNCH` at c2: the four byte-sending surfaces observe
+    /// `GatewayConfigSource` and re-derive on SAVE, so the old caption became
+    /// the lie its own leg promised to catch. `GatewayConfigSourceTests`
+    /// holds the inverted census.
     func testTheSaveReceiptNamesEveryHalfItActuallyPerformed() {
         XCTAssertEqual(GatewayEditorSheet.saveToast(savedToken: true, url: .wrote),
-                       "TOKEN SAVED · URL SAVED — APPLIES ON NEXT LAUNCH")
+                       "TOKEN SAVED · URL SAVED — LIVE NOW")
         XCTAssertEqual(GatewayEditorSheet.saveToast(savedToken: false, url: .wrote),
-                       "URL SAVED — APPLIES ON NEXT LAUNCH")
+                       "URL SAVED — LIVE NOW")
         XCTAssertEqual(GatewayEditorSheet.saveToast(savedToken: false, url: .cleared),
-                       "URL CLEARED — APPLIES ON NEXT LAUNCH")
+                       "URL CLEARED — LIVE NOW")
         // A token-only save must not claim a URL write.
         XCTAssertFalse(GatewayEditorSheet.saveToast(savedToken: true, url: .noCommission)
                         .contains("URL SAVED"))

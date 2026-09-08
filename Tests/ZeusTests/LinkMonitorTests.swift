@@ -87,14 +87,14 @@ final class LinkMonitorTests: XCTestCase {
     func testUnconfiguredStartsUnconfiguredNotProbing() {
         for config in [GatewayConfig.absent,
                        .malformed(raw: "ftp://x", reason: .unsupportedScheme)] {
-            let monitor = LinkMonitor(config: config,
+            let monitor = LinkMonitor(source: .fixed(config),
                                       probe: ScriptedProbe(.linked(host: "h", ms: 1)))
             XCTAssertEqual(monitor.state, .unconfigured)
         }
     }
 
     func testResolvedStartsProbing() {
-        let monitor = LinkMonitor(config: endpoint(),
+        let monitor = LinkMonitor(source: .fixed(endpoint()),
                                   probe: ScriptedProbe(.linked(host: "h", ms: 1)))
         XCTAssertEqual(monitor.state, .probing)
     }
@@ -104,7 +104,7 @@ final class LinkMonitorTests: XCTestCase {
     /// have.
     func testUnconfiguredNeverProbes() async {
         let probe = ScriptedProbe(.linked(host: "h", ms: 1))
-        let monitor = LinkMonitor(config: .absent, probe: probe)
+        let monitor = LinkMonitor(source: .fixed(.absent), probe: probe)
         await monitor.probeOnce()
         XCTAssertEqual(probe.calls, 0)
         XCTAssertEqual(monitor.state, .unconfigured)
@@ -114,7 +114,7 @@ final class LinkMonitorTests: XCTestCase {
 
     func testProbeVerdictReachesTheState() async {
         let probe = ScriptedProbe(.unreachable(host: "192.168.1.100", reason: "refused"))
-        let monitor = LinkMonitor(config: endpoint(), probe: probe)
+        let monitor = LinkMonitor(source: .fixed(endpoint()), probe: probe)
         await monitor.probeOnce()
 
         XCTAssertEqual(probe.calls, 1)                 // vacuity floor
@@ -124,7 +124,7 @@ final class LinkMonitorTests: XCTestCase {
     }
 
     func testLinkedVerdictCarriesHostAndLatency() async {
-        let monitor = LinkMonitor(config: endpoint(),
+        let monitor = LinkMonitor(source: .fixed(endpoint()),
                                   probe: ScriptedProbe(.linked(host: "192.168.1.100", ms: 7)))
         await monitor.probeOnce()
 
@@ -136,7 +136,7 @@ final class LinkMonitorTests: XCTestCase {
     /// interval and nothing in the UI would show it.
     func testStartIsIdempotent() async throws {
         let probe = ScriptedProbe(.linked(host: "h", ms: 1))
-        let monitor = LinkMonitor(config: endpoint(), probe: probe,
+        let monitor = LinkMonitor(source: .fixed(endpoint()), probe: probe,
                                   interval: .milliseconds(40))
         monitor.start()
         monitor.start()
@@ -153,7 +153,7 @@ final class LinkMonitorTests: XCTestCase {
 
     func testStopHaltsPolling() async throws {
         let probe = ScriptedProbe(.linked(host: "h", ms: 1))
-        let monitor = LinkMonitor(config: endpoint(), probe: probe,
+        let monitor = LinkMonitor(source: .fixed(endpoint()), probe: probe,
                                   interval: .milliseconds(20))
         monitor.start()
         try await Task.sleep(for: .milliseconds(60))
@@ -203,7 +203,7 @@ final class LinkMonitorTests: XCTestCase {
     /// defect exactly.
     func testSuspendInvalidatesTheVerdictNotJustThePolling() async {
         let probe = ScriptedProbe(.linked(host: "192.168.1.100", ms: 12))
-        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .seconds(60))
+        let monitor = LinkMonitor(source: .fixed(endpoint()), probe: probe, interval: .seconds(60))
 
         await monitor.probeOnce()
         // VACUITY FLOOR: without a real LINKED verdict first, the assertion
@@ -223,7 +223,7 @@ final class LinkMonitorTests: XCTestCase {
     /// freeze and eventually kill.
     func testSuspendStopsPolling() async throws {
         let probe = ScriptedProbe(.linked(host: "h", ms: 3))
-        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .milliseconds(20))
+        let monitor = LinkMonitor(source: .fixed(endpoint()), probe: probe, interval: .milliseconds(20))
 
         monitor.start()
         try await Task.sleep(for: .milliseconds(60))
@@ -259,7 +259,7 @@ final class LinkMonitorTests: XCTestCase {
     /// target. Downgrading it to `.probing` would tell the operator the app is
     /// looking for a gateway it has no address for.
     func testSuspendLeavesUnconfiguredAlone() {
-        let monitor = LinkMonitor(config: .absent, probe: ScriptedProbe(.probing))
+        let monitor = LinkMonitor(source: .fixed(.absent), probe: ScriptedProbe(.probing))
         XCTAssertEqual(monitor.state, .unconfigured)
 
         monitor.suspend()
@@ -272,7 +272,7 @@ final class LinkMonitorTests: XCTestCase {
     /// `suspend` opens is bounded by the first foreground probe.
     func testResumeProbesAndPublishesAFreshVerdict() async throws {
         let probe = ScriptedProbe(.linked(host: "192.168.1.100", ms: 7))
-        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .seconds(60))
+        let monitor = LinkMonitor(source: .fixed(endpoint()), probe: probe, interval: .seconds(60))
 
         monitor.suspend()
         XCTAssertFalse(monitor.state.isLinked, "not suspended — leg is vacuous")
@@ -289,7 +289,7 @@ final class LinkMonitorTests: XCTestCase {
     /// poll rate invisibly — the same defect `start()`'s idempotence guards.
     func testSuspendResumeDoesNotStackTwoPollLoops() async throws {
         let probe = ScriptedProbe(.linked(host: "h", ms: 1))
-        let monitor = LinkMonitor(config: endpoint(), probe: probe, interval: .milliseconds(40))
+        let monitor = LinkMonitor(source: .fixed(endpoint()), probe: probe, interval: .milliseconds(40))
 
         monitor.start()
         monitor.suspend()

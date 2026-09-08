@@ -109,9 +109,12 @@ struct RootView: View {
     /// green, and the leg that finally guards it reads this property.
     let store: CommissionStoring
 
-    /// The one resolution this view performs, kept so `content` reads a value
-    /// rather than re-resolving per render.
-    private let resolution: GatewayConfig.Resolution
+
+    /// THE current configuration, shared by the engine, the monitor, the
+    /// approvals queue and the route catalogue. `resolution` above is the
+    /// LAUNCH one and is now read only by label surfaces; this is the live
+    /// one. See `GatewayConfigSource`.
+    @StateObject private var configSource: GatewayConfigSource
 
     /// Push state, owned by `ZeusApp` and passed in — NOT constructed here.
     /// A registrar built by this view would be replaced whenever the view is
@@ -167,7 +170,6 @@ struct RootView: View {
     init(store: CommissionStoring, push: PushRegistrar) {
         let resolution = RootView.resolve(store: store)
         self.store = store
-        self.resolution = resolution
         self.push = push
         self.tokens = LaunchArgs.useInMemoryTokens
             ? InMemoryTokenStore()
@@ -180,16 +182,22 @@ struct RootView: View {
             ? StubCredentialProvider()
             : KeychainCredentialProvider()
         self.credentials = credentials
-        let config = resolution.config
+        // ONE source, four surfaces. The closure captures the SOURCE, not a
+        // `GatewayConfig` copy — `SessionEngine` already calls this factory
+        // per turn (`Session.swift:318`), so the freeze was never in the
+        // engine, it was here: a `let config` captured four times meant a URL
+        // saved mid-session was read at the next launch and not before.
+        let source = GatewayConfigSource(resolution)
+        _configSource = StateObject(wrappedValue: source)
         _session = StateObject(wrappedValue: SessionEngine(
             makeTransport: { box in
-                Zeus.makeTransport(for: config, sessionID: box, credentials: credentials)
+                Zeus.makeTransport(for: source.config, sessionID: box, credentials: credentials)
             }
         ))
-        _link = StateObject(wrappedValue: LinkMonitor(config: config))
-        _approvals = StateObject(wrappedValue: ApprovalsStore(config: config,
+        _link = StateObject(wrappedValue: LinkMonitor(source: source))
+        _approvals = StateObject(wrappedValue: ApprovalsStore(source: source,
                                                              credentials: credentials))
-        _routes = StateObject(wrappedValue: RouteCatalogStore(config: config,
+        _routes = StateObject(wrappedValue: RouteCatalogStore(source: source,
                                                              credentials: credentials))
     }
 
@@ -222,11 +230,12 @@ struct RootView: View {
             // receipt, and the decision outranks it.
             if let config = gatewayEditorConfig, gatewayEditor {
                 GatewayEditorSheet(config: config,
-                                   resolution: resolution,
+                                   resolution: configSource.resolution,
                                    tokens: tokens,
                                    store: store,
                                    isPresented: $gatewayEditor,
                                    credentials: credentials,
+                                   onSaved: { configSource.adopt(RootView.resolve(store: store)) },
                                    onToast: showToast)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(80)
@@ -321,7 +330,7 @@ struct RootView: View {
                          gatewayEditor = true
                      },
                      approvals: approvals,
-                     resolution: resolution)
+                     resolution: configSource.resolution)
         case .session:
             SessionView(
                 messages: session.messages,
@@ -331,7 +340,7 @@ struct RootView: View {
                 // answering. It is now the probe's verdict; the `remote`
                 // ternary the prototype had is subsumed by `LinkState`.
                 statusLine: Self.statusLine(link.state,
-                                            resolution: resolution,
+                                            resolution: configSource.resolution,
                                             credentials: credentials),
                 state: session.state,
                 // The gateway-named id, mirrored off the engine. The header
@@ -358,7 +367,7 @@ struct RootView: View {
                 // reason `voiceState` is: a `View` body cannot read the
                 // environment, and a config read in a body would re-run on
                 // every render. One read, one owner, rendered downstream.
-                disarmReason: resolution.config.disarmReason
+                disarmReason: configSource.config.disarmReason
             )
         case .nodes:
             NodesView(link: link.state, routes: routes, onToast: showToast,
@@ -366,7 +375,7 @@ struct RootView: View {
                           gatewayEditorConfig = config
                           gatewayEditor = true
                       },
-                      resolution: resolution)
+                      resolution: configSource.resolution)
         }
     }
 }

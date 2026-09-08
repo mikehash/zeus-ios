@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 // MARK: - the wire
 //
@@ -361,7 +362,13 @@ final class ApprovalsStore: ObservableObject {
     /// was dispatched — a POST that left the device is not an outcome.
     @Published var lastOutcome: String?
 
-    private let config: GatewayConfig
+    /// THE shared current config, observed. A stored `GatewayConfig` copy is
+    /// the launch-host freeze — see `GatewayConfigSource` for why reading it
+    /// per use is necessary and not sufficient (this store derives `state`
+    /// once at init, and that derivation is what a per-use read leaves stale).
+    private let source: GatewayConfigSource
+    private var config: GatewayConfig { source.config }
+    private var follow: AnyCancellable?
     private let service: ApprovalsServicing
 
     /// The ONE precedence, injected. Stored on the STORE (which has a
@@ -380,15 +387,28 @@ final class ApprovalsStore: ObservableObject {
     /// Keychain it answers `nil` to everything, so every "no credential was
     /// attached" leg passes on the empty store rather than on the wiring.
     /// The one live construction is `RootView.swift` (`Sources` census == 1).
-    init(config: GatewayConfig,
+    init(source: GatewayConfigSource,
          service: ApprovalsServicing = HTTPApprovalsService(),
          credentials: CredentialProviding) {
-        self.config = config
+        self.source = source
         self.service = service
         self.credentials = credentials
+        self.state = Self.state(for: source.config)
+        self.follow = source.$resolution
+            .dropFirst()
+            .sink { [weak self] next in
+                guard let self else { return }
+                self.state = Self.state(for: next.config)
+                Task { @MainActor in await self.load() }
+            }
+    }
+
+    /// The queue's state as a pure function of configuration. Extracted so
+    /// init and the change path derive it from ONE expression.
+    static func state(for config: GatewayConfig) -> ApprovalsState {
         switch config {
-        case .absent, .malformed: self.state = .unconfigured(config.summary)
-        case .resolved:           self.state = .loading
+        case .absent, .malformed: return .unconfigured(config.summary)
+        case .resolved:           return .loading
         // An approval is a request from an AGENT LOOP to run a tool. The
         // embedded core has no agent loop until zeus107's `automation` feature
         // gate lands, so `.local` cannot produce one — this is emptiness by
@@ -397,7 +417,7 @@ final class ApprovalsStore: ObservableObject {
         // Said in its own words rather than `config.summary`: the operator
         // needs "nothing can arrive here yet", not "the core is in-process".
         case .local:
-            self.state = .unconfigured("local core has no agent loop yet")
+            return .unconfigured("local core has no agent loop yet")
         }
     }
 

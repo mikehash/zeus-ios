@@ -366,7 +366,7 @@ final class EmbeddedTransportTests: XCTestCase {
     /// showing LINKING… for it would advertise a probe that never runs.
     @MainActor
     func testSuspendDoesNotDowngradeTheEmbeddedState() {
-        let monitor = LinkMonitor(config: .local(.ready), interval: .seconds(60))
+        let monitor = LinkMonitor(source: .fixed(.local(.ready)), interval: .seconds(60))
         XCTAssertEqual(monitor.state, .embedded)
         monitor.suspend()
         XCTAssertEqual(monitor.state, .embedded)
@@ -375,7 +375,7 @@ final class EmbeddedTransportTests: XCTestCase {
         // stale, so the assertion above is about the exemption and not about
         // a `suspend` that does nothing.
         let remote = LinkMonitor(
-            config: .resolved(.init(url: URL(string: "http://a.b")!, token: nil)),
+            source: .fixed(.resolved(.init(url: URL(string: "http://a.b")!, token: nil))),
             interval: .seconds(60))
         remote.suspend()
         XCTAssertEqual(remote.state, .probing)

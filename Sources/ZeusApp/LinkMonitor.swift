@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 /// Real link-state observation — the source `RootView:90` and `NodesView:34`
 /// did not have.
@@ -246,9 +247,21 @@ final class LinkMonitor: ObservableObject {
     @Published private(set) var state: LinkState
 
     private let probe: LinkProbe
-    private let config: GatewayConfig
+    /// THE shared current config. Not a `GatewayConfig` copy: a copy taken at
+    /// construction is the launch-host freeze this type used to hold, and the
+    /// storage census in `AccessibilityTests` asserts it is gone.
+    private let source: GatewayConfigSource
+    private var config: GatewayConfig { source.config }
     private let interval: Duration
     private var pollTask: Task<Void, Never>?
+    private var follow: AnyCancellable?
+
+    /// Whether the OWNER wants a poll running, as distinct from whether one
+    /// IS running. `start()` sets it before its guards, so an unconfigured
+    /// launch that later adopts a URL still restarts; `suspend()`/`stop()`
+    /// clear it, so a backgrounded app does not silently resume polling
+    /// because someone saved a URL.
+    private var wantsPolling = false
 
     /// Config is resolved ONCE at construction, not per poll. The environment
     /// cannot change under a running app, and re-resolving per poll would make
@@ -260,30 +273,65 @@ final class LinkMonitor: ObservableObject {
     /// `InMemoryCommissionStore` that `ZeusApp.swift` builds for capture and
     /// test launches, so a screenshot would photograph a config the seed
     /// never wrote. Required parameter, so the compiler enumerates the set.
-    init(config: GatewayConfig,
+    init(source: GatewayConfigSource,
          probe: LinkProbe = HTTPLinkProbe(),
          interval: Duration = .seconds(10)) {
-        self.config = config
+        self.source = source
         self.probe = probe
         self.interval = interval
         // The initial value is a fact about CONFIGURATION, which is known
         // synchronously — so an unconfigured build never shows LINKING…, a
         // state it could never leave.
+        self.state = Self.state(for: source.config)
+        // OBSERVE, do not merely read. Reading the source per use would move
+        // the REQUESTS and leave this label on the launch verdict, and the
+        // poll loop below binds its endpoint once — see the file header.
+        self.follow = source.$resolution
+            .dropFirst()
+            .sink { [weak self] next in
+                guard let self else { return }
+                Task { @MainActor in await self.adopt(next.config) }
+            }
+    }
+
+    /// The pill's state as a pure function of configuration — known
+    /// synchronously, so it is derivable at init AND re-derivable on change
+    /// from the same expression. Two switches would be two chances to move
+    /// one arm and not the other.
+    static func state(for config: GatewayConfig) -> LinkState {
         switch config {
-        case .resolved:                 self.state = .probing
-        case .absent, .malformed:       self.state = .unconfigured
+        case .resolved:                 return .probing
         // No poll loop opens for this arm (`start()` guards on `.resolved`),
         // so this is a TERMINAL state, not an initial one. That is correct:
         // an in-process core has nothing to probe, and the pill should never
         // move off it.
-        case .local:                    self.state = .embedded
+        case .local:                    return .embedded
+        case .absent, .malformed:       return .unconfigured
         }
+    }
+
+    /// Follow a new configuration: CANCEL the poll, re-derive the label, and
+    /// re-open the loop against the new endpoint.
+    ///
+    /// 🔴 The cancel is the load-bearing half. `start()` is idempotent
+    /// (`guard pollTask == nil`) and the running loop closed over its
+    /// endpoint ONCE, so calling `start()` again without stopping first is a
+    /// no-op that leaves the probe on the dead host — with a pill that says
+    /// LINKED, because the old host is very often still reachable. A leg on
+    /// `state` alone cannot see that; `testAdoptingANewURLMovesTheProbe`
+    /// asserts on the endpoint the probe was HANDED.
+    func adopt(_ next: GatewayConfig) async {
+        let resume = wantsPolling
+        await stop()
+        state = Self.state(for: next)
+        if resume { start() }
     }
 
     /// Idempotent. A second `start()` does not stack a second poll loop —
     /// `.task` can re-fire on view identity changes, and two loops would halve
     /// the effective interval invisibly.
     func start() {
+        wantsPolling = true
         guard pollTask == nil else { return }
         guard case .resolved(let endpoint) = config else { return }
 
@@ -308,6 +356,7 @@ final class LinkMonitor: ObservableObject {
     /// Sync call sites wrap in `Task { await monitor.stop() }`; `deinit`
     /// keeps plain `cancel()` — it asserts nothing and cannot await.
     func stop() async {
+        wantsPolling = false
         let task = pollTask
         pollTask = nil
         task?.cancel()
@@ -337,6 +386,7 @@ final class LinkMonitor: ObservableObject {
     /// The one in-flight probe it may leave behind is bounded (a single
     /// interval) and is asserted allowed in `testSuspendStopsPolling`.
     func suspend() {
+        wantsPolling = false
         pollTask?.cancel()
         pollTask = nil
         if case .unconfigured = state { return }

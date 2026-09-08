@@ -495,8 +495,14 @@ final class CopyRegisterTests: XCTestCase {
         XCTAssertGreaterThan(root.filter { $0.contains("resolution") }.count, 0,
                              "VOID: the RootView walk read nothing")
 
+        // The gate is the LAUNCH-FROZEN resolution property. c2 deleted it —
+        // `RootView` now holds a `GatewayConfigSource` the four surfaces
+        // observe — so this arm flips itself rather than waiting to be
+        // remembered. The needle is the STORED property, not the local in
+        // `init`: the local still exists (it seeds the source) and matching it
+        // would pin the caveat forever.
         let resolvedOnce = root.filter {
-            $0.contains("let resolution: GatewayConfig.Resolution")
+            $0.contains("private let resolution: GatewayConfig.Resolution")
         }.count
 
         let caveat = editor.filter { $0.contains("APPLIES ON NEXT LAUNCH") }.count
