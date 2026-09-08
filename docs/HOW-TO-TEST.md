@@ -62,6 +62,23 @@ otherwise. It is not part of the normal edit-build-run loop — the generated
 Swift bindings (`Sources/ZeusCoreFFI/`) *are* checked in, so ordinary UI work
 needs no Rust toolchain at all. Only linking needs the archive.
 
+**A note on fresh checkouts and verification trees.** Two facts this repo has
+paid for once already:
+
+1. **Put worktrees under `$HOME`, never `/tmp`.** Xcode's build-description
+   resolution does not survive macOS's `/tmp → /private/tmp` symlink: the same
+   tree at `/tmp/…` fails with an error string that reads like three different
+   problems (missing SDK, broken project, bad path), while the identical tree
+   under `$HOME` builds clean. The probe that collapsed the three worlds into
+   one cause was literally the same tree moved to a different path.
+2. **`Frameworks/ZeusCore.xcframework` is gitignored by design** (see the
+   first paragraph of this path). On a fresh checkout — or a fresh verification
+   worktree — **copy the archive in** from another machine/checkout, or run
+   `./scripts/build-xcframework.sh` (~5 min), **before** `xcodegen generate`.
+   Generating the project without the archive present produces a project that
+   builds partway and dies at LINK with a missing-framework error, which does
+   not name the missing step.
+
 **What you see:** Xcode boots an iPhone simulator and the app launches into the
 ZEUS tab. Tabs at the bottom, live orb at the top.
 
