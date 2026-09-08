@@ -48,11 +48,20 @@ struct GatewayEditorSheet: View {
     /// typing), `onAppear` runs after first paint (a frame with an empty
     /// field), and an init assignment runs exactly once, before the field
     /// exists to disagree with it.
+    /// `seedToken` exists for ONE reason and it is stated so nobody deletes
+    /// it as unused: `@State` cannot be written from outside a renderer (the
+    /// write lands in a nil `_location` and is dropped), so the only way a
+    /// leg can exercise the TYPED-token arm of the verdict is to seed the
+    /// field at construction — the same `State(initialValue:)` seam the URL
+    /// already uses at the line below. Production passes nothing; the
+    /// default keeps the one production call site (`RootView.swift:172`)
+    /// unchanged and keeps the field empty on every real launch.
     init(config: GatewayConfig,
          resolution: GatewayConfig.Resolution,
          tokens: GatewayTokenStoring,
          isPresented: Binding<Bool>,
          transport: PreflightTransporting = URLSessionPreflight(),
+         seedToken: String = "",
          onToast: @escaping (String) -> Void) {
         self.config = config
         self.resolution = resolution
@@ -61,6 +70,7 @@ struct GatewayEditorSheet: View {
         self.transport = transport
         self.onToast = onToast
         _url = State(initialValue: Self.seedURL(for: config))
+        _newToken = State(initialValue: seedToken)
     }
 
     /// The four preflight outcomes. TRANSPORT FAILURE IS ITS OWN STATE: a
@@ -249,14 +259,37 @@ struct GatewayEditorSheet: View {
     /// of its body — a private-in-view closure is unobservable in-process,
     /// a method on the struct is not.
     func runPreflight() {
-        let host = Self.hostKey(for: config)
-        let hadToken = tokens.hasToken(host: host)
         Task { @MainActor in
-            let reply = await transport.status(url: urlOrSeed, bearer: newToken.isEmpty ? nil : newToken)
-            preflight = Self.preflightState(httpStatus: reply.httpStatus,
-                                            hadToken: hadToken || !newToken.isEmpty,
-                                            transportFailed: reply.transportFailed)
+            preflight = await computePreflight()
         }
+    }
+
+    /// The verdict, computed and RETURNED rather than only assigned.
+    ///
+    /// Why a returning method exists at all: `preflight` is `@State`, and a
+    /// `@State` write outside a renderer lands in a nil `_location` and is
+    /// DROPPED — so a leg that called `runPreflight()` and then dug the
+    /// property could never see the verdict, and would report the initial
+    /// nil as the outcome. The state a test can observe must be the value
+    /// the production path computes, not a copy of its arithmetic.
+    ///
+    /// ONE binding, read twice: the value handed to the transport IS the
+    /// value the verdict is computed from. `hadToken` means "the request
+    /// carried a bearer" — never "a credential exists somewhere".
+    ///
+    /// The defect this shape retires: `hadToken` was taken from
+    /// `tokens.hasToken(host:)`, so after any relaunch (the field starts
+    /// empty and is never seeded — the secret is not read back out of the
+    /// store, by contract) a 401 rendered TOKEN REJECTED for a credential
+    /// that was never in the request, telling the operator to destroy a
+    /// working token. The store answers a DIFFERENT question than the one
+    /// the verdict asks, and the two coincide only while the field is full.
+    func computePreflight() async -> PreflightState {
+        let bearer: String? = newToken.isEmpty ? nil : newToken
+        let reply = await transport.status(url: urlOrSeed, bearer: bearer)
+        return Self.preflightState(httpStatus: reply.httpStatus,
+                                   hadToken: bearer != nil,
+                                   transportFailed: reply.transportFailed)
     }
 
     private var saveButton: some View {

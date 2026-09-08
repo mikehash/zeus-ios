@@ -368,6 +368,81 @@ final class G0EditorTests: XCTestCase {
         XCTAssertNil(transport.askedBearer)
     }
 
+    // MARK: - ③c(a): the verdict names what the REQUEST carried
+
+    /// Builds a sheet whose store may already hold a token while the field
+    /// is empty — the post-relaunch state, which is the ONLY state in which
+    /// the store-derived and request-derived verdicts differ.
+    @MainActor
+    private func relaunchSheet(storeHasToken: Bool,
+                               reply: (httpStatus: Int?, transportFailed: Bool),
+                               transport: RecordingTransport,
+                               seedToken: String = "") -> GatewayEditorSheet {
+        let tokens = InMemoryTokenStore()
+        if storeHasToken { tokens.save(token: "stored-from-a-previous-run", host: "zeus.example.com") }
+        transport.reply = reply
+        return GatewayEditorSheet(
+            config: .resolved(GatewayConfig.Endpoint(url: URL(string: "https://zeus.example.com")!, token: nil)),
+            resolution: GatewayConfig.Resolution(config: .absent, source: .unset),
+            tokens: tokens,
+            isPresented: .constant(true),
+            transport: transport,
+            seedToken: seedToken,
+            onToast: { _ in })
+    }
+
+    /// STORE HAS A TOKEN + FIELD EMPTY + 401 ⇒ NO TOKEN, because the
+    /// recorded request carried NO bearer. The verdict is a statement about
+    /// the request, and the recording transport is what makes the two
+    /// readings distinguishable: a leg that asserted only the verdict would
+    /// pass under either derivation whenever they happened to agree.
+    @MainActor
+    func testRelaunchWithAStoredTokenAndAnEmptyFieldNeverAccusesTheCredential() async {
+        let transport = RecordingTransport()
+        let sheet = relaunchSheet(storeHasToken: true, reply: (401, false), transport: transport)
+        let verdict = await sheet.computePreflight()
+
+        // POS on the recorder: the path reached the transport at all. Without
+        // this, `askedBearer == nil` is satisfied by a call that never happened.
+        XCTAssertEqual(transport.askedURL, "https://zeus.example.com",
+                       "VOID: the transport was never called — the bearer reading is uninformative")
+        XCTAssertNil(transport.askedBearer,
+                     "the field was empty, so the request must carry no bearer")
+        XCTAssertEqual(verdict, .noTokenBlocked,
+                       "the request carried nothing; REJECTED would tell the operator to destroy a working token")
+        XCTAssertNotEqual(verdict, .tokenRejected)
+    }
+
+    /// STORE EMPTY + FIELD EMPTY + 401 ⇒ NO TOKEN. The companion arm: the
+    /// two derivations AGREE here, which is why this leg alone cannot tell
+    /// them apart and the leg above is the discriminating one.
+    @MainActor
+    func testEmptyStoreAndEmptyFieldWithFourOhOneIsNoToken() async {
+        let transport = RecordingTransport()
+        let sheet = relaunchSheet(storeHasToken: false, reply: (401, false), transport: transport)
+        let verdict = await sheet.computePreflight()
+        XCTAssertEqual(transport.askedURL, "https://zeus.example.com",
+                       "VOID: the transport was never called")
+        XCTAssertNil(transport.askedBearer)
+        XCTAssertEqual(verdict, .noTokenBlocked)
+    }
+
+    /// The positive arm, so REJECTED is not simply unreachable: a typed
+    /// token that the gateway refuses IS the operator's cue to replace it.
+    /// Without this leg, `hadToken: false` hardcoded would pass both legs
+    /// above — an assertion that a verdict never fires is satisfied by
+    /// deleting the verdict.
+    @MainActor
+    func testATypedTokenRefusedByTheGatewayIsRejected() async {
+        let transport = RecordingTransport()
+        let sheet = relaunchSheet(storeHasToken: false, reply: (401, false),
+                                  transport: transport, seedToken: "typed-now")
+        let verdict = await sheet.computePreflight()
+        XCTAssertEqual(transport.askedBearer, "typed-now",
+                       "VOID: the typed credential never reached the request")
+        XCTAssertEqual(verdict, .tokenRejected)
+    }
+
     /// SAVE writes ONLY what it performed. With a typed token and a valid
     /// host key, the store receives the write; the toast contract (one
     /// string) is asserted for content in the button-path leg above — this
