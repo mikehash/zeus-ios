@@ -184,6 +184,42 @@ xcodegen generate --quiet >/tmp/zeus-xcodegen.log 2>&1 || rc=$?
 [ "$rc" -eq 0 ] || { cat /tmp/zeus-xcodegen.log >&2; die_instrument "xcodegen generate rc=$rc"; }
 [ -d "$REPO/Zeus.xcodeproj" ] || die_instrument "xcodegen rc=0 but Zeus.xcodeproj absent — regeneration is a claim, this is the check"
 
+# ── 3b. VERSION RESOLUTION ─────────────────────────────────────────────────
+#
+# TWO NUMBERS, TWO SOURCES, NEITHER OF THEM A LITERAL IN A PLIST.
+#
+#   CURRENT_PROJECT_VERSION  = git rev-list --count HEAD
+#       The build number App Store Connect uses to order uploads. It must
+#       INCREASE on every upload or the upload is rejected. Commit count is
+#       monotonic by construction on a branch that only grows — no file to
+#       forget to bump, no state outside the repo.
+#
+#       APERTURE: it is monotonic PER LINEAR HISTORY. A rebase that drops
+#       commits, or an upload cut from a shorter branch, can produce a count
+#       that has already been used. That is a real limit and it is stated
+#       here rather than discovered at the rejection.
+#
+#   MARKETING_VERSION        = contents of the tracked VERSION file
+#       The human-facing "1.0.0". ONE place, tracked, reviewable in a diff.
+#       Not a tag: this repo has 0 tags, so a tag-derived value would resolve
+#       empty on every box today.
+#
+# Both are passed to `xcodebuild archive` on the command line, which OUTRANKS
+# the defaults in project.yml. The generated Info.plist reads them through
+# $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION).
+VERSION_FILE="$REPO/VERSION"
+[ -f "$VERSION_FILE" ] || die_instrument "VERSION file absent at $VERSION_FILE — MARKETING_VERSION has no source"
+MARKETING_VERSION="$(tr -d ' \t\r\n' < "$VERSION_FILE")"
+[ -n "$MARKETING_VERSION" ] || die_instrument "VERSION file is empty — MARKETING_VERSION resolved to nothing. A blank version string builds a bundle App Store Connect will not accept."
+
+rc=0
+BUILD_NUMBER="$(git -C "$REPO" rev-list --count HEAD)" || rc=$?
+[ "$rc" -eq 0 ] || die_instrument "git rev-list --count HEAD rc=$rc — CURRENT_PROJECT_VERSION unmeasured"
+[ -n "$BUILD_NUMBER" ] || die_instrument "git rev-list --count HEAD produced an empty string — CURRENT_PROJECT_VERSION resolved to nothing"
+printf '%s' "$BUILD_NUMBER" | grep -Eq '^[0-9]+$' || die_instrument "CURRENT_PROJECT_VERSION='$BUILD_NUMBER' is not a positive integer"
+
+echo "  version     : $MARKETING_VERSION ($BUILD_NUMBER)   [VERSION file / commit count]"
+
 # ── 4. ARCHIVE ─────────────────────────────────────────────────────────────
 #
 # `generic/platform=iOS` — NOT a named device and NOT a simulator. A named
@@ -203,6 +239,8 @@ xcodebuild archive \
   -allowProvisioningUpdates \
   DEVELOPMENT_TEAM="$ZEUS_TEAM_ID" \
   CODE_SIGN_STYLE=Automatic \
+  MARKETING_VERSION="$MARKETING_VERSION" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   >/tmp/zeus-archive.log 2>&1 || rc=$?
 
 if [ "$rc" -ne 0 ]; then

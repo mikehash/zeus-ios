@@ -47,6 +47,24 @@ targets:
         # "1" is honest about what was built. It is one line to reverse the
         # day someone lays out a split view. iPad remains a product question
         # for merakizzz; this is the default until he answers.
+        # VERSION IS A BUILD SETTING, NOT A PLIST LITERAL, AND THE PLIST READS
+        # IT BACK THROUGH $(...) SUBSTITUTION. Before this, the generated
+        # Info.plist carried hardcoded `1.0` / `1` — xcodegen defaults sitting
+        # in a file whose own comment says the properties block is
+        # authoritative. A second TestFlight upload with build number `1` is
+        # REJECTED by App Store Connect, and nothing in the tree would have
+        # said why.
+        #
+        # These two values are DEFAULTS FOR A LOCAL BUILD ONLY.
+        # `scripts/build-device.sh` overrides both on the xcodebuild command
+        # line: CURRENT_PROJECT_VERSION from `git rev-list --count HEAD`
+        # (monotonic by construction — it cannot go backwards while history
+        # only grows) and MARKETING_VERSION from the tracked `VERSION` file,
+        # refusing with a VOID if either resolves empty. The values here exist
+        # so that `xcodebuild` from Xcode.app still produces a well-formed
+        # bundle; they are not the shipping numbers.
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
         TARGETED_DEVICE_FAMILY: "1"
     entitlements:
       # POINTS AT a tracked, hand-written file — it is deliberately NOT an
@@ -72,6 +90,15 @@ targets:
         # from the same tree.
         UILaunchScreen:
           UIColorName: LaunchBackground
+        # READ THE BUILD SETTINGS ABOVE — do not restate a literal here.
+        # `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` are expanded by
+        # the Info.plist preprocessor at build time, so the ONE place a version
+        # is decided is the settings block (overridden on the command line by
+        # build-device.sh). The leg for this is a `PlistBuddy -c Print` on the
+        # plist INSIDE the built .app — the tracked plist is the MUT, and it is
+        # generated whole from this block on every `xcodegen generate`.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Zeus
         # PORTRAIT ONLY, AND THE APP HAS NEVER SAID OTHERWISE IN CODE.
         # Measured at cc494a5: `orientation` is 0 hits across Sources and
