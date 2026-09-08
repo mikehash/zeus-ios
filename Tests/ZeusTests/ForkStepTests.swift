@@ -273,4 +273,43 @@ final class ForkStepTests: XCTestCase {
                         .allSatisfy { !$0.contains("=") },
                       "onSend must have no default")
     }
+
+    /// (b) — the same rule one level up. A memberwise default on
+    /// `disarmReason` lets the next `SessionView(` omit readiness and render
+    /// a live composer over an unarmed core: the defect the parameter exists
+    /// to close, re-entering through omission rather than through logic.
+    func testSessionViewDisarmReasonHasNoDefault() throws {
+        let code = codeLines(try source("SessionView.swift"))
+        let decls = code.filter { $0.contains("var disarmReason:") }
+        XCTAssertEqual(decls.count, 1, "POS control: the property is declared in this file")
+        XCTAssertTrue(decls.allSatisfy { !$0.contains("=") },
+                      "disarmReason must have no memberwise default")
+    }
+
+    /// ③'s repair button. Asserts the LABEL and the DESTINATION together:
+    /// the label alone passes on a control that navigates nowhere, and the
+    /// destination alone passes on a button that says something else. The
+    /// point of this affordance is that the words and the effect are the
+    /// same thing — a repair naming a fix its own slot can perform.
+    func testDoneStepRepairButtonNamesTheStepItActuallyReturnsTo() throws {
+        let code = codeLines(try source("Commissioning.swift"))
+        let hits = code.filter { $0.contains("SET A PROVIDER") }
+        XCTAssertEqual(hits.count, 1, "exactly one repair control")
+        XCTAssertTrue(hits[0].contains("step = .routes"),
+                      "the repair must act in its slot: \(hits[0])")
+        XCTAssertEqual(code.filter { $0.contains("if commission.provider == nil") }.count, 1,
+                       "gated on the RECORD, the only fact this step owns")
+    }
+
+    /// The vacuity assert the leg above cannot make about itself: the button
+    /// is CONDITIONAL. A control rendered unconditionally passes every needle
+    /// above while telling a fully-commissioned operator to go set a provider
+    /// they already set.
+    func testRepairButtonIsWithheldWhenTheRecordHasAProvider() throws {
+        var withProvider = Commission()
+        withProvider.recordRoutesChoice(providerID: "anthropic", model: "m")
+        XCTAssertNotNil(withProvider.provider)
+        XCTAssertNil(Commission().provider,
+                     "a fresh record has no provider; the two arms must differ")
+    }
 }

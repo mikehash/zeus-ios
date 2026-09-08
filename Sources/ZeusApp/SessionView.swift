@@ -73,7 +73,12 @@ struct SessionView: View {
     /// (`BridgeError::NoProvider`), but discovering a configuration fact as a
     /// failed message in the transcript teaches the operator that the app is
     /// broken rather than that the setup is unfinished.
-    var disarmReason: String? = nil
+    /// NO DEFAULT, for the reason stated at `headerAccessibilityLabel`, one
+    /// level up: a memberwise default lets the next call site omit readiness
+    /// and silently render a live composer over an unarmed core. The sole
+    /// production caller (`RootView:399`) passes it today; the `= nil` was a
+    /// hole waiting for a second caller, not a convenience anyone used.
+    var disarmReason: String?
 
     // DECLARED LAST, and that is load-bearing: Swift's memberwise init fixes
     // argument order to declaration order, so this property's position in the
@@ -274,6 +279,16 @@ struct SessionView: View {
     /// topology before reaching the one fact that matters. The visual header
     /// keeps them because the eye takes a pill in parallel with the text; a
     /// voice is serial and pays for every word.
+    ///
+    /// THE COST, AND ITS TRIGGER — recorded so the next author inherits the
+    /// condition rather than the conclusion. Replacing the composition drops
+    /// the session id from the spoken label. That is free TODAY because this
+    /// screen shows one session and there is nothing to disambiguate it from.
+    /// The moment a build puts two or more sessions in one navigable list,
+    /// the unarmed labels of all of them are identical by ear — four phases
+    /// times N sessions collapsing onto one sentence — and the suffix form
+    /// (`"\(Self.unarmedSpokenLabel) \(title)."`) comes back. The trigger is
+    /// a second session reachable from a list, not a redesign.
     static let unarmedSpokenLabel = "Agent unarmed. Set a provider in Routes."
 
     static func headerAccessibilityLabel(sessionID: String?,

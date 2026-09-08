@@ -739,6 +739,26 @@ struct CommissioningView: View {
                     narrator.stop()
                     onComplete(commission)
                 }
+
+                // THE REPAIR ACTS IN ITS OWN SLOT. A label naming a fix the
+                // reader cannot perform from where they are standing is the
+                // defect this app retires elsewhere (`no provider` in the
+                // footer says the state and nothing else). Here the slot CAN
+                // act: the tap returns to `.routes`, which is the step that
+                // sets the provider, so the words and the effect are the
+                // same thing.
+                //
+                // Branches on the RECORD (`provider == nil`), NOT on composed
+                // readiness — and that is not the proxy defect ② retired,
+                // because this control makes no readiness claim. The core is
+                // not armed at this step (`CoreArming.arm` has one production
+                // caller, `RootView:211`, reached only after `onComplete`
+                // hands the record over at :740), so a readiness fact does
+                // not exist anywhere in the process yet. "No provider on the
+                // record" is a fact this screen owns.
+                if commission.provider == nil {
+                    QuietButton("SET A PROVIDER") { step = .routes }
+                }
             }
         }
     }
