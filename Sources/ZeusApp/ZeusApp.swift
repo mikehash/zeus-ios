@@ -93,9 +93,14 @@ struct ZeusApp: App {
                     // constructed by UIKit and cannot reach the @StateObject.
                     .onAppear { pushDelegate.registrar = push }
             } else {
-                CommissioningView { result in
-                    withAnimation(.easeInOut(duration: 0.45)) { state.commission(result) }
-                }
+                CommissioningView(
+                    onComplete: { result in
+                        withAnimation(.easeInOut(duration: 0.45)) { state.commission(result) }
+                    },
+                    keys: LaunchArgs.useInMemoryTokens
+                        ? InMemoryProviderKeyStore()
+                        : ProviderKeyStore()
+                )
             }
         }
     }

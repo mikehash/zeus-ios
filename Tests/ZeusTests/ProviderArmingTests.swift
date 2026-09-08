@@ -275,7 +275,7 @@ final class ProviderArmingTests: XCTestCase {
             .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") }
 
         // POS control, same invocation: a call form known present.
-        XCTAssertEqual(lines.filter { $0.contains("armedResolution(store: store)") }.count, 2,
+        XCTAssertEqual(lines.filter { $0.contains("armedResolution(store: store, keys: keys)") }.count, 2,
                        "VOID or drift: expected exactly two entry points (init + onSaved) into the armed helper")
 
         // The bare resolver may appear ONLY inside the helper — one call, and

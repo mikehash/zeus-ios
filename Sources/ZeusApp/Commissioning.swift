@@ -395,6 +395,12 @@ struct CommissioningView: View {
     /// Called once, on leaving `done`. The parent owns what happens next.
     let onComplete: (Commission) -> Void
 
+    /// Where a typed provider key lands. NO DEFAULT, for the reason every
+    /// other seam on this flow has none: a default lets a future call site
+    /// omit the store and write the operator's secret into a stand-in that
+    /// forgets it, which reads as "the key did not save" one screen later.
+    let keys: ProviderKeyStoring
+
     @StateObject private var narrator = Narrator()
     /// Seeded from `-zeusStep` in DEBUG only; `.welcome` otherwise.
     @State private var step: CommissioningStep = LaunchArgs.initialStep
@@ -441,6 +447,12 @@ struct CommissioningView: View {
     /// it is not collectable until the provider-scoped keychain lands, and the
     /// screen shows those as two states rather than averaging them into one.
     @State private var modelText: String = ""
+
+    /// The key the operator is typing, held in the view and NEVER in the
+    /// record. `Commission` rides in `UserDefaults` precisely because it
+    /// carries no secret (`CommissionStore.swift` docstring); this string is
+    /// written to the Keychain by CONTINUE and to nothing else.
+    @State private var keyText: String = ""
 
     /// Set once per appearance of ROUTES, from the core's own catalog.
     @State private var providerRows: [ProviderRow] = []
@@ -811,6 +823,14 @@ struct CommissioningView: View {
                             copy: row.shape.rowCopy,
                             selected: row.id == providerPick
                         ) {
+                            // A key typed for one provider is not a key for
+                            // another: switching rows clears the field, and the
+                            // OLD provider's stored key is removed so a
+                            // half-finished choice leaves no orphan secret.
+                            if let previous = providerPick, previous != row.id {
+                                keyText = ""
+                                keys.removeProviderKey(for: previous)
+                            }
                             providerPick = row.id
                             commission.route = .byok
                             modelText = CoreArming.firstModel(
@@ -845,7 +865,7 @@ struct CommissioningView: View {
                 .accessibilityLabel("Model for \(selected.label)")
 
                 if case .key = selected.shape {
-                    disabledKeyField(for: selected)
+                    keyField(for: selected)
                 }
                 if case let .unsupported(reason) = selected.shape {
                     Text("\(selected.label.uppercased()) CANNOT BE SET FROM THIS SCREEN — \(reason.uppercased())")
@@ -877,6 +897,12 @@ struct CommissioningView: View {
                 // operator. `Commission.provider` is `String?` and nil means
                 // nobody chose; nothing in this file names a provider now.
                 commission.recordRoutesChoice(providerID: id, model: typed)
+                // THE SECRET GOES TO THE KEYCHAIN, NOT TO THE RECORD. The
+                // write is here and only here, after the record write, so a
+                // key can never be stored for a provider the flow did not
+                // commit to.
+                let secret = keyText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !secret.isEmpty { keys.setProviderKey(secret, for: id) }
                 step = .nodes
             }
             .disabled(!Self.routesCTAEnabled(providerPick: providerPick, modelText: modelText))
@@ -900,31 +926,38 @@ struct CommissioningView: View {
         return !modelText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// The key field, present and inert, saying why.
-    private func disabledKeyField(for row: ProviderRow) -> some View {
+    /// The key field. Collectable now; it was inert until the provider-scoped
+    /// Keychain landed, and the copy said so.
+    ///
+    /// `SecureField` rather than `TextField`: the value is a secret, and the
+    /// difference is not cosmetic — an unmasked field is readable over a
+    /// shoulder and is offered to the keyboard's learning cache.
+    private func keyField(for row: ProviderRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("API KEY")
                 .font(Theme.mono(9))
                 .tracking(1.4)
-                .foregroundStyle(Theme.unarmedTint)
-            Text("KEY ENTRY ARRIVES WITH THE ON-PHONE KEY STORE")
-                .font(Theme.mono(8.5))
-                .tracking(1.0)
-                .foregroundStyle(Theme.unarmedTint)
+                .foregroundStyle(Theme.w(0.35))
+            SecureField("", text: $keyText, prompt:
+                Text("PASTE KEY").font(Theme.mono(12)).foregroundStyle(Theme.w(0.2))
+            )
+            .font(Theme.mono(13))
+            .foregroundStyle(Theme.text)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
-        .frame(height: 46)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: Theme.corner)
-                .fill(Theme.w(0.02))
+                .fill(Theme.w(0.04))
                 .overlay(
                     RoundedRectangle(cornerRadius: Theme.corner)
-                        .stroke(Theme.w(0.06), lineWidth: 1)
+                        .stroke(Theme.w(0.10), lineWidth: 1)
                 )
         )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("API key for \(row.label). Not yet enterable — key entry arrives with the on-phone key store.")
+        .accessibilityLabel("API key for \(row.label)")
     }
 
     private var backdrop: some View {

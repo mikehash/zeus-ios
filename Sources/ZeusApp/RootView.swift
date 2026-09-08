@@ -103,6 +103,7 @@ struct RootView: View {
     /// the same switch the commission seed uses, so capture and test launches
     /// take the deterministic branch without a second construction site.
     private let tokens: GatewayTokenStoring
+    private let keys: ProviderKeyStoring
 
     /// The one credential provider. See `Credential.swift`.
     private let credentials: CredentialProviding
@@ -200,7 +201,18 @@ struct RootView: View {
     /// ROUTES swaps the arm and constructs a fresh `RootView` — this `init`
     /// runs again. `recordRoutesChoice` production callers = 2, and both are
     /// upstream of this helper. A third call site would be unreachable code.
-    static func armedResolution(store: CommissionStoring) -> GatewayConfig.Resolution {
+    ///
+    /// ## Why `keys` is a parameter and not read here
+    ///
+    /// `providerKey: nil` sat at this call site from the day `CoreArming.arm`
+    /// gained the argument, which meant every KEYED provider armed to
+    /// `NO KEY FOR <label>` no matter what the operator had entered — the
+    /// keyless arm (Ollama) was the only one that could ever arm. The key
+    /// store is constructed by `init` ABOVE this call precisely so the `nil`
+    /// cannot come back: a future edit that re-arms without a key has to
+    /// delete a parameter, not quietly leave a literal in place.
+    static func armedResolution(store: CommissionStoring,
+                                keys: ProviderKeyStoring) -> GatewayConfig.Resolution {
         let core = try? EmbeddedCore.shared.get()
         let seeded = LaunchArgs.seededProvider
         var commissionForArming = store.load()
@@ -208,9 +220,13 @@ struct RootView: View {
             commissionForArming?.recordRoutesChoice(providerID: seeded.id,
                                                     model: seeded.model)
         }
+        // The key is read for the provider ON THE RECORD, which is the one
+        // about to be armed — not for the picker's current selection, which
+        // does not exist in this process yet.
+        let key = commissionForArming?.provider.flatMap { keys.providerKey(for: $0) }
         CoreArming.arm(commission: commissionForArming,
                        core: core,
-                       providerKey: nil,
+                       providerKey: key,
                        baseURL: seeded?.baseURL)
         return RootView.resolve(store: store)
             .withCoreReadiness(EmbeddedCoreArming(core: core))
@@ -232,9 +248,17 @@ struct RootView: View {
         // from here through `CoreArming.arm`, outside any `#if DEBUG`. The
         // DEBUG seam seeds the COMMISSION this call reads — it does not arm
         // the core itself, so the path a person launches is the path measured.
-        let resolution = RootView.armedResolution(store: store)
+        // CONSTRUCTED BEFORE THE ARM, and asserted so by a source-order leg:
+        // the arming call below reads this object, so building it after would
+        // be a compile error today and a silent `nil` key the moment someone
+        // "fixes" the order by making the parameter optional.
+        let keys: ProviderKeyStoring = LaunchArgs.useInMemoryTokens
+            ? InMemoryProviderKeyStore()
+            : ProviderKeyStore()
+        let resolution = RootView.armedResolution(store: store, keys: keys)
         self.store = store
         self.push = push
+        self.keys = keys
         self.tokens = LaunchArgs.useInMemoryTokens
             ? InMemoryTokenStore()
             : GatewayTokenStore()
@@ -299,7 +323,7 @@ struct RootView: View {
                                    store: store,
                                    isPresented: $gatewayEditor,
                                    credentials: credentials,
-                                   onSaved: { configSource.adopt(RootView.armedResolution(store: store)) },
+                                   onSaved: { configSource.adopt(RootView.armedResolution(store: store, keys: keys)) },
                                    onToast: showToast)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(80)

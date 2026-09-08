@@ -605,8 +605,14 @@ final class G0EditorTests: XCTestCase {
         XCTAssertGreaterThan(code.filter { $0.contains("GatewayEditorSheet(") }.count, 0,
                              "VOID: no editor construction found in RootView")
 
-        XCTAssertEqual(code.filter { $0.contains("store: store,") }.count, 1,
-                       "the editor must be handed the RETAINED store")
+        // NEEDLE PRECISION: `store: store,` also spells the ARMING call
+        // (`armedResolution(store: store, keys: keys)`), a different subject
+        // that gained the comma when the key store became a second argument.
+        // This leg is about the EDITOR's argument, so the arming form is
+        // excluded by name rather than by hoping the count stays at one.
+        let handed = code.filter { $0.contains("store: store,") && !$0.contains("armedResolution(") }
+        XCTAssertEqual(handed.count, 1,
+                       "the editor must be handed the RETAINED store; found \(handed.count)")
         // No store may be CONSTRUCTED anywhere in this file. `ZeusApp` owns
         // the one construction; a second here is a store the operator's
         // record never reaches.
