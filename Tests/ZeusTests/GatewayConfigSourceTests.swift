@@ -176,22 +176,45 @@ final class GatewayConfigSourceTests: XCTestCase {
     /// STORAGE half; the probe leg above is the behaviour half, and the two
     /// are asserted separately because the census greens on a build that
     /// reads per use and never observes.
+    ///
+    /// The needle is any STORED property of type `GatewayConfig` — `let` OR
+    /// `var`, under any name. An earlier form needled `let config: GatewayConfig`
+    /// and was blind to three separate re-freezes: a `var`, a rename, and any
+    /// second stored copy beside the computed accessor. The one computed line
+    /// each surface is permitted is pinned WHOLE, not by substring, so a
+    /// re-freeze cannot hide behind a matching tail.
     func testNoSurfaceStoresItsOwnFrozenConfig() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/ZeusApp")
+        // The single computed accessor each observing surface may declare.
+        let permitted = "private var config: GatewayConfig { source.config }"
+        let declaration = try NSRegularExpression(
+            pattern: #"\b(let|var)\s+\w+\s*:\s*GatewayConfig\b"#)
         var frozen: [String] = []
         var walked = 0
+        var observing: [String] = []
         for name in ["LinkMonitor.swift", "Approvals.swift", "Route.swift"] {
             let text = try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
             walked += 1
+            // Presence half: a needle that drifts off its subject reads 0 for
+            // ever and the census reports health. Each file must still BE an
+            // observer of the source for its zero to mean anything.
+            if text.contains("GatewayConfigSource") { observing.append(name) }
             for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
                 let t = line.trimmingCharacters(in: .whitespaces)
                 guard !t.hasPrefix("//"), !t.hasPrefix("///") else { continue }
-                if t.contains("let config: GatewayConfig") { frozen.append("\(name): \(t)") }
+                if t == permitted { continue }
+                let r = NSRange(t.startIndex..., in: t)
+                if declaration.firstMatch(in: t, range: r) != nil {
+                    frozen.append("\(name): \(t)")
+                }
             }
         }
         XCTAssertEqual(walked, 3, "VOID: a source file did not open")
+        XCTAssertEqual(observing, ["LinkMonitor.swift", "Approvals.swift", "Route.swift"],
+                       "VOID: a surface no longer mentions GatewayConfigSource — the census "
+                       + "needle is measuring a file that stopped being an observer")
         XCTAssertEqual(frozen, [],
                        "a stored GatewayConfig is the launch-host freeze; take GatewayConfigSource instead")
     }
