@@ -92,6 +92,13 @@ xcrun simctl launch booted com.zeus.Zeus -zeusTab session
 silently and by design** — so if you asked for `session` and got the orb, check
 your spelling before you file a bug.
 
+When a command names a simulator — `xcodebuild -destination 'platform=iOS
+Simulator,…'` most of all — **pin it by UDID, not by device name**: the
+installed simulator inventory drifts (runtimes and device pairings come and go
+with Xcode updates), and a vanished name like `iPhone 16` reads as a build
+failure (`xcodebuild` exit 70) when the build itself was fine. `xcrun simctl
+list devices` prints the UDIDs; use `-destination 'id=<UDID>'`.
+
 **What it does NOT tell you:** touch feel, real Dynamic Type behaviour, actual
 network conditions, or anything about performance. It is a picture of the UI,
 not the product.
