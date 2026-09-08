@@ -53,8 +53,9 @@ GUARDS=(
   "scripts/check_membership.sh${DERIVED:+ $DERIVED}"
   scripts/check_narration_shape.sh
   scripts/check_network_shape.sh
+  scripts/check_crate_tree.sh
 )
-EXPECTED_GUARDS=3
+EXPECTED_GUARDS=4
 
 # ARITY ASSERTION. If the array and the literal disagree, someone added a guard
 # without adding it here, or removed one without removing it. Either way the

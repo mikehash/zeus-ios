@@ -41,6 +41,23 @@ RUSTC_V="$(rustc --version)"
 CARGO_V="$(cargo --version)"
 XCODE_V="$(xcodebuild -version | tr '\n' ' ')"
 
+# dep-pin and crate-tree are derived ONCE here and consumed by BOTH the
+# generated-bindings header and the manifest. They were previously two
+# independent expressions: :138 wrote a hardcoded literal `2a2168cd` into the
+# header while :184 computed the real value, so a re-pin silently produced an
+# artifact whose two self-descriptions disagreed. One variable, two readers.
+#
+# crate-tree keys on the CONTENT of rust/zeus-core-bridge, not on HEAD:
+# crate-sha changes on every unrelated commit (a test-only commit moves it),
+# so it cannot answer "were the sources that produced this archive the sources
+# in the tree?". The tree object can, and is stable across commits that do not
+# touch the crate.
+DEP_PIN="$(grep -m1 -oE 'rev = "[0-9a-f]+"' "$CRATE_DIR/Cargo.toml" | head -1)"
+DEP_PIN_SHORT="$(printf '%s' "$DEP_PIN" | sed -nE 's/.*"([0-9a-f]+)".*/\1/p' | cut -c1-8)"
+CRATE_TREE="$(cd "$REPO_ROOT" && git rev-parse HEAD:rust/zeus-core-bridge)"
+[ -n "$DEP_PIN" ]    || { echo "VOID: no rev = \"…\" in $CRATE_DIR/Cargo.toml" >&2; exit 2; }
+[ -n "$CRATE_TREE" ] || { echo "VOID: could not resolve HEAD:rust/zeus-core-bridge" >&2; exit 2; }
+
 SDK_IOS=""; SDK_SIM=""
 sdk_or_die() {
     local sdk="$1" path rc=0
@@ -135,7 +152,7 @@ cat > "$HDR" <<HEADER
 // any Mac with Xcode and no Rust toolchain. Only LINKING needs the archive,
 // which is gitignored and rebuilt by the same script.
 //
-// crate sha $(cd "$REPO_ROOT" && git rev-parse --short HEAD) · dep pin 2a2168cd · $RUSTC_V
+// crate tree $CRATE_TREE · dep pin $DEP_PIN_SHORT · $RUSTC_V
 HEADER
 cat "$HDR" "$BINDINGS_DIR/${LIB_NAME}.swift" > "$HDR.joined"
 mv "$HDR.joined" "$BINDINGS_DIR/${LIB_NAME}.swift"
@@ -181,7 +198,8 @@ MANIFEST="$OUT_DIR/$FRAMEWORK/zeus-build-manifest.txt"
     echo "sdk-ios:    $SDK_IOS"
     echo "sdk-sim:    $SDK_SIM"
     echo "crate-sha:  $(cd "$REPO_ROOT" && git rev-parse HEAD)"
-    echo "dep-pin:    $(grep -m1 -oE 'rev = "[0-9a-f]+"' "$CRATE_DIR/Cargo.toml" | head -1)"
+    echo "dep-pin:    $DEP_PIN"
+    echo "crate-tree: $CRATE_TREE"
     echo "ios-min:    $IOS_MIN"
     echo "slices:     ios-arm64 ios-arm64-simulator"
     echo "device-sha: $(shasum -a 256 "$DEVICE_LIB" | cut -d' ' -f1)"
