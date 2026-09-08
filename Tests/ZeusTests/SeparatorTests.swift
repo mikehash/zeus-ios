@@ -65,7 +65,8 @@ final class SeparatorTests: XCTestCase {
     /// does not remove — U+00A0 is not in `.whitespaces`.
     func testAccessibilityLabelCarriesNoOrphanedNonBreakingSpace() {
         let label = SessionView.headerAccessibilityLabel(
-            sessionID: "abc123def456", status: "LINK LOCAL", state: .ambient)
+            sessionID: "abc123def456", status: "LINK LOCAL", state: .ambient,
+            disarmReason: nil)
         XCTAssertFalse(label.contains("\u{00A0}"),
                        "orphaned NBSP reaches the screen reader: \(label)")
         XCTAssertFalse(label.contains("\u{00B7}"), label)

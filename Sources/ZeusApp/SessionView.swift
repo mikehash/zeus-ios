@@ -205,7 +205,10 @@ struct SessionView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Badge(text: state.badgeText, color: state.badgeColor)
+            // The pill reads the readiness-composed pair, same derivation as
+            // the home AGENT tile. `disarmReason` is already in scope here and
+            // is the value the composer below gates on.
+            Badge(text: headerBadge.text, color: headerBadge.tint)
         }
         .padding(.horizontal, 20)
         .padding(.top, 6)
@@ -217,16 +220,23 @@ struct SessionView: View {
         // and not to any child.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(SessionView.headerAccessibilityLabel(
-            sessionID: sessionID, status: statusLine, state: state))
+            sessionID: sessionID, status: statusLine, state: state,
+            disarmReason: disarmReason))
     }
 
     /// The whole header as one spoken string.
     ///
-    /// PHASE IS RECOVERABLE FROM THIS. `state.badgeText` is four distinct
-    /// strings over the four `AgentState` cases, so the label differs across
-    /// every state — that difference is what makes "reads the engine phase"
-    /// measurable rather than aspirational, and it is asserted directly rather
-    /// than described here.
+    /// PHASE IS RECOVERABLE FROM THIS WHEN ARMED, AND DELIBERATELY NOT WHEN
+    /// UNARMED. `state.badgeText` is four distinct strings over the four
+    /// `AgentState` cases, so an armed label differs across every state — that
+    /// difference is what makes "reads the engine phase" measurable rather than
+    /// aspirational, and it is asserted directly rather than described here.
+    /// Unarmed, all four collapse onto `UNARMED`: the phase is not wrong, it is
+    /// not answering the question, and announcing "reasoning" over a core with
+    /// no route to a model is the spoken form of the green-pill lie. The
+    /// injectivity leg is therefore TWO-ARMED — armed count ==
+    /// `AgentState.allCases.count`, unarmed count == 1 — with the arms asserted
+    /// unequal so neither can pass on a constant.
     ///
     /// The badge and the status line are both carried because they answer
     /// different questions: phase (what the agent is doing) and topology (can
@@ -238,13 +248,26 @@ struct SessionView: View {
     /// call site, so `.combine` skips it. That is deliberate — the orb renders
     /// the same energy the badge names, and announcing both would say one
     /// thing twice.
+    ///
+    /// `disarmReason` is REQUIRED, not defaulted. A default would let a call
+    /// site omit it and silently announce a phase over an unarmed core — the
+    /// exact defect this parameter exists to close, reintroduced by omission.
+    /// Four of the five callers are tests, and the fifth is the render at
+    /// `:219`; making them all state the readiness is the point.
     static func headerAccessibilityLabel(sessionID: String?,
                                          status: String,
-                                         state: AgentState) -> String {
+                                         state: AgentState,
+                                         disarmReason: String?) -> String {
         let title = sessionTitle(for: sessionID)
             .replacingOccurrences(of: Theme.separator, with: " ")
             .replacingOccurrences(of: "—", with: "not yet assigned")
-        return "\(title.trimmingCharacters(in: .whitespaces)), \(status), \(state.badgeText)"
+        let badge = ReadinessBadge.forState(state, disarmReason: disarmReason)
+        return "\(title.trimmingCharacters(in: .whitespaces)), \(status), \(badge.text)"
+    }
+
+    /// The header pill's badge, composed over (readiness, phase).
+    private var headerBadge: ReadinessBadge {
+        ReadinessBadge.forState(state, disarmReason: disarmReason)
     }
 
     // MARK: - Transcript (:879-898)

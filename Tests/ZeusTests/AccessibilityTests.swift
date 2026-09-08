@@ -199,20 +199,84 @@ final class OrbVoiceOverTests: XCTestCase {
     }
 
     /// PHASE, four states — the invariant the orb structurally cannot carry.
-    func testHeaderLabelDiffersAcrossAllFourAgentStates() {
-        let labels = AgentState.allCases.map {
+    ///
+    /// TWO ARMS, because readiness overrides the phase. Armed, the label must
+    /// still be injective over `AgentState`. Unarmed, all four MUST collapse
+    /// onto one string — announcing "reasoning" over a core with no route to a
+    /// model is the spoken form of the green-pill lie. Asserting only the armed
+    /// arm would pass on a function that ignores readiness entirely, which is
+    /// the code this replaced.
+    ///
+    /// Counted against `AgentState.allCases.count`, never the literal 4: a
+    /// legitimate fifth state would otherwise read as a broken leg.
+    func testHeaderLabelDiffersAcrossAllFourAgentStatesWhenArmed() {
+        let armed = AgentState.allCases.map {
             SessionView.headerAccessibilityLabel(sessionID: "abc123de-ffff",
-                                                 status: "LINKED", state: $0)
+                                                 status: "LINKED", state: $0,
+                                                 disarmReason: nil)
         }
-        XCTAssertEqual(Set(labels).count, AgentState.allCases.count,
+        XCTAssertEqual(Set(armed).count, AgentState.allCases.count,
             "AgentState must be recoverable from the header a screen reader hears")
+
+        let unarmed = AgentState.allCases.map {
+            SessionView.headerAccessibilityLabel(sessionID: "abc123de-ffff",
+                                                 status: "LINKED", state: $0,
+                                                 disarmReason: GatewayConfig.noProviderMessage)
+        }
+        XCTAssertEqual(Set(unarmed).count, 1,
+            "unarmed must collapse every phase onto one badge: \(Set(unarmed))")
+
+        // The arms must DIFFER. Without this, a function returning one constant
+        // for everything fails the first arm but a function returning the phase
+        // for everything passes the first and fails the second — and a reader
+        // checking only that both "have asserts" cannot tell those apart from a
+        // correct one. Vacuity assert on the pair.
+        XCTAssertNotEqual(Set(armed), Set(unarmed),
+            "armed and unarmed labels are identical — readiness is not read")
+    }
+
+    /// The unarmed WORD, asserted unconditionally and independent of the tint.
+    ///
+    /// ZM's guarantee for the dim token is that the word carries the claim
+    /// unaided. This leg is what makes that a property of the code: the text is
+    /// asserted on its own, so a theme pass that changes `Theme.unarmedTint`
+    /// cannot weaken it.
+    func testUnarmedBadgeTextCarriesTheClaimWithoutTheTint() {
+        for phase in AgentState.allCases {
+            let badge = ReadinessBadge.forState(phase,
+                                                disarmReason: GatewayConfig.noProviderMessage)
+            XCTAssertEqual(badge.text, "UNARMED", "phase \(phase) leaked through")
+            XCTAssertEqual(badge.tint, Theme.unarmedTint)
+        }
+        // POS control: the armed path is alive and is NOT the unarmed string,
+        // so the loop above is not passing because every input yields UNARMED.
+        let armed = ReadinessBadge.forState(.thinking, disarmReason: nil)
+        XCTAssertEqual(armed.text, AgentState.thinking.badgeText)
+        XCTAssertNotEqual(armed.text, "UNARMED")
+        XCTAssertNotEqual(armed.tint, Theme.unarmedTint)
+    }
+
+    /// Text and tint come from ONE derivation, so they cannot disagree.
+    ///
+    /// The pair exists because two accessors over the same inputs can drift —
+    /// a colour switch edited without its text switch renders `UNARMED` in
+    /// `ok` green, which is worse than the state it replaced because it looks
+    /// deliberate. Asserted per-phase rather than once, because a single sample
+    /// cannot distinguish "the pair agrees" from "this one case agrees."
+    func testBadgePairAgreesAcrossEveryPhase() {
+        for phase in AgentState.allCases {
+            let armed = ReadinessBadge.forState(phase, disarmReason: nil)
+            XCTAssertEqual(armed.text, phase.badgeText)
+            XCTAssertEqual(armed.tint, phase.badgeColor)
+        }
     }
 
     /// The header must carry BOTH facts. Phase and topology answer different
     /// questions and a label with only one of them is a collapse.
     func testHeaderLabelCarriesPhaseAndTopologyTogether() {
         let label = SessionView.headerAccessibilityLabel(
-            sessionID: "abc123de-ffff", status: "UNREACHABLE", state: .ambient)
+            sessionID: "abc123de-ffff", status: "UNREACHABLE", state: .ambient,
+            disarmReason: nil)
         XCTAssertTrue(label.contains("UNREACHABLE"), "topology missing: \(label)")
         XCTAssertTrue(label.contains(AgentState.ambient.badgeText), "phase missing: \(label)")
     }
@@ -221,7 +285,7 @@ final class OrbVoiceOverTests: XCTestCase {
     /// unpredictably, and "SESSION dash" is worse than saying the thing.
     func testUnassignedSessionIsSpokenAsWordsNotPunctuation() {
         let label = SessionView.headerAccessibilityLabel(
-            sessionID: nil, status: "LINKED", state: .ambient)
+            sessionID: nil, status: "LINKED", state: .ambient, disarmReason: nil)
         XCTAssertFalse(label.contains("—"), "raw em-dash reaches the screen reader: \(label)")
         XCTAssertFalse(label.contains("·"), "raw separator reaches the screen reader: \(label)")
         XCTAssertTrue(label.contains("not yet assigned"), label)

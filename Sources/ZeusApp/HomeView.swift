@@ -178,14 +178,34 @@ struct HomeView: View {
 
     // MARK: - Status grid
 
+    /// The AGENT cell's badge, composed over (readiness, phase).
+    ///
+    /// One derivation shared with the session header pill and the screen-reader
+    /// label — see `ReadinessBadge`. Held as a property rather than inlined so
+    /// the cell reads the pair and cannot take the text from one source and the
+    /// tint from another.
+    private var agentBadge: ReadinessBadge {
+        ReadinessBadge.forState(session.state,
+                                disarmReason: resolution.config.disarmReason)
+    }
+
     /// Four cells, each sourced from a live surface and each labelled with the
-    /// surface it reads. `AGENT` is engine phase; `LINK` is topology. They are
-    /// deliberately NOT collapsed into one indicator: an idle agent behind an
-    /// unreachable gateway is `NOMINAL` and `REMOTE` simultaneously, both true,
-    /// and folding them would pick one to hide.
+    /// surface it reads. `AGENT` is engine phase COMPOSED WITH readiness;
+    /// `LINK` is topology. They are deliberately NOT collapsed into one
+    /// indicator: an idle agent behind an unreachable gateway is `NOMINAL` and
+    /// `REMOTE` simultaneously, both true, and folding them would pick one to
+    /// hide. Readiness is folded into AGENT rather than given a fifth cell
+    /// because an unarmed core makes the phase MEANINGLESS, not merely
+    /// accompanied by bad news.
     private var statusGrid: some View {
         HStack(spacing: 10) {
-            StatCell(caption: "AGENT", value: session.state.badgeText, tint: session.state.badgeColor)
+            // AGENT reads the READINESS-COMPOSED badge, not the raw phase.
+            // `session.state` alone is the engine's phase, and an idle engine
+            // is `.ambient` whether or not the core has a provider — which is
+            // how this cell rendered NOMINAL in green above a composer that
+            // could not send. `resolution.config.disarmReason` is the same
+            // value the composer gates on, so the two cannot disagree.
+            StatCell(caption: "AGENT", value: agentBadge.text, tint: agentBadge.tint)
             // LINK is the one control in the grid: the pill that opens the
             // gateway editor. The census leg (`HomeViewTests`) holds this at
             // exactly one `action:` across the four sites.

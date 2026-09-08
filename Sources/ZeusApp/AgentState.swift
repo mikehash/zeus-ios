@@ -68,6 +68,52 @@ enum AgentState: String, CaseIterable, Identifiable {
     }
 }
 
+/// What the badge says once READINESS is taken into account, as ONE PAIR.
+///
+/// ## The defect this exists for
+///
+/// Three surfaces rendered `session.state` directly — the home `AGENT` tile
+/// (`HomeView:188`), the session header pill (`SessionView:208`) and the
+/// screen-reader label (`SessionView:219`). `AgentState` is a description of
+/// the ENGINE's phase, and an idle engine is `.ambient` whether or not the
+/// core has a provider. So a fresh install rendered `AGENT · NOMINAL` in
+/// green, above a composer that could not send. Every value was true; the
+/// composition was a lie, because the surface answers "are we ok" and the
+/// value answers "is the engine busy."
+///
+/// ## Why a PAIR and not two functions
+///
+/// Text and tint must be derived in ONE place. Two accessors over the same
+/// inputs can disagree — a later edit to a colour switch that forgets the
+/// unarmed arm renders the word `UNARMED` in `ok` green, which is a worse
+/// state than the one this replaces because it looks deliberate. Returning
+/// the pair makes disagreement unrepresentable rather than merely unlikely.
+///
+/// ## Unarmed OVERRIDES the phase, and that is the whole claim
+///
+/// When there is no route to a model, the phase is not wrong — it is not
+/// ANSWERING THE QUESTION. So the unarmed arm ignores `phase` entirely and
+/// collapses all four states onto one badge. The injectivity leg over
+/// `AgentState` is therefore two-armed: armed → `allCases.count` distinct,
+/// unarmed → exactly 1.
+struct ReadinessBadge: Equatable {
+    let text: String
+    let tint: Color
+
+    /// `disarmReason == nil` is the readiness input, not a second predicate.
+    ///
+    /// It is deliberately the SAME value the composer gates on
+    /// (`SessionView.canSend`) rather than a parallel readiness check: a badge
+    /// derived from one source and a composer gated on another is exactly the
+    /// disagreement this file exists to retire. One source, two readers.
+    static func forState(_ phase: AgentState, disarmReason: String?) -> ReadinessBadge {
+        guard disarmReason == nil else {
+            return ReadinessBadge(text: "UNARMED", tint: Theme.unarmedTint)
+        }
+        return ReadinessBadge(text: phase.badgeText, tint: phase.badgeColor)
+    }
+}
+
 /// The prototype's `Badge` component, :341-346.
 ///
 /// The two alpha suffixes in the source are hex byte literals appended to a

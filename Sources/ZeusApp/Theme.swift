@@ -45,6 +45,31 @@ enum Theme {
 
     /// Warm white at partial opacity — the prototype's `w(a)` helper.
     static func w(_ a: Double) -> Color { text.opacity(a) }
+
+    /// The tint for UNARMED — the core is live and has no route to a model.
+    ///
+    /// DIM, not amber and not red. The app already has a rule for this class of
+    /// state and it is written at `LinkMonitor:150-153`: `.unconfigured` renders
+    /// at `w(0.35)` because "an unset gateway is a state the user has not acted
+    /// on, not a fault the app detected, and colouring it amber would report a
+    /// problem where there is only an absence." UNARMED is that same class — a
+    /// fresh install has not failed, it has not been finished. `warn` is already
+    /// `.thinking`/`REASONING`, so amber would also collide: a colour-only
+    /// reader could not tell "no core route" from "thinking hard."
+    ///
+    /// ITS OWN BINDING, deliberately not a reference to `LinkMonitor`'s tint.
+    /// The two agree today because both mean not-configured, but they are
+    /// separate surfaces and a theme pass may legitimately split them; coupling
+    /// them here would make that split a silent change to a screen nobody
+    /// edited. One named token, no coupling.
+    ///
+    /// The composed rendering is faint by design: `Badge` multiplies the tint
+    /// by `fillOpacity` 0.078, so the box lands near 0.027 — which is EXACTLY
+    /// how `NodesView:333` already renders `UNSET` in production through the
+    /// same `Badge`. Recessive is the register's meaning. The WORD carries the
+    /// claim unaided, which is why the legs assert the text unconditionally and
+    /// the tint only as the pair's second half.
+    static let unarmedTint = w(0.35)
     /// Accent at partial opacity — the prototype's `r(a)` helper.
     static func r(_ a: Double) -> Color { accent.opacity(a) }
 
