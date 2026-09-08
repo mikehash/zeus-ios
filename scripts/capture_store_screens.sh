@@ -40,7 +40,14 @@ set -uo pipefail
 
 DEVICE="${ZEUS_CAPTURE_DEVICE:-iPhone 17 Pro Max}"
 BUNDLE_ID="com.zeus.Zeus"
-OUT="${ZEUS_CAPTURE_OUT:-$(cd "$(dirname "$0")/.." && pwd)/build/store-screenshots}"
+# Device slug folds the DEVICE identity into the default output path.
+# Incident (2026-09-08): the default was a fixed "build/store-screenshots" with no
+# device in it, so a second-width run SILENTLY CLOBBERED the first — an iPhone 16e
+# pass destroyed a completed iPhone 17 Pro Max set (build/ is gitignored, so there
+# was no VCS copy; only the run log survived it). A comment would not have stopped
+# it; the slug makes the collision structurally impossible.
+SLUG="$(printf '%s' "$DEVICE" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/-*$//')"
+OUT="${ZEUS_CAPTURE_OUT:-$(cd "$(dirname "$0")/.." && pwd)/build/store-screenshots-$SLUG}"
 DD="${ZEUS_CAPTURE_DERIVED:-/tmp/zeus-store-capture}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -150,7 +157,9 @@ xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1
 # is run" — not "when the suite is run". An app that ignored Dynamic Type entirely
 # would produce an AX5 frame IDENTICAL to its default frame — and that is a
 # collision, which the verifier already reports.
-AXOUT="$OUT/../store-screenshots-ax5"
+# Keyed to OUT ITSELF, not its parent. Deriving from "$OUT/.." meant an explicit
+# ZEUS_CAPTURE_OUT moved the store frames but left every run sharing ONE ax5 dir.
+AXOUT="$OUT-ax5"
 mkdir -p "$AXOUT"; rm -f "$AXOUT"/*.png
 xcrun simctl ui "$UDID" content_size accessibility-extra-extra-extra-large >/dev/null 2>&1 \
   || die_instrument "simctl ui content_size not supported on this host"
