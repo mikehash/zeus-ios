@@ -150,9 +150,22 @@ struct EmbeddedTransport: SessionTransport {
             // not the primary path, and it says the same words so the two
             // cannot drift into two different explanations of one state.
             return GatewayConfig.noProviderMessage
+        case let .Unsupported(message):
+            // A typed refusal, not a failure: the core is saying "this
+            // provider does not answer for me". The crate's own text is the
+            // specific one (`list_models` names the provider), so it is shown
+            // verbatim rather than replaced with a generic sentence that
+            // would lose which provider refused.
+            return message
         case let .Core(message):
             return message
         }
+        // Deliberately no `default:`. `BridgeError` is GENERATED — it grew
+        // `.Unsupported` in the same regen that produced this arm, and the
+        // exhaustive switch is what surfaced it (build error, not a silent
+        // absorb into a fallback string). A `default:` here would render the
+        // next new arm as whatever the catch-all says, which is a wrong
+        // sentence shown confidently. Keep the compile error.
     }
 }
 

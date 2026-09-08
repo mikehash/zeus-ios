@@ -82,7 +82,30 @@ private final class FakeCore: ZeusCoreProtocol, @unchecked Sendable {
     func remember(fact: String) throws {}
     func search(query: String) -> [SearchHit] { [] }
     func sessions() throws -> [SessionInfo] { [] }
-    func setProvider(id: String, model: String, key: String) throws {}
+
+    /// UNARMED BY CONSTRUCTION. These legs fake the CORE to exercise the
+    /// push→pull adapter's edges; none of them route through provider
+    /// readiness, so a double that answered `true` here would be asserting a
+    /// state no leg in this file establishes. `false` is the honest answer for
+    /// a core nobody called `setProvider` on, and it keeps this file's subject
+    /// (the adapter) separate from readiness, whose legs live with the config.
+    func hasProvider() -> Bool { false }
+
+    /// The generated surface grew `baseUrl` and `model` (Ollama takes a URL
+    /// where keyed providers take a key). Recorded, not answered: no leg here
+    /// reads a model list, and returning a plausible-looking `["fake-model"]`
+    /// would be a fixture pretending to be a measurement.
+    private(set) var setProviderCalls: [(id: String, model: String, key: String, baseUrl: String?)] = []
+
+    func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {
+        lock.lock()
+        setProviderCalls.append((id, model, key, baseUrl))
+        lock.unlock()
+    }
+
+    func listModels(id: String, key: String, baseUrl: String?) throws -> [String] {
+        throw BridgeError.Unsupported("FakeCore answers for no provider")
+    }
 }
 
 final class EmbeddedTransportTests: XCTestCase {
