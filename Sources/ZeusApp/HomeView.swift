@@ -114,7 +114,7 @@ struct HomeView: View {
     /// defects survived as long as they did.
     static func operatorLine(for callsign: String) -> String {
         let name = callsign.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "OPERATOR · \(name.isEmpty ? "UNNAMED" : name.uppercased())"
+        return Theme.joined(["OPERATOR", name.isEmpty ? "UNNAMED" : name.uppercased()])
     }
 
     // MARK: - The agent

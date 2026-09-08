@@ -26,7 +26,7 @@ final class HomeViewTests: XCTestCase {
     /// against the same rule the property applies.
     func testOperatorLineUppercasesCallsign() {
         let line = HomeView.operatorLine(for: "miguel")
-        XCTAssertEqual(line, "OPERATOR · MIGUEL")
+        XCTAssertEqual(line, "OPERATOR\u{00A0}·\u{00A0}MIGUEL")
     }
 
     /// The callsign step can be completed blank, so an empty callsign is a
@@ -34,8 +34,8 @@ final class HomeViewTests: XCTestCase {
     /// dangling separator, which reads as a rendering bug rather than as an
     /// empty field.
     func testOperatorLineNamesUnnamedRatherThanTrailingSeparator() {
-        XCTAssertEqual(HomeView.operatorLine(for: ""), "OPERATOR · UNNAMED")
-        XCTAssertEqual(HomeView.operatorLine(for: "   "), "OPERATOR · UNNAMED")
+        XCTAssertEqual(HomeView.operatorLine(for: ""), "OPERATOR\u{00A0}·\u{00A0}UNNAMED")
+        XCTAssertEqual(HomeView.operatorLine(for: "   "), "OPERATOR\u{00A0}·\u{00A0}UNNAMED")
         // Vacuity floor: the two arms genuinely differ, so a stub returning one
         // constant could not satisfy both.
         XCTAssertNotEqual(HomeView.operatorLine(for: ""), HomeView.operatorLine(for: "miguel"))

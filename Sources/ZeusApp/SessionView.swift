@@ -95,8 +95,8 @@ struct SessionView: View {
     /// UUID-length and the row is 11pt tracked at 0.24em — the full value
     /// would push the status line out of the row.
     static func sessionTitle(for id: String?) -> String {
-        guard let id, !id.isEmpty else { return "SESSION · —" }
-        return "SESSION · " + id.prefix(8).uppercased()
+        guard let id, !id.isEmpty else { return Theme.joined(["SESSION", "—"]) }
+        return Theme.joined(["SESSION", id.prefix(8).uppercased()])
     }
 
     /// Whether a send can proceed. THE predicate, used by both the button's
@@ -242,7 +242,7 @@ struct SessionView: View {
                                          status: String,
                                          state: AgentState) -> String {
         let title = sessionTitle(for: sessionID)
-            .replacingOccurrences(of: "·", with: "")
+            .replacingOccurrences(of: Theme.separator, with: " ")
             .replacingOccurrences(of: "—", with: "not yet assigned")
         return "\(title.trimmingCharacters(in: .whitespaces)), \(status), \(state.badgeText)"
     }

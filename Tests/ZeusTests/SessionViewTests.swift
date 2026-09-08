@@ -29,28 +29,28 @@ final class SessionViewTests: XCTestCase {
     /// absence, not a placeholder number.
     func testNilSessionRendersEmDashNotANumber() {
         let title = SessionView.sessionTitle(for: nil)
-        XCTAssertEqual(title, "SESSION · —")
+        XCTAssertEqual(title, "SESSION\u{00A0}·\u{00A0}—")
         XCTAssertFalse(title.contains("01"), "a fabricated ordinal is the defect this replaced")
     }
 
     /// An empty string is the same absence as nil — a gateway that sends
-    /// `"session_id": ""` must not produce `"SESSION · "`.
+    /// `"session_id": ""` must not produce `"SESSION\u{00A0}·\u{00A0}"`.
     func testEmptySessionIsTreatedAsAbsent() {
-        XCTAssertEqual(SessionView.sessionTitle(for: ""), "SESSION · —")
+        XCTAssertEqual(SessionView.sessionTitle(for: ""), "SESSION\u{00A0}·\u{00A0}—")
     }
 
     // MARK: - The named arm
 
     func testNamedSessionRendersTruncatedUppercaseID() {
         let title = SessionView.sessionTitle(for: "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-        XCTAssertEqual(title, "SESSION · A1B2C3D4")
+        XCTAssertEqual(title, "SESSION\u{00A0}·\u{00A0}A1B2C3D4")
     }
 
     /// VACUITY FLOOR for the truncation: an id SHORTER than the bound must
     /// render whole. Without this leg a `prefix` bug that returned "" would
     /// pass every other assertion in the absence direction.
     func testShortSessionRendersWhole() {
-        XCTAssertEqual(SessionView.sessionTitle(for: "abc"), "SESSION · ABC")
+        XCTAssertEqual(SessionView.sessionTitle(for: "abc"), "SESSION\u{00A0}·\u{00A0}ABC")
     }
 
     /// The two arms must not collapse. `assert_ne`-style: a derivation that

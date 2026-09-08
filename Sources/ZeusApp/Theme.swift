@@ -232,6 +232,35 @@ enum Theme {
 
     /// The display tracking the prototype applies to tab and badge labels.
     static let displayTracking: CGFloat = 1.2
+
+    // MARK: - Identity strips
+
+    /// The three-character separator token: NBSP, middle dot, NBSP.
+    ///
+    /// The NBSPs are the whole point. Read by eye at 390pt, two strips wrapped
+    /// with the `·` left hanging at the end of a line, which reads as a cut
+    /// string rather than a continued one. A non-breaking space on each side
+    /// binds the dot to the token that FOLLOWS it, so a wrap puts the
+    /// separator at the head of the next line or not at all.
+    ///
+    /// Exposed rather than private because the accessibility label at
+    /// `SessionView.headerAccessibilityLabel` has to strip the WHOLE token —
+    /// stripping the bare `·` leaves two NBSPs mid-string where
+    /// `trimmingCharacters` cannot reach them, and VoiceOver reads the gap.
+    /// One definition, two readers, no second literal to drift.
+    static let separator = "\u{00A0}·\u{00A0}"
+
+    /// Joins identity-strip components with `separator`, dropping empties.
+    ///
+    /// Empties are dropped rather than rendered because a component that has
+    /// no value produces `a ·  · c` — a separator with nothing between it and
+    /// the next, which is the same visual defect as the dangling one.
+    static func joined(_ parts: [String]) -> String {
+        parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: separator)
+    }
 }
 
 extension Color {

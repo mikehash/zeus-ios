@@ -217,7 +217,7 @@ final class ManagedDeferralTests: XCTestCase {
         XCTAssertNil(c.provider, "a missing new key must not erase the record — and must not invent a value")
         // The screen is the point: nil must SAY not-set, never name a provider
         // the operator did not choose.
-        XCTAssertTrue(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
+        XCTAssertTrue(c.summary.contains("no provider"), c.summary)
         XCTAssertFalse(c.summary.uppercased().contains("ANTHROPIC"),
                        "a record that never set a provider must not print one: \(c.summary)")
     }
@@ -228,7 +228,7 @@ final class ManagedDeferralTests: XCTestCase {
     func testTheRoutesStepWritesTheProviderAndTheRouteTogether() {
         var c = Commission()
         XCTAssertNil(c.provider, "nothing has chosen yet")
-        XCTAssertTrue(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
+        XCTAssertTrue(c.summary.contains("no provider"), c.summary)
 
         // `model` has no default: the caller must have ASKED the provider.
         // This leg names the writer's contract, not the CTA's plumbing.
@@ -237,8 +237,8 @@ final class ManagedDeferralTests: XCTestCase {
         XCTAssertEqual(c.route, .byok)
         XCTAssertEqual(c.model, "claude-x")
         XCTAssertEqual(c.provider, Commission.routesProviderID)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC · OWN KEY"), c.summary)
-        XCTAssertFalse(c.summary.contains("NO PROVIDER — SET ONE IN ROUTES"), c.summary)
+        XCTAssertTrue(c.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), c.summary)
+        XCTAssertFalse(c.summary.contains("no provider"), c.summary)
     }
 
     /// APERTURE, STATED: the function above is guarded; the ONE LINE that calls
@@ -298,7 +298,7 @@ final class ManagedDeferralTests: XCTestCase {
         let data = try XCTUnwrap(record.data(using: .utf8))
         let c = try JSONDecoder().decode(Commission.self, from: data)
         XCTAssertEqual(c.provider, "ollama")
-        XCTAssertTrue(c.summary.contains("OLLAMA · OWN KEY"), c.summary)
+        XCTAssertTrue(c.summary.contains("OLLAMA\u{00A0}·\u{00A0}OWN KEY"), c.summary)
     }
 
     /// And the whole path, through the store the app actually uses — the
@@ -318,7 +318,7 @@ final class ManagedDeferralTests: XCTestCase {
     /// (2) The summary prints a value something wrote, not a route count.
     func testSummaryNamesTheProviderAndNeverAFabricatedRouteCount() {
         let c = Commission(route: .byok, provider: "anthropic", callsign: "MIGUEL", nodeEnrolled: false)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC · OWN KEY"), "summary must name the provider set at routes: \(c.summary)")
+        XCTAssertTrue(c.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), "summary must name the provider set at routes: \(c.summary)")
         XCTAssertFalse(c.summary.contains("11 routes"), "no route count: nothing measured one")
         XCTAssertFalse(c.summary.lowercased().contains("managed"), "summary must not print a mode the app cannot produce")
     }
@@ -330,7 +330,7 @@ final class ManagedDeferralTests: XCTestCase {
         let a = Commission(provider: "anthropic", callsign: "X").summary
         let b = Commission(provider: "ollama", callsign: "X").summary
         XCTAssertNotEqual(a, b, "summary must be derived from `provider`, not fixed")
-        XCTAssertTrue(b.contains("OLLAMA · OWN KEY"), b)
+        XCTAssertTrue(b.contains("OLLAMA\u{00A0}·\u{00A0}OWN KEY"), b)
     }
 
     /// (3) The capture seed is a mode that exists, and its provider id is one
@@ -346,7 +346,7 @@ final class ManagedDeferralTests: XCTestCase {
         XCTAssertEqual(seeded.route, .byok)
         XCTAssertFalse(seeded.summary.lowercased().contains("managed"),
                        "the captured summary frame must not carry the string `managed`: \(seeded.summary)")
-        XCTAssertTrue(seeded.summary.contains("ANTHROPIC · OWN KEY"), seeded.summary)
+        XCTAssertTrue(seeded.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), seeded.summary)
         // The id must be one `Provider::from_prefix` knows (zeus-core:8922).
         let coreAccepted = ["anthropic", "openai", "ollama", "openrouter", "google", "gemini",
                             "groq", "mistral", "together", "fireworks", "azure", "bedrock",
@@ -407,24 +407,28 @@ final class CopyRegisterTests: XCTestCase {
     /// removal only if the walk demonstrably reads the new one.
     func testTheRenderedRouteNounIsSingularAndTheOldOneIsGone() throws {
         let code = codeLines(try source("Commissioning.swift"))
-        XCTAssertEqual(code.filter { $0.contains("· OWN KEY") }.count, 1,
+        XCTAssertEqual(code.filter { $0.contains("\"OWN KEY\"") }.count, 1,
                        "POS: the walk reads the REPLACEMENT — a dead walk VOIDs instead of greening the count")
         XCTAssertEqual(code.filter { $0.contains("· BYOK") }.count, 0,
                        "the retired noun must not ship in a rendered string")
         // The rendered value itself, not just the source line.
         let c = Commission(route: .byok, provider: "anthropic", callsign: "ATLAS", nodeEnrolled: false)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC · OWN KEY"), c.summary)
+        XCTAssertTrue(c.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), c.summary)
         XCTAssertFalse(c.summary.contains("BYOK"), c.summary)
     }
 
-    /// S1. `PROVIDER NOT SET` is retired in favour of
-    /// `NO PROVIDER — SET ONE IN ROUTES`. The POS is the replacement: a zero
+    /// S1. `PROVIDER NOT SET` is retired. The summary FOOTER now states the
+    /// state only — `no provider` — because the repair belongs on the control
+    /// that performs it, not repeated in a status strip; the full sentence
+    /// `NO PROVIDER — SET ONE IN ROUTES` survives as
+    /// `GatewayConfig.noProviderMessage` on the composer, which is the surface
+    /// the operator is actually blocked at. The POS is the replacement: a zero
     /// on the old string only means removal if the same walk can find the
     /// new one in the same file.
     func testRetiredUnsetProviderStringIsGoneFromTheSource() throws {
         let src = try source("Commissioning.swift")
         let code = codeLines(src)
-        XCTAssertEqual(code.filter { $0.contains("NO PROVIDER — SET ONE IN ROUTES") }.count, 1,
+        XCTAssertEqual(code.filter { $0.contains("no provider") }.count, 1,
                        "POS: the walk reads the REPLACEMENT — without this a dead walk passes")
         XCTAssertEqual(code.filter { $0.contains("PROVIDER NOT SET") }.count, 0,
                        "the retired unset-provider marker must not ship")
