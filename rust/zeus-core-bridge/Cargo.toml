@@ -18,7 +18,7 @@ name = "zeus_core_bridge"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
-# --- pinned to mikehash/Zeus @ fe40ddb8cd47a55a17ed45477006209b4162a6de ---------------------------------------
+# --- pinned to mikehash/Zeus @ 2bfc08aa11148012fc5aa5db92fea6a88c11d599 ---------------------------------------
 # Re-pinned from 2a2168cd (an ancestor of this sha; `merge-base --is-ancestor`
 # rc=0, so this is a forward move, not a fork). 213d4e7c is the commit that
 # feature-gates zeus-talos behind `automation` — the gate this bridge needs in
@@ -28,14 +28,14 @@ crate-type = ["staticlib", "lib"]
 # deliberately ABSENT: it pulls rusqlite `bundled`, a C sqlite amalgamation that
 # has never been cross-compiled against the iOS SDK here. Unmeasured C build !=
 # dependency of the first phone build. (Ruled by Zeus100, 2026-09-07.)
-zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "fe40ddb8cd47a55a17ed45477006209b4162a6de" }
-zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "fe40ddb8cd47a55a17ed45477006209b4162a6de" }
-zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "fe40ddb8cd47a55a17ed45477006209b4162a6de" }
-zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "fe40ddb8cd47a55a17ed45477006209b4162a6de" }
+zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
+zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
+zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
+zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
 # zeus-agent at the same pin, default-features = false: its default set is
-# ["audio","matrix","voice","automation"] (fe40ddb8cd47a55a17ed45477006209b4162a6de crates/zeus-agent/Cargo.toml:10)
+# ["audio","matrix","voice","automation"] (2bfc08aa11148012fc5aa5db92fea6a88c11d599 crates/zeus-agent/Cargo.toml:10)
 # and all four are host-surface — `automation` is the only gate on zeus-talos.
-zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "fe40ddb8cd47a55a17ed45477006209b4162a6de", default-features = false }
+zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599", default-features = false }
 
 # FULL 40-char revs above, not abbreviations, and the reason is portability not
 # style: mikehash/Zeus carries BOTH `refs/heads/TUI` and

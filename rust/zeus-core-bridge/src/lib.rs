@@ -36,7 +36,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
-use zeus_core::Provider;
+use zeus_core::{CredentialShape as CoreCredentialShape, Provider};
 use zeus_llm::{LlmClient, OllamaClient, normalize_ollama_url};
 use zeus_memory::{FileEntry, FileIndex, Workspace};
 use zeus_session::Session;
@@ -501,6 +501,102 @@ fn scan_workspace(root: &std::path::Path) -> FileIndex {
     index
 }
 
+// ============================================================================
+// Provider catalogue
+// ============================================================================
+
+/// One provider row for the picker: the wire id, the human label, and the
+/// shape of credential it needs.
+///
+/// Three fields, not two: `id` is what `set_provider` takes and what gets
+/// persisted; `label` is what a human reads. They are NOT interchangeable —
+/// `Provider::name()` returns wire ids (`xiaomimimo`, `glm-coding`), which is
+/// why the core grew `label()`. Rendering `id` in a picker row is a defect,
+/// and keeping both here means Swift never has to choose (or title-case).
+#[derive(uniffi::Record)]
+pub struct ProviderInfo {
+    pub id: String,
+    pub label: String,
+    pub shape: CredentialShape,
+}
+
+/// What the operator must supply for a provider, folded to what this app can
+/// actually collect.
+///
+/// The core's `zeus_core::CredentialShape` has SIX variants; this has four.
+/// The three multi-part shapes (`KeyAndEndpoint`, `AwsPair`,
+/// `ServiceAccountFile`) fold into `Unsupported`, carrying the core's own
+/// shape name as the reason. Deliberate: a single `SecureField` gated on a
+/// bool would collect HALF an Azure or Bedrock credential and produce a
+/// provider that cannot work, with no error until the first send. Listing
+/// them disabled-with-a-reason is the honest render.
+#[derive(uniffi::Enum, Debug, PartialEq, Eq)]
+pub enum CredentialShape {
+    /// Nothing to collect (GoogleGeminiCli — ambient OAuth).
+    None,
+    /// One API key. 21 of 26 providers.
+    Key,
+    /// A URL, not a secret (Ollama).
+    Url,
+    /// Cannot be collected by this app's v1 form. `reason` is the core's own
+    /// shape name, so the disabled row can say WHY rather than just "no".
+    Unsupported { reason: String },
+}
+
+/// Fold the core's six-variant shape into the four this app can render.
+///
+/// EXHAUSTIVE, no wildcard arm: the core declares `CredentialShape` without
+/// `#[non_exhaustive]` precisely so a seventh variant is a compile error here
+/// instead of a silently-wrong form on a phone. Do not add `_ =>`.
+fn fold_shape(shape: CoreCredentialShape) -> CredentialShape {
+    match shape {
+        CoreCredentialShape::None => CredentialShape::None,
+        CoreCredentialShape::ApiKey => CredentialShape::Key,
+        CoreCredentialShape::Url => CredentialShape::Url,
+        CoreCredentialShape::KeyAndEndpoint => CredentialShape::Unsupported {
+            reason: "KeyAndEndpoint".to_string(),
+        },
+        CoreCredentialShape::AwsPair => CredentialShape::Unsupported {
+            reason: "AwsPair".to_string(),
+        },
+        CoreCredentialShape::ServiceAccountFile => CredentialShape::Unsupported {
+            reason: "ServiceAccountFile".to_string(),
+        },
+    }
+}
+
+/// Every provider the core knows, in the core's own order.
+///
+/// A free function, not a method: it reads no core state, so requiring a live
+/// `ZeusCore` (and therefore a workspace on disk) to populate a picker would
+/// be a false dependency — and, as `resolve_provider`'s doc comment records,
+/// an `Arc<Self>` method is a call site the tests cannot reach.
+///
+/// Order is `Provider::ALL`, NOT sorted here: the core's array is the one
+/// ordering guarded upstream (`provider_all_is_exhaustive`). Re-sorting in
+/// the bridge would create a second ordering that can silently disagree.
+#[uniffi::export]
+pub fn list_providers() -> Vec<ProviderInfo> {
+    Provider::ALL
+        .iter()
+        .map(|p| ProviderInfo {
+            id: p.name().to_string(),
+            label: p.label().to_string(),
+            shape: fold_shape(p.credential_shape()),
+        })
+        .collect()
+}
+
+/// The credential shape for one provider id.
+///
+/// Errors on an unknown id through `resolve_provider` rather than answering
+/// `None` — "this provider needs no credential" and "I have never heard of
+/// this provider" are opposite facts and must not share a return value.
+#[uniffi::export]
+pub fn credential_shape(id: String) -> Result<CredentialShape, BridgeError> {
+    Ok(fold_shape(resolve_provider(&id)?.credential_shape()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -790,6 +886,141 @@ mod tests {
         assert!(
             matches!(&err, BridgeError::Core(m) if m.contains("nosuchprovider")),
             "the error must name the offending prefix, got: {err}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Provider catalogue
+    // ------------------------------------------------------------------
+
+    /// The row count is the core's count, and the ids are the core's ids.
+    ///
+    /// Asserts against `Provider::ALL` rather than the literal 26: pinning the
+    /// number here would make a legitimate core addition fail as though the
+    /// bridge were broken, and pinning it in BOTH places is one fact expressed
+    /// twice. The count that matters is upstream, where the wildcard-free
+    /// match guards it.
+    #[test]
+    fn list_providers_is_the_cores_list_in_the_cores_order() {
+        let rows = list_providers();
+        assert_eq!(rows.len(), Provider::ALL.len());
+
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let core: Vec<&str> = Provider::ALL.iter().map(|p| p.name()).collect();
+        assert_eq!(ids, core, "order and ids must be the core's, unsorted");
+    }
+
+    /// The row carries a LABEL, not a second copy of the id.
+    ///
+    /// This is the leg that fails if someone "simplifies" `ProviderInfo` to one
+    /// string: `label` and `id` must differ for at least one provider, and the
+    /// named example is the one that motivated `Provider::label()` existing.
+    /// A vacuity assert, not a style check — a picker rendering `xiaomimimo`
+    /// is the defect this whole field exists to prevent.
+    #[test]
+    fn label_is_not_the_wire_id() {
+        let rows = list_providers();
+        let differing = rows.iter().filter(|r| r.id != r.label).count();
+        assert!(
+            differing > 0,
+            "no row's label differs from its id — label() is not being read"
+        );
+
+        let mimo = rows
+            .iter()
+            .find(|r| r.id == "xiaomimimo")
+            .expect("the core's ALL must still contain xiaomimimo");
+        assert_ne!(
+            mimo.label, mimo.id,
+            "the row that motivated label() must not render its wire id"
+        );
+    }
+
+    /// The fold is not constant, and each arm is the arm it claims.
+    ///
+    /// Four distinct outputs asserted by NAME, because a fold that returned
+    /// `Key` for everything would pass any count-based check and would render
+    /// a key field for Ollama (a URL) and for GoogleGeminiCli (nothing).
+    #[test]
+    fn fold_maps_each_core_shape_to_its_own_arm() {
+        assert_eq!(fold_shape(CoreCredentialShape::None), CredentialShape::None);
+        assert_eq!(fold_shape(CoreCredentialShape::ApiKey), CredentialShape::Key);
+        assert_eq!(fold_shape(CoreCredentialShape::Url), CredentialShape::Url);
+
+        for (core, name) in [
+            (CoreCredentialShape::KeyAndEndpoint, "KeyAndEndpoint"),
+            (CoreCredentialShape::AwsPair, "AwsPair"),
+            (CoreCredentialShape::ServiceAccountFile, "ServiceAccountFile"),
+        ] {
+            match fold_shape(core) {
+                CredentialShape::Unsupported { reason } => assert_eq!(reason, name),
+                other => panic!("{name} must fold to Unsupported, got {other:?}"),
+            }
+        }
+    }
+
+    /// Named providers land in the arm the operator experience depends on.
+    ///
+    /// Ollama is `Url` (the picker shows a host field, never a key field) and
+    /// Anthropic is `Key`; asserting both in one leg means a fold that
+    /// collapsed to a single arm cannot pass. Azure carries its reason string
+    /// because a disabled row with no reason is just a broken row.
+    #[test]
+    fn credential_shape_answers_per_provider_not_uniformly() {
+        assert_eq!(credential_shape("ollama".to_string()).unwrap(), CredentialShape::Url);
+        assert_eq!(
+            credential_shape("anthropic".to_string()).unwrap(),
+            CredentialShape::Key
+        );
+        assert_ne!(
+            credential_shape("ollama".to_string()).unwrap(),
+            credential_shape("anthropic".to_string()).unwrap(),
+            "two providers with different core shapes must not fold to one answer"
+        );
+        match credential_shape("azure".to_string()).unwrap() {
+            CredentialShape::Unsupported { reason } => assert_eq!(reason, "KeyAndEndpoint"),
+            other => panic!("azure must be Unsupported, got {other:?}"),
+        }
+    }
+
+    /// An unknown id is an ERROR, never `None`.
+    ///
+    /// `None` means "this provider needs no credential" — answering it for a
+    /// typo would render a working-looking row for a provider that does not
+    /// exist. Same defect family as #559, one surface over.
+    #[test]
+    fn credential_shape_refuses_an_unknown_id() {
+        // Positive control: the function resolves a real id at all.
+        assert!(credential_shape("groq".to_string()).is_ok());
+
+        let err = credential_shape("nosuchprovider".to_string())
+            .expect_err("unknown id must error, never answer None");
+        assert!(
+            matches!(&err, BridgeError::Core(m) if m.contains("nosuchprovider")),
+            "the error must name the offending id, got: {err}"
+        );
+    }
+
+    /// The group sizes the picker's navigation argument rests on.
+    ///
+    /// Recorded as a test because the shape of the UI (search-first, two
+    /// one-row groups above a 21-row wall) was ruled ON these numbers. If the
+    /// core's table shifts them, the ruling deserves re-examination rather
+    /// than silently becoming wrong — so this leg is a tripwire on a design
+    /// premise, not a correctness check.
+    #[test]
+    fn credential_shape_group_sizes_match_the_ruled_picker_layout() {
+        let rows = list_providers();
+        let count = |want: &CredentialShape| rows.iter().filter(|r| &r.shape == want).count();
+        assert_eq!(count(&CredentialShape::Key), 21, "Key group");
+        assert_eq!(count(&CredentialShape::Url), 1, "Url group (ollama)");
+        assert_eq!(count(&CredentialShape::None), 1, "None group (gemini-cli)");
+        assert_eq!(
+            rows.iter()
+                .filter(|r| matches!(r.shape, CredentialShape::Unsupported { .. }))
+                .count(),
+            3,
+            "Unsupported group (azure, bedrock, vertex)"
         );
     }
 }
