@@ -162,6 +162,39 @@ TestFlight.
 
 ---
 
+## The remote-gateway editor (M4)
+
+Two doors, one sheet — both open the same `REMOTE GATEWAY` editor:
+
+* **HOME LINK pill** — the LINK stat cell on the home screen.
+* **The NODES row, in every arm** — the row below the state line. Its title is
+  the state (`NO GATEWAY — LINK ONE` / `CORE — THIS PHONE` /
+  `GATEWAY URL INVALID — FIX IT`) and its action is `USE A REMOTE GATEWAY`;
+  tapping it opens the editor in **every** resolution arm, including `LOCAL`.
+
+**What SAVE does today.** The token half is real: a non-empty token field
+writes to the Keychain and toasts `TOKEN SAVED`. The URL half is disabled with
+the caption `TOKEN SAVES NOW — URL IS READ-ONLY IN THIS BUILD` — honest about
+what is not wired; the commission wiring enables it.
+
+**RUN PREFLIGHT** performs one authenticated request against the configured
+gateway and maps the measured outcome to one of four verdicts. What each means
+the operator should do:
+
+| Verdict | Measured | Operator does |
+|---|---|---|
+| `TOKEN OK — GATEWAY REACHABLE` | 2xx from the gateway | nothing — gateway and token are good |
+| `TOKEN REJECTED — REPLACE IT ABOVE` | 401 (or non-2xx) with a token on file | re-enter the token, SAVE, re-run preflight |
+| `NO TOKEN — ADD ONE ABOVE TO UNBLOCK` | 401 (or non-2xx) with no token | add the token above |
+| `GATEWAY UNREACHABLE — CHECK THE URL` | transport failed | check host/port/LAN before touching the token |
+
+**`-zeusInMemoryTokens`** — a capture launch arg, beside `-zeusSeededCommission`:
+routes the editor's writes to an `InMemoryTokenStore` instead of the real
+Keychain, so capture runs never dirty the operator's keychain. Absent by
+default in production; tests inject it through the same `LaunchArgs` seam.
+
+---
+
 ## What has and has not been proven
 
 Stated plainly, because the alternative is you budgeting an hour against a path
