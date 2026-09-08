@@ -208,9 +208,12 @@ struct RootView: View {
     /// gained the argument, which meant every KEYED provider armed to
     /// `NO KEY FOR <label>` no matter what the operator had entered — the
     /// keyless arm (Ollama) was the only one that could ever arm. The key
-    /// store is constructed by `init` ABOVE this call precisely so the `nil`
-    /// cannot come back: a future edit that re-arms without a key has to
-    /// delete a parameter, not quietly leave a literal in place.
+    /// store now arrives as a parameter from `ZeusApp`, so the `nil` cannot
+    /// come back: a future edit that re-arms without a key has to delete a
+    /// parameter, not quietly leave a literal in place. `RootView.swift`
+    /// constructs NEITHER conformer — asserted by census, because a store
+    /// built here would be a second store and the operator's key would be in
+    /// the other one.
     static func armedResolution(store: CommissionStoring,
                                 keys: ProviderKeyStoring) -> GatewayConfig.Resolution {
         let core = try? EmbeddedCore.shared.get()
@@ -235,7 +238,15 @@ struct RootView: View {
     /// `store` has NO DEFAULT, and neither does anything it feeds. Every
     /// observable below is constructed from ONE resolution, so the tabs cannot
     /// disagree about which gateway this app is talking to.
-    init(store: CommissionStoring, push: PushRegistrar) {
+    /// `keys` is INJECTED, not built here — and that is the stronger form of
+    /// the guard it replaces. This view used to construct its own key store
+    /// above the arm, which made the invariant "built early enough"; a store
+    /// handed in cannot be built late, and cannot be a SECOND store either.
+    /// The commissioning flow writes the operator's key into the instance
+    /// `ZeusApp` owns, and this is the same object, so the arm reads what was
+    /// typed. Two instances agreed through the Keychain in production and
+    /// diverged on the in-memory arm — one store, one truth.
+    init(store: CommissionStoring, push: PushRegistrar, keys: ProviderKeyStoring) {
         // THE SOLE PRODUCTION `setProvider` CALL, AND IT RUNS BEFORE THE
         // RESOLVE THAT MEASURES IT.
         //
@@ -248,13 +259,6 @@ struct RootView: View {
         // from here through `CoreArming.arm`, outside any `#if DEBUG`. The
         // DEBUG seam seeds the COMMISSION this call reads — it does not arm
         // the core itself, so the path a person launches is the path measured.
-        // CONSTRUCTED BEFORE THE ARM, and asserted so by a source-order leg:
-        // the arming call below reads this object, so building it after would
-        // be a compile error today and a silent `nil` key the moment someone
-        // "fixes" the order by making the parameter optional.
-        let keys: ProviderKeyStoring = LaunchArgs.useInMemoryTokens
-            ? InMemoryProviderKeyStore()
-            : ProviderKeyStore()
         let resolution = RootView.armedResolution(store: store, keys: keys)
         self.store = store
         self.push = push

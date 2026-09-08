@@ -77,10 +77,27 @@ struct ZeusApp: App {
     /// no `onRegisterForRemoteNotifications` scene modifier.
     @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
 
+    /// THE key store — ONE instance, handed to BOTH arms of the `if let` below.
+    ///
+    /// It was two. `CommissioningView` built one and `RootView.init` built
+    /// another, and on the KEYCHAIN arm that is invisible: two instances share
+    /// state through the Keychain, so production behaved. On the IN-MEMORY arm
+    /// (`useInMemoryTokens` — the test and capture launch) they are two
+    /// dictionaries, so a key typed at ROUTES was written into a store the arm
+    /// never read, and the session armed `NO KEY FOR <label>` on a key the
+    /// operator had just entered. That is the path the simulator frames drive.
+    ///
+    /// Owned here because this is the only object that outlives BOTH arms: the
+    /// `if let` swaps `CommissioningView` for `RootView` the moment the record
+    /// gains a commission, and a store owned by either arm dies with it.
+    private let keys: ProviderKeyStoring = LaunchArgs.useInMemoryTokens
+        ? InMemoryProviderKeyStore()
+        : ProviderKeyStore()
+
     var body: some Scene {
         WindowGroup {
             if let commission = state.commission {
-                RootView(store: state.store, push: push)
+                RootView(store: state.store, push: push, keys: keys)
                     .transition(.opacity)
                     // Carried so the ZEUS tab header can read `OPERATOR ·
                     // <callsign>` and the LINK pill can tell solo from
@@ -97,9 +114,7 @@ struct ZeusApp: App {
                     onComplete: { result in
                         withAnimation(.easeInOut(duration: 0.45)) { state.commission(result) }
                     },
-                    keys: LaunchArgs.useInMemoryTokens
-                        ? InMemoryProviderKeyStore()
-                        : ProviderKeyStore()
+                    keys: keys
                 )
             }
         }
