@@ -37,7 +37,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 use zeus_core::Provider;
-use zeus_llm::LlmClient;
+use zeus_llm::{LlmClient, OllamaClient, normalize_ollama_url};
 use zeus_memory::{FileEntry, FileIndex, Workspace};
 use zeus_session::Session;
 
@@ -51,6 +51,12 @@ uniffi::setup_scaffolding!();
 pub enum BridgeError {
     #[error("no provider configured — call set_provider first")]
     NoProvider,
+    /// A typed refusal, distinct from an empty result. `list_models` returns
+    /// this for every provider that is not `ollama` rather than `Ok(vec![])`,
+    /// because an empty vector and "this crate does not answer for you" render
+    /// identically in a picker and only one of them is the caller's fault.
+    #[error("listing models is not supported for provider {0} in v1")]
+    Unsupported(String),
     #[error("{0}")]
     Core(String),
 }
@@ -174,17 +180,72 @@ impl ZeusCore {
     /// resolution, carries the aliases, and returns `None` on unrecognized input
     /// so the caller must decide the fallback (#559 — no silent mis-route to
     /// Anthropic's env key). A local table would be a second truth that drifts.
+    ///
+    /// ## `base_url` and why it is a process env write, not a parameter
+    ///
+    /// `LlmClient` resolves its base URL inside `with_api_key` → `new`, and for
+    /// Ollama that arm reads `env::var("OLLAMA_HOST")` (zeus-llm:1018) with
+    /// `http://localhost:11434` as the fallback. There is no constructor that
+    /// takes a URL, so the ONLY seam an out-of-crate caller has is the process
+    /// environment, and it must be written BEFORE construction — after is a
+    /// no-op, because the URL is already baked into the client. On iOS there is
+    /// no shell to export it from, so the bridge is the only place it can
+    /// happen. `None` leaves the environment untouched: a caller who passes
+    /// nothing gets the core's own default rather than an empty string, which
+    /// `normalize_ollama_url` would silently turn back into localhost anyway.
+    ///
+    /// Non-Ollama providers ignore `base_url` entirely — their arms are
+    /// literals in the same match. Passing one is not an error and not honoured;
+    /// stated here rather than discovered, since a silently-dropped URL is the
+    /// worse of the two failures.
     pub fn set_provider(
         self: Arc<Self>,
         id: String,
         model: String,
         key: String,
+        base_url: Option<String>,
     ) -> Result<(), BridgeError> {
         let provider = resolve_provider(&id)?;
+        apply_base_url(provider, base_url.as_deref());
         let client = LlmClient::with_api_key(provider, model, key)?;
         self.rt
             .block_on(async { *self.client.lock().await = Some(Arc::new(client)) });
         Ok(())
+    }
+
+    /// The models `id` can serve, asked of the provider rather than hardcoded.
+    ///
+    /// v1 answers for `ollama` only, via `OllamaClient::list_models`
+    /// (zeus-llm/ollama.rs:171), because it is the one provider whose catalogue
+    /// is a property of the operator's own machine — every other provider's
+    /// list is a published constant that belongs in a picker, not in a network
+    /// call. The rest return `Unsupported` with the prefix named, so a caller
+    /// gets a typed refusal instead of an empty `Vec` that reads exactly like
+    /// "this provider has no models".
+    ///
+    /// `base_url` is honoured directly here (the Ollama client takes one at
+    /// construction, unlike `LlmClient`), so this call does NOT touch the
+    /// process environment.
+    pub fn list_models(
+        self: Arc<Self>,
+        id: String,
+        key: String,
+        base_url: Option<String>,
+    ) -> Result<Vec<String>, BridgeError> {
+        let provider = resolve_provider(&id)?;
+        if provider != Provider::Ollama {
+            return Err(BridgeError::Unsupported(id));
+        }
+        let url = normalize_ollama_url(base_url.as_deref().unwrap_or(OLLAMA_DEFAULT_URL));
+        let client = if key.is_empty() {
+            OllamaClient::new(url)
+        } else {
+            OllamaClient::with_auth(url, key)
+        };
+        let models = self
+            .rt
+            .block_on(async move { client.list_models().await })?;
+        Ok(models.into_iter().map(|m| m.name).collect())
     }
 
     /// Send `text` on `session_id`, streaming tokens into `sink`.
@@ -341,6 +402,36 @@ fn resolve_provider(id: &str) -> Result<Provider, BridgeError> {
         .ok_or_else(|| BridgeError::Core(format!("unrecognized provider prefix: {id}")))
 }
 
+/// The core's own Ollama fallback, spelled once here so the two readers
+/// (`apply_base_url` and `list_models`) cannot drift apart. It is a COPY of
+/// zeus-llm:1018's literal, not a shared constant — zeus-llm does not export
+/// one — so a change there is invisible here; the guard is
+/// `apply_base_url_none_leaves_the_core_default`, which asserts through the
+/// core rather than against this string.
+const OLLAMA_DEFAULT_URL: &str = "http://localhost:11434";
+
+/// Write `OLLAMA_HOST` for the Ollama arm so the client built next reads it.
+///
+/// Extracted from `set_provider` for the same reason `resolve_provider` was: a
+/// method taking `Arc<Self>` needs a live workspace to reach, so the branch
+/// would be unguardable in-crate. As a free function both arms are directly
+/// asserted below.
+///
+/// `env::set_var` is process-global and this crate is a single-core-per-process
+/// library on iOS, so the write is not racing a second core. Stated because the
+/// same call in a multi-core host WOULD be a data race — the safety is a
+/// property of the deployment, not of this function.
+fn apply_base_url(provider: Provider, base_url: Option<&str>) {
+    if provider != Provider::Ollama {
+        return;
+    }
+    if let Some(raw) = base_url {
+        let normalized = normalize_ollama_url(raw);
+        // SAFETY: single-threaded configuration point on iOS; see the doc above.
+        unsafe { std::env::set_var("OLLAMA_HOST", normalized) };
+    }
+}
+
 // ============================================================================
 // The receiver→callback pump
 // ============================================================================
@@ -413,6 +504,26 @@ fn scan_workspace(root: &std::path::Path) -> FileIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `OLLAMA_HOST` is process-global and cargo runs tests on threads, so the
+    /// three env-touching legs below must not interleave. Poison is recovered
+    /// rather than propagated (`into_inner`): a panic in one leg should fail
+    /// THAT leg, not convert the other two into a second, misleading failure.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Put `OLLAMA_HOST` back exactly as found — including ABSENT, which
+    /// `set_var("")` would not restore: an empty value is a present variable,
+    /// and `normalize_ollama_url("")` turns it back into localhost, so the
+    /// difference is invisible at the client and visible only here.
+    fn restore_ollama_host(previous: &Option<String>) {
+        // SAFETY: called only under ENV_LOCK; see the doc on apply_base_url.
+        unsafe {
+            match previous {
+                Some(v) => std::env::set_var("OLLAMA_HOST", v),
+                None => std::env::remove_var("OLLAMA_HOST"),
+            }
+        }
+    }
 
     /// The scan is the whole reason `search` can return anything. This test
     /// asserts BOTH directions — a hit for a file that exists and no hit for a
@@ -530,7 +641,12 @@ mod tests {
         assert!(!before, "a freshly built core has selected no provider");
 
         core.clone()
-            .set_provider("ollama".into(), "qwen3:8b".into(), "unused-by-ollama".into())
+            .set_provider(
+                "ollama".into(),
+                "qwen3:8b".into(),
+                "unused-by-ollama".into(),
+                None,
+            )
             .expect("the ollama prefix resolves and a non-empty key builds a client");
 
         let after = core.clone().has_provider();
@@ -540,6 +656,116 @@ mod tests {
             "has_provider must DISCRIMINATE — a constant passes one arm and this \
              pair is the only thing that refuses it"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The URL seam, asserted where it is OBSERVABLE.
+    ///
+    /// `set_provider` swallows the client into a `Mutex` the tests cannot reach
+    /// without a live workspace, so the subject here is the pair
+    /// (`apply_base_url`, `LlmClient::with_api_key`) run in the same order the
+    /// export runs them, read back through `LlmClient::base_url()`
+    /// (zeus-llm:991). That is the exact value the request will be sent to —
+    /// asserting on `env::var("OLLAMA_HOST")` instead would assert that I wrote
+    /// the variable, not that the core read it, and those came apart once
+    /// already (a write placed AFTER construction is a silent no-op).
+    ///
+    /// Serialised with the two legs below via `ENV_LOCK`: `OLLAMA_HOST` is
+    /// process-global and cargo runs tests on threads, so an unlocked pair
+    /// would flake in one direction only — which is worse than failing.
+    #[test]
+    fn base_url_reaches_the_client_the_core_will_send_with() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("OLLAMA_HOST").ok();
+
+        apply_base_url(Provider::Ollama, Some("http://10.0.0.7:11434/v1/"));
+        let client =
+            LlmClient::with_api_key(Provider::Ollama, "qwen3:8b".into(), "unused".into()).unwrap();
+        assert_eq!(
+            client.base_url(),
+            "http://10.0.0.7:11434",
+            "the client must resolve the URL handed to set_provider, normalized"
+        );
+
+        // Vacuity: the default must DIFFER from the value above, or an
+        // apply_base_url that did nothing at all would pass the assertion.
+        restore_ollama_host(&previous);
+        let defaulted =
+            LlmClient::with_api_key(Provider::Ollama, "qwen3:8b".into(), "unused".into()).unwrap();
+        assert_ne!(
+            client.base_url(),
+            defaulted.base_url(),
+            "a no-op apply_base_url would green the first assertion — this pair refuses it"
+        );
+    }
+
+    /// The no-op arms, both of them, because "ignores base_url" is a claim in
+    /// the export's doc comment and an unasserted doc comment is prose.
+    #[test]
+    fn base_url_is_applied_only_for_ollama_and_only_when_given() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("OLLAMA_HOST").ok();
+        restore_ollama_host(&None);
+
+        // Arm 1: a non-Ollama provider must not write the variable.
+        apply_base_url(Provider::Anthropic, Some("http://should-not-be-written:1"));
+        assert!(
+            std::env::var("OLLAMA_HOST").is_err(),
+            "a non-ollama provider must leave OLLAMA_HOST untouched"
+        );
+
+        // Arm 2: None must not write it either — the caller gets the core's
+        // own default rather than an empty string.
+        apply_base_url(Provider::Ollama, None);
+        assert!(
+            std::env::var("OLLAMA_HOST").is_err(),
+            "None must leave the environment untouched, not write an empty value"
+        );
+
+        // POS control in the same invocation: the writer is alive. Without
+        // this, a permanently-broken apply_base_url passes both arms above.
+        apply_base_url(Provider::Ollama, Some("http://10.0.0.9:11434"));
+        assert_eq!(
+            std::env::var("OLLAMA_HOST").ok().as_deref(),
+            Some("http://10.0.0.9:11434"),
+            "control: the ollama arm with a URL DOES write"
+        );
+
+        restore_ollama_host(&previous);
+    }
+
+    /// `list_models` refuses non-ollama prefixes with a TYPED error naming the
+    /// prefix, and it must not be an empty `Vec` — the two render identically
+    /// in a picker. No network: the refusal happens before any request, which
+    /// is why this leg is safe to run in CI while the ollama arm is not.
+    #[test]
+    fn list_models_refuses_unsupported_providers_by_type() {
+        let dir = std::env::temp_dir().join(format!("zcb-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).unwrap();
+
+        match core
+            .clone()
+            .list_models("anthropic".into(), "k".into(), None)
+        {
+            Err(BridgeError::Unsupported(p)) => assert_eq!(
+                p, "anthropic",
+                "the refusal must name the prefix the caller passed"
+            ),
+            other => panic!("expected a typed Unsupported refusal, got {other:?}"),
+        }
+
+        // An unknown prefix is a DIFFERENT failure and must not be absorbed
+        // into Unsupported — resolve_provider refuses it first.
+        match core.clone().list_models("nosuchprovider".into(), "k".into(), None) {
+            Err(BridgeError::Core(msg)) => assert!(
+                msg.contains("nosuchprovider"),
+                "an unknown prefix is a Core error naming it, not Unsupported"
+            ),
+            other => panic!("expected Core for an unknown prefix, got {other:?}"),
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }
