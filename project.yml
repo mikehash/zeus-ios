@@ -140,6 +140,29 @@ targets:
         # not constitute it. Confirmation is item 3 on
         # docs/STORE-UPLOAD-CHECKLIST.md and it gates upload, not this commit.
         ITSAppUsesNonExemptEncryption: false
+        # ATS. THE HOST IS OPERATOR-ENTERED AT RUNTIME, SO IT CANNOT BE
+        # DOMAIN-SCOPED. `NSExceptionDomains` needs literal hostnames at build
+        # time and there are none: every one of the 13 `URLSession` sites
+        # (HTTPTransport, Approvals, LinkMonitor, GatewayEditor, SSEDecoder,
+        # Route) points at a URL typed into `GatewayEditor` by the operator.
+        #
+        # `NSAllowsLocalNetworking` is the ONLY key that relaxes ATS without
+        # knowing the host ahead of time. It covers `.local` names and
+        # unqualified LAN hostnames over plain http.
+        #
+        # WHAT IT DOES NOT BUY, stated rather than discovered on a device:
+        #   - a bare `http://192.168.x.x` gateway — an IP literal is NOT a
+        #     local-networking name under this key, and the receipt for the
+        #     first device build records the measured verdict, not this note.
+        #   - an FQDN over plain http (a Tailscale `*.ts.net` name) — refused.
+        # `NSAllowsArbitraryLoads` would buy both and is deliberately NO: it
+        # disables ATS for every connection this app ever makes, including the
+        # provider APIs, to fix a LAN convenience. The durable answer for the
+        # remote arm is TLS on the gateway — a main-side item on the operator's
+        # gateway, not an app flag.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+          NSAllowsLocalNetworking: true
         # WITHOUT THIS, `onOpenURL` NEVER FIRES. The parser and its tests are
         # pure Swift and pass whether or not the app is registered for the
         # scheme — so a green suite is not evidence the links work. This block

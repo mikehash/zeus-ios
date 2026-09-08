@@ -338,4 +338,51 @@ final class BundleResourceTests: XCTestCase {
                 + "local — the on-device guarantee is now unstated"
         )
     }
+
+    /// ATS IS A BUILT-PLIST FACT, AND THE SWIFT SUITE IS STRUCTURALLY BLIND
+    /// TO IT. Every `URLSession` leg in this suite runs against a stub or a
+    /// recording transport, so ATS is never consulted — the suite is green
+    /// whether or not the key exists, and the only reporter for a missing or
+    /// over-broad exception is a request failing on a real device, or a
+    /// reviewer reading `NSAllowsArbitraryLoads: true`.
+    ///
+    /// TWO ARMS, BOTH REQUIRED. The permissive key must be PRESENT (or the
+    /// LAN gateway cannot be reached over plain http at all) and the blanket
+    /// key must be ABSENT-OR-FALSE (or the exception we reasoned about was
+    /// silently replaced by one that disables ATS everywhere). Asserting only
+    /// the first passes on a plist that also carries the blanket.
+    ///
+    /// APERTURE. This reads the BUILT plist, so it proves the key ships. It
+    /// says nothing about which URLs the OS then accepts: whether a bare
+    /// `192.168.x.x` or an FQDN over plain http is allowed is a measurement
+    /// on a device, recorded in the first device-build receipt, not here.
+    func testTransportSecurityIsScopedToLocalNetworkingOnly() throws {
+        let app = try hostAppBundle()
+        let ats = app.object(forInfoDictionaryKey: "NSAppTransportSecurity")
+            as? [String: Any]
+        let dict = try XCTUnwrap(
+            ats,
+            "the built plist carries no NSAppTransportSecurity dictionary — "
+                + "a plain-http gateway on the LAN is unreachable from a "
+                + "device build, and no Swift leg in this suite would notice"
+        )
+        XCTAssertEqual(
+            dict["NSAllowsLocalNetworking"] as? Bool, true,
+            "NSAllowsLocalNetworking is not true in the built plist"
+        )
+        XCTAssertNotEqual(
+            dict["NSAllowsArbitraryLoads"] as? Bool, true,
+            "NSAllowsArbitraryLoads is TRUE — ATS is disabled for every "
+                + "connection this app makes, including the provider APIs. "
+                + "The scoped exception was replaced by the blanket."
+        )
+        // Vacuity: the two keys must be distinguishable, so a plist that
+        // answered the same value for every lookup cannot pass both arms.
+        XCTAssertNotEqual(
+            dict["NSAllowsLocalNetworking"] as? Bool,
+            dict["NSAllowsArbitraryLoads"] as? Bool ?? false,
+            "both ATS keys read the same value — the reader is not "
+                + "discriminating between them"
+        )
+    }
 }
