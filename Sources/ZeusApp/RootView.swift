@@ -46,7 +46,14 @@ struct RootView: View {
     /// `SessionView` because the URL can arrive while a different tab is
     /// showing — the value has to outlive the tab switch that is about to
     /// happen. `SessionView` clears it once applied.
-    @State private var pendingPrompt: String?
+    ///
+    /// THREE WRITERS, and the count is 3 rather than the 2 a ruling named:
+    /// the deep link (`:onOpenURL`), the voice transcript
+    /// (`.onChange(of: voice.transcript)`), and the DEBUG capture seed here.
+    /// The seed is an initial VALUE, not a fourth ingestion path — it lands
+    /// in the same single-shot binding, so `applyPrefill` cannot tell it from
+    /// a URL and nothing downstream needed changing.
+    @State private var pendingPrompt: String? = LaunchArgs.seededPrompt
 
     /// The on-device recogniser. `@StateObject` because it owns an
     /// `AVAudioEngine` and a live tap — a `@State` value would be reconstructed

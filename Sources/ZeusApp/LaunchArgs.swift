@@ -138,6 +138,34 @@ enum LaunchArgs {
         #endif
     }
 
+    /// `-zeusPrompt <text>` — seed the composer's prefill without a URL.
+    ///
+    /// WHY IT EXISTS: the capture chain reached the composer through
+    /// `zeus://session?prompt=…`, which requires `simctl openurl` to land
+    /// AFTER the app is foreground. On a cold launch that ordering is a race
+    /// the capture script loses silently — the frame photographs an empty
+    /// composer and reads as "the seam did not fire" when what happened is
+    /// the URL arrived before the scene existed.
+    ///
+    /// IT WRITES THE SAME BINDING THE DEEP LINK WRITES. `RootView`'s
+    /// `pendingPrompt` is initialised from this value, so `applyPrefill` and
+    /// the auto-send seam behind it are UNTOUCHED: nothing downstream can
+    /// tell a seeded prompt from a deep-linked one, which is the point — a
+    /// capture through here exercises the production ingestion path.
+    ///
+    /// WHAT IT DOES NOT PROVE: that `zeus://session?prompt=` works. That
+    /// claim belongs to `DeepLinkTests`, which still holds it. A frame taken
+    /// through this seed proves the COMPOSER path, not the URL path.
+    ///
+    /// APERTURE: `#if DEBUG`, `nil` in release, inert unless passed.
+    static var seededPrompt: String? {
+        #if DEBUG
+        return value(for: "-zeusPrompt")
+        #else
+        return nil
+        #endif
+    }
+
     // MARK: - Primitives
 
     private static func has(_ flag: String) -> Bool {

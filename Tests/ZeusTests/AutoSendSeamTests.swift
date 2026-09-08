@@ -107,6 +107,67 @@ final class AutoSendSeamTests: XCTestCase {
         XCTAssertNotEqual("-zeusAutoSend", "-zeusProvider")
     }
 
+    // MARK: - The prompt seed (-zeusPrompt)
+
+    /// The seed writes the SAME binding the deep link writes. If it grew its
+    /// own state, `applyPrefill` and the auto-send seam behind it would have
+    /// a second ingestion path to be right about — and a capture through it
+    /// would prove that path, not the production one.
+    func testTheSeedInitialisesTheDeepLinksOwnBinding() throws {
+        let body = try sourceFile("RootView.swift")
+        XCTAssertTrue(body.contains("var pendingPrompt: String? = LaunchArgs.seededPrompt"),
+                      "the seed must initialise pendingPrompt itself — a separate store is a second path")
+    }
+
+    /// Writers of `pendingPrompt`, named. NOTE the count is 3 and not the
+    /// ruling's 2: `.onChange(of: voice.transcript)` already wrote this
+    /// binding before the seed existed and is a real user path (the mic).
+    /// Named rather than absorbed — a census that returns the number it was
+    /// told to expect is not a measurement.
+    func testPendingPromptHasExactlyThreeNamedWriters() throws {
+        let body = try sourceFile("RootView.swift")
+        let writers = body.split(separator: "\n").map(String.init).filter { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            guard !t.hasPrefix("//"), !t.hasPrefix("///") else { return false }
+            return t.hasPrefix("pendingPrompt =")
+                || t.contains("pendingPrompt: String? = LaunchArgs.seededPrompt")
+        }
+        XCTAssertEqual(writers.count, 3,
+                       "expected 3 writers (deep link, voice transcript, DEBUG seed); found \(writers.count): \(writers)")
+    }
+
+    /// The seed's read sits inside a `#if DEBUG` bloc, by the depth walker —
+    /// not by `file.contains("#if DEBUG")`, which answers "this file mentions
+    /// DEBUG" when the claim is about THIS declaration.
+    func testTheSeedSitsInsideADebugBloc() throws {
+        let body = try sourceFile("LaunchArgs.swift")
+        XCTAssertTrue(isInsideDebugBloc(needle: #"value(for: "-zeusPrompt")"#, in: body),
+                      "the prompt seed must be #if DEBUG — in release it is a launch-argument prefill")
+    }
+
+    /// Release arm is `nil`, asserted on the SOURCE. This bundle compiles
+    /// DEBUG, so reading `LaunchArgs.seededPrompt` here would measure the
+    /// debug arm and call it proof about release.
+    func testTheSeedReadsNilInRelease() throws {
+        let body = try sourceFile("LaunchArgs.swift")
+        XCTAssertTrue(body.contains("static var seededPrompt: String?"),
+                      "VOID: the needle is dead — LaunchArgs.swift did not declare seededPrompt")
+        guard let range = body.range(of: "static var seededPrompt: String?") else {
+            return XCTFail("VOID: seededPrompt declaration not found after a positive contains()")
+        }
+        let decl = String(body[range.lowerBound...].prefix(200))
+        XCTAssertTrue(decl.contains("#else"), "seededPrompt needs a release arm, not an unconditional read")
+        XCTAssertTrue(decl.contains("return nil"),
+                      "the release arm must be nil — a shipped build must not prefill from argv")
+    }
+
+    /// Three seed flags, three different strings. A leg that only ever names
+    /// one value cannot refuse a constant.
+    func testTheSeedFlagIsDistinctFromTheOtherSeeds() {
+        XCTAssertNotEqual("-zeusPrompt", "-zeusProvider")
+        XCTAssertNotEqual("-zeusPrompt", "-zeusAutoSend")
+    }
+
     // MARK: - Instruments
 
     /// Whether the line carrying `needle` sits between `#if DEBUG` and its
