@@ -218,9 +218,60 @@ final class ForkStepTests: XCTestCase {
         XCTAssertGreaterThan(CommissioningStep.allCases.count, 1,
                              "POS control: a one-member set makes totality vacuous")
         for step in CommissioningStep.allCases {
-            XCTAssertFalse(step.narration.trimmingCharacters(in: .whitespaces).isEmpty,
-                           "\(step) ships mute")
+            for record in [Commission(), { var c = Commission(); c.provider = "anthropic"; return c }()] {
+                XCTAssertFalse(step.narration(commission: record)
+                                   .trimmingCharacters(in: .whitespaces).isEmpty,
+                               "\(step) ships mute")
+            }
         }
+    }
+
+    // MARK: - The done headline states RECORD facts, one arm each
+    //
+    // TWO EQUALITY assertions, never `Set(...).count == 2`: a cardinality leg
+    // is satisfied by two WRONG constants and by a SWAPPED branch, which are
+    // the two regressions that can actually happen here. Equality names which
+    // arm broke.
+
+    func testDoneHeadlineNoProviderArm() {
+        XCTAssertEqual(CommissioningStep.done.narration(commission: Commission()),
+                       "No provider on your record. I can't answer until one is set.")
+    }
+
+    func testDoneHeadlineProviderOnRecordArm() {
+        var record = Commission()
+        record.provider = Commission.routesProviderID
+        XCTAssertEqual(CommissioningStep.done.narration(commission: record),
+                       "Provider on your record. I arm on the next screen.")
+    }
+
+    /// The two arms must DIFFER. A `narration` that ignored its argument
+    /// satisfies neither equality leg — but a future refactor that collapses
+    /// them onto one constant would have to break both, and this states the
+    /// invariant those two legs exist to protect in one line.
+    func testDoneHeadlineArmsAreNotTheSameSentence() {
+        var record = Commission()
+        record.provider = Commission.routesProviderID
+        XCTAssertNotEqual(CommissioningStep.done.narration(commission: Commission()),
+                          CommissioningStep.done.narration(commission: record),
+                          "the done headline must be a function of the record, not a constant")
+    }
+
+    /// The retired sentence claimed a CORE verdict at a step that runs before
+    /// `CoreArming.arm` exists in the process. It must not come back.
+    func testNoCoreClaimSurvivesInTheDoneHeadline() {
+        var record = Commission()
+        record.provider = Commission.routesProviderID
+        for arm in [CommissioningStep.done.narration(commission: Commission()),
+                    CommissioningStep.done.narration(commission: record)] {
+            for banned in ["nominal", "live", "ready", "armed"] {
+                XCTAssertFalse(arm.lowercased().contains(banned),
+                               "the done step cannot source a core fact: \(banned) in \(arm)")
+            }
+        }
+        XCTAssertTrue(CommissioningStep.welcome.narration(commission: Commission())
+                          .lowercased().contains("live"),
+                      "POS control: the needle IS present elsewhere in the deck")
     }
 
     func testForkSitsBetweenWelcomeAndAuth() {

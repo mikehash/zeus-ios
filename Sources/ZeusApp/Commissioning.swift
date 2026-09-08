@@ -31,7 +31,19 @@ enum CommissioningStep: String, CaseIterable {
     /// `NARRATION` at :305-312, verbatim including the typographic
     /// apostrophes — they are in the source and the TTS pronounces them
     /// identically, so changing them would be an unforced divergence.
-    var narration: String {
+    ///
+    /// TAKES THE RECORD, not a computed property, because the `.done` arm
+    /// branches on it. The two arms state RECORD facts only — "on your
+    /// record", never "nominal" / "live" — because composed core readiness
+    /// does not exist yet at this step: `CoreArming.arm` runs at
+    /// `RootView:211` from `RootView.init`, and `RootView` is not constructed
+    /// until `onComplete(commission)` (:740) hands this record away. A done
+    /// headline that claimed a core verdict would be sourcing a fact the
+    /// process has not computed — which is what `All systems nominal.`
+    /// was doing: a provider with a bad key read "nominal" here and `REFUSED`
+    /// one screen later. The core verdict lives on the session surfaces, where
+    /// the core is.
+    func narration(commission: Commission) -> String {
         switch self {
         case .welcome:
             return "Zeus core is live on this phone. Commissioning takes under a minute — let’s light it up."
@@ -57,7 +69,18 @@ enum CommissioningStep: String, CaseIterable {
         case .callsign:
             return "Last thing. What do I call you on comms?"
         case .done:
-            return "All systems nominal. I’m yours, operator."
+            // Two arms, both record facts. The REPAIR is not in either
+            // sentence — it is the `SET A PROVIDER` button at :759, which
+            // returns to the step it names. A headline that also said "set
+            // one in Routes" would be a repair instruction in a slot that
+            // cannot act, beside a control that can.
+            //
+            // Bare form, no provider name interpolated: the summary strip
+            // (:732) already renders it, and a variable-width headline is the
+            // thing this screen is not doing at 390 pt.
+            return commission.provider == nil
+                ? "No provider on your record. I can't answer until one is set."
+                : "Provider on your record. I arm on the next screen."
         }
     }
 
@@ -428,9 +451,9 @@ struct CommissioningView: View {
             // stops an in-flight utterance, so muting second would still
             // let the orb enter `.speaking` for a frame the shutter can see.
             if LaunchArgs.muteVoice { narrator.voiceOn = false }
-            narrator.narrate(step.narration)
+            narrator.narrate(step.narration(commission: commission))
         }
-        .onChange(of: step) { _, new in narrator.narrate(new.narration) }
+        .onChange(of: step) { _, new in narrator.narrate(new.narration(commission: commission)) }
         .onDisappear { narrator.stop() }
     }
 
