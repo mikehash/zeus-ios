@@ -280,7 +280,11 @@ struct RootView: View {
         _session = StateObject(wrappedValue: SessionEngine(
             makeTransport: { box in
                 Zeus.makeTransport(for: source.config, sessionID: box, credentials: credentials)
-            }
+            },
+            // A fresh session opens EMPTY. The engine no longer defaults a
+            // transcript, so this argument is required and the honest value
+            // for a session nothing has said anything in yet is `[]`.
+            seed: []
         ))
         _link = StateObject(wrappedValue: LinkMonitor(source: source))
         _approvals = StateObject(wrappedValue: ApprovalsStore(source: source,

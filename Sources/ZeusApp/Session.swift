@@ -250,7 +250,20 @@ final class SessionEngine: ObservableObject {
 
     private var turn: Task<Void, Never>?
 
-    /// Seeded from the prototype's initial transcript, :411-412.
+    /// A transcript is SUPPLIED, never manufactured here.
+    ///
+    /// The `seed` default is DELETED and the reason is the same one that took
+    /// the `makeTransport` default below, arriving on a second axis. The old
+    /// default was one `.agent` message — "All systems nominal — Kitchen node
+    /// quiet" — carried by the DESIGNATED init and inherited by a seed-less
+    /// convenience. The sole production constructor (`RootView:280`) passed no
+    /// seed, so every fresh session opened on a bubble no core produced,
+    /// claiming NOMINAL over a core that had not been armed and naming a node
+    /// nobody enrolled. Wrong-source and a hardcoded value in one string, and
+    /// no assertion in the suite could see it: the message was real, it was
+    /// just about nothing. An empty transcript is honest — readiness already
+    /// lives on the header pill (`SessionView:211`) and in the composer's
+    /// disarmed state, which are sourced from the core.
     ///
     /// The `makeTransport` default is DELETED, and the argument that used to
     /// justify it is worth keeping beside the deletion because it was sound
@@ -262,11 +275,7 @@ final class SessionEngine: ObservableObject {
     /// "neither" no matter what the operator chose. A defaulted call site does
     /// not drift; it is simply wrong from the first build.
     init(makeTransport: @escaping (SessionIDBox) -> SessionTransport,
-         seed: [Message] = [
-            Message(role: .agent,
-                    text: "Operator link established. All systems nominal — "
-                        + "Kitchen node quiet. Standing by.")
-         ]) {
+         seed: [Message]) {
         self.makeTransport = makeTransport
         self.messages = seed
     }
@@ -276,10 +285,6 @@ final class SessionEngine: ObservableObject {
     /// the box, so the injection point stays one shape.
     convenience init(transport: SessionTransport, seed: [Message]) {
         self.init(makeTransport: { _ in transport }, seed: seed)
-    }
-
-    convenience init(transport: SessionTransport) {
-        self.init(makeTransport: { _ in transport })
     }
 
     /// Begin a turn. Empty and whitespace-only prompts are refused here rather

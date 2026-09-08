@@ -514,3 +514,115 @@ final class SessionFrameRoutingTests: XCTestCase {
         XCTAssertEqual(labels.count, 7, "two frames render identically")
     }
 }
+
+// MARK: - the transcript is supplied, never manufactured
+
+/// Says nothing. `SilentTransport` in `SessionViewTests` is `private` to that
+/// file, so the seed legs carry their own rather than widening a fixture's
+/// visibility for a neighbour.
+private struct MuteTransport: SessionTransport {
+    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
+/// A fresh session opens EMPTY.
+///
+/// The engine used to default its `seed` to one `.agent` message claiming
+/// "All systems nominal — Kitchen node quiet", and the sole production
+/// constructor took that default. Every install therefore opened on a bubble
+/// no core produced: nominal over an unarmed core, naming a node nobody
+/// enrolled. Nothing in the suite could see it, because the message was
+/// well-formed — it was simply about nothing.
+///
+/// Note what the value legs alone cannot do here. `messages.isEmpty` is a
+/// claim about the DEFAULT-LESS init; it says nothing about whether the
+/// production call site passes `[]` or passes a literal of its own. The
+/// census leg below is the half that reads production.
+@MainActor
+final class SessionSeedTests: XCTestCase {
+
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // ZeusTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo
+        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    func testAFreshEngineHasNoTranscript() {
+        let engine = SessionEngine(transport: MuteTransport(), seed: [])
+        XCTAssertTrue(engine.messages.isEmpty,
+                      "a session nothing has been said in renders nothing")
+    }
+
+    /// POS. Without this, the leg above passes on an engine that DISCARDS its
+    /// seed — `messages = []` unconditionally would be green and the injection
+    /// point dead.
+    func testASeededEngineHasExactlyWhatItWasGiven() {
+        let engine = SessionEngine(transport: MuteTransport(),
+                                   seed: [Message(role: .agent, text: "given")])
+        XCTAssertEqual(engine.messages.count, 1)
+        XCTAssertEqual(engine.messages.first?.text, "given",
+                       "the seed is stored verbatim, not synthesised")
+        XCTAssertNotEqual(engine.messages.first?.text,
+                          SessionEngine(transport: MuteTransport(), seed: []).messages.first?.text,
+                          "seeded and unseeded must not render alike")
+    }
+
+    /// Code lines only — a `//` line is not something the app renders.
+    ///
+    /// This filter is not tidiness, it is the leg's subject. The first run of
+    /// the census below went RED on `Session.swift`, and the hit was the doc
+    /// comment recording the deletion: the leg was reading the tombstone as
+    /// the corpse. A text census over a whole file answers about the file,
+    /// not about the program; `codeLines` narrows it to the program. The
+    /// filter is guarded by its own control in the leg.
+    private func codeLines(_ src: String) -> String {
+        src.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    /// The production call site passes an empty seed, and no manufactured
+    /// transcript literal survives anywhere in shipping source.
+    ///
+    /// Both halves are needed: deleting the default does not stop a call site
+    /// from writing the same sentence inline, which is the same defect with a
+    /// new home.
+    func testNoManufacturedTranscriptSurvivesInShippingSource() throws {
+        let root = try source("Sources/ZeusApp/RootView.swift")
+        XCTAssertTrue(root.contains("seed: []"),
+                      "the production engine is constructed with an empty transcript")
+
+        let session = codeLines(try source("Sources/ZeusApp/Session.swift"))
+        let rootCode = codeLines(root)
+
+        // Controls first, both halves. A needle that must hit proves the read
+        // reached the tree; a needle that must SURVIVE the filter proves the
+        // filter did not simply eat the file, which would make every miss
+        // below a statement about `codeLines` and not about the program.
+        XCTAssertTrue(session.contains("seed: [Message]"),
+                      "VOID: the seed parameter is not where this leg thinks it is")
+        XCTAssertTrue(session.contains("self.messages = seed"),
+                      "VOID: codeLines dropped code, not just comments")
+
+        for banned in ["All systems nominal", "Kitchen node", "Standing by"] {
+            for (name, src) in [("Session.swift", session), ("RootView.swift", rootCode)] {
+                XCTAssertFalse(src.contains(banned),
+                               "\(name) manufactures a transcript line: \(banned)")
+            }
+        }
+    }
+
+    /// The seed-less convenience is gone. It existed only to inherit the
+    /// default, so leaving it would let a caller omit the transcript exactly
+    /// as before — the omission defect one level up.
+    func testNoSeedLessConvenienceRemains() throws {
+        let session = try source("Sources/ZeusApp/Session.swift")
+        XCTAssertTrue(session.contains("convenience init(transport: SessionTransport, seed: [Message])"),
+                      "VOID: the seed-taking convenience is not where this leg thinks it is")
+        XCTAssertFalse(codeLines(session).contains("convenience init(transport: SessionTransport) {"),
+                       "a seed-less convenience lets a call site omit the transcript silently")
+    }
+}

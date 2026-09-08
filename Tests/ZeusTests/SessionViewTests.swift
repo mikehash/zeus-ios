@@ -69,7 +69,7 @@ final class SessionViewTests: XCTestCase {
     /// construction, but the BOX being non-nil is not the same claim as the
     /// gateway having NAMED an id.
     func testEngineLabelStartsNil() {
-        let engine = SessionEngine(transport: SilentTransport())
+        let engine = SessionEngine(transport: SilentTransport(), seed: [])
         XCTAssertNil(engine.sessionLabel)
     }
 
