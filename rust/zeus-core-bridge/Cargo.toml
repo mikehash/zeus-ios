@@ -18,16 +18,36 @@ name = "zeus_core_bridge"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
-# --- pinned to mikehash/Zeus @ 2a2168cd8bf7e7739cf4236ef056b899d5d89c37 -------
-# These four are the set measured green for aarch64-apple-ios on Xcode 26.5 /
-# rustc 1.97.1 (2m07s, 0 errors, 2 pre-existing warnings). zeus-mnemosyne is
+# --- pinned to mikehash/Zeus @ 213d4e7caaf41302d26ad48bb5d7a8f239397294 ---------------------------------------
+# Re-pinned from 2a2168cd (an ancestor of this sha; `merge-base --is-ancestor`
+# rc=0, so this is a forward move, not a fork). 213d4e7c is the commit that
+# feature-gates zeus-talos behind `automation` — the gate this bridge needs in
+# order to take zeus-agent at all. Every crate below rides the SAME sha: a
+# git dependency resolves per-rev, and two revs of one repo in one lock file is
+# two copies of every shared type. zeus-mnemosyne is
 # deliberately ABSENT: it pulls rusqlite `bundled`, a C sqlite amalgamation that
 # has never been cross-compiled against the iOS SDK here. Unmeasured C build !=
 # dependency of the first phone build. (Ruled by Zeus100, 2026-09-07.)
-zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "2a2168cd8bf7e7739cf4236ef056b899d5d89c37" }
-zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "2a2168cd8bf7e7739cf4236ef056b899d5d89c37" }
-zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "2a2168cd8bf7e7739cf4236ef056b899d5d89c37" }
-zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "2a2168cd8bf7e7739cf4236ef056b899d5d89c37" }
+zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "213d4e7caaf41302d26ad48bb5d7a8f239397294" }
+zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "213d4e7caaf41302d26ad48bb5d7a8f239397294" }
+zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "213d4e7caaf41302d26ad48bb5d7a8f239397294" }
+zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "213d4e7caaf41302d26ad48bb5d7a8f239397294" }
+# zeus-agent at the same pin, default-features = false: its default set is
+# ["audio","matrix","voice","automation"] (213d4e7caaf41302d26ad48bb5d7a8f239397294 crates/zeus-agent/Cargo.toml:10)
+# and all four are host-surface — `automation` is the only gate on zeus-talos.
+zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "213d4e7caaf41302d26ad48bb5d7a8f239397294", default-features = false }
+
+# FULL 40-char revs above, not abbreviations, and the reason is portability not
+# style: mikehash/Zeus carries BOTH `refs/heads/TUI` and
+# `refs/heads/tui/track-a-chrome` (measured with git ls-remote). On a
+# case-insensitive filesystem — every default macOS box — the loose-ref forms
+# collide: `tui` cannot be created as a directory while `TUI` exists as a file.
+# libgit2 reports the failure as "failed to authenticate when downloading
+# repository"; the git CLI backend reports the true cause. Neither can fetch.
+# A full sha lets cargo resolve against an already-present object and skip the
+# fetch. A fresh box must seed ~/.cargo/git/db/zeus-<hash> from a local clone
+# (`git clone --bare ~/Zeus <db>` then `git pack-refs --all` — packed refs are
+# one file, so the two names coexist). The remote-side rename is the real fix.
 
 # uniffi 0.28 is INHERITED, not chosen: it already sits at the pin's workspace
 # Cargo.toml:243 with 0 of 39 manifests consuming it (measured with a quoted
