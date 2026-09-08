@@ -355,6 +355,7 @@ final class G0EditorTests: XCTestCase {
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             transport: transport,
+            credentials: StubCredentialProvider(),
             onToast: { _ in })
         // Aperture: @State values are not settable without a renderer, so
         // the path is exercised from its INIT-SEEDED state — which is the
@@ -389,6 +390,7 @@ final class G0EditorTests: XCTestCase {
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
             transport: transport,
+            credentials: StubCredentialProvider(),
             seedToken: seedToken,
             onToast: { _ in })
     }
@@ -460,6 +462,7 @@ final class G0EditorTests: XCTestCase {
             tokens: tokens,
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
+            credentials: StubCredentialProvider(),
             onToast: { toasts.append($0) })
         // SAVE with an EMPTY token field: the stored credential survives.
         // (The button body is not directly callable; the contract it holds
@@ -481,6 +484,7 @@ final class G0EditorTests: XCTestCase {
             tokens: InMemoryTokenStore(),
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
+            credentials: StubCredentialProvider(),
             onToast: { _ in })
         var seeded: String?
         var matched = 0
@@ -505,6 +509,7 @@ final class G0EditorTests: XCTestCase {
             tokens: InMemoryTokenStore(),
             store: InMemoryCommissionStore(),
             isPresented: .constant(true),
+            credentials: StubCredentialProvider(),
             onToast: { _ in })
         var malformedMatched = 0
         for child in Mirror(reflecting: malformed).children where child.label == "_url" {
@@ -563,6 +568,7 @@ final class G0EditorTests: XCTestCase {
             store: store,
             isPresented: .constant(true),
             transport: RecordingTransport(),
+            credentials: StubCredentialProvider(),
             onToast: { _ in })
 
         let outcome = sheet.commitURL()
@@ -623,6 +629,7 @@ final class G0EditorTests: XCTestCase {
             store: store,
             isPresented: .constant(true),
             transport: RecordingTransport(),
+            credentials: StubCredentialProvider(),
             onToast: { _ in })
 
         XCTAssertEqual(sheet.commitURL(), .noCommission)
@@ -649,6 +656,7 @@ final class G0EditorTests: XCTestCase {
             store: store,
             isPresented: .constant(true),
             transport: RecordingTransport(),
+            credentials: StubCredentialProvider(),
             onToast: { _ in })
 
         XCTAssertEqual(sheet.commitURL(), .cleared)

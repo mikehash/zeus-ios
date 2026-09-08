@@ -298,9 +298,15 @@ final class RouteCatalogStore: ObservableObject {
     /// by `RootView` and handed DOWN to `NodesView`, which used to construct
     /// it itself; a view-owned construction had no store in scope and so
     /// could only ever have read the environment.
+    /// `credentials` has NO DEFAULT, deliberately. A default of
+    /// `KeychainCredentialProvider()` is not a test double — it is an
+    /// unlogged dependency on the HOST's state: on a simulator with an empty
+    /// Keychain it answers `nil` to everything, so every "no credential was
+    /// attached" leg passes on the empty store rather than on the wiring.
+    /// The one live construction is `RootView.swift` (`Sources` census == 1).
     init(config: GatewayConfig,
          fetcher: RouteCatalogFetching = HTTPRouteCatalogFetcher(),
-         credentials: CredentialProviding = KeychainCredentialProvider()) {
+         credentials: CredentialProviding) {
         self.config = config
         self.fetcher = fetcher
         self.credentials = credentials

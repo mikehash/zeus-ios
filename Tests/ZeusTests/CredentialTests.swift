@@ -243,4 +243,47 @@ final class CredentialTests: XCTestCase {
         XCTAssertFalse(linked.subtitle.contains("KEYCHAIN"))
         XCTAssertFalse(linked.subtitle.contains("ENV"))
     }
+
+    /// THE LIVE-PROVIDER CENSUS — the rider on ③c(b), caught before it greened
+    /// anything. Three seams (`GatewayEditor`, `Route`, `Approvals`) defaulted
+    /// `credentials:` to `KeychainCredentialProvider()`, and every one of the
+    /// eleven test constructions took the default. On a simulator that
+    /// provider answers `nil` to everything, so each "no credential was
+    /// attached" leg in those files was passing on an EMPTY HOST KEYCHAIN, not
+    /// on the wiring — the dead-probe-flattering shape one register down from
+    /// the `Authorization` / `UNAuthorizationStatus` POS.
+    ///
+    /// A default that reaches a live system is not a test double; it is an
+    /// unlogged dependency on the host's state.
+    ///
+    /// The constant is ONE: the single construction in `RootView`, which is
+    /// itself this leg's POS — if the walk goes dead the count reads 0 and the
+    /// VOID arm fires rather than the equality greening on nothing.
+    func testTheKeychainProviderIsConstructedExactlyOnceAndNeverAsADefault() throws {
+        let files = try sourceFiles()
+        XCTAssertGreaterThan(files.count, 20, "VOID: the Sources walk found nothing")
+
+        var constructions: [String] = []
+        var defaults: [String] = []
+        for (name, code) in files {
+            for line in code {
+                if line.contains("KeychainCredentialProvider()") {
+                    constructions.append("\(name): \(line.trimmingCharacters(in: .whitespaces))")
+                    if line.contains("CredentialProviding = ") { defaults.append(name) }
+                }
+            }
+        }
+
+        // POS: the one live construction must be FOUND, or the two assertions
+        // below are satisfied by a walk that read nothing.
+        XCTAssertEqual(constructions.count, 1,
+                       "the Keychain provider must be constructed once: \(constructions)")
+        guard let only = constructions.first else {
+            return XCTFail("VOID: the walk found no Keychain provider construction at all")
+        }
+        XCTAssertTrue(only.hasPrefix("RootView.swift"),
+                      "the one construction belongs to RootView: \(only)")
+        XCTAssertTrue(defaults.isEmpty,
+                      "a live provider must never be a parameter default: \(defaults)")
+    }
 }

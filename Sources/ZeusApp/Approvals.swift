@@ -374,9 +374,15 @@ final class ApprovalsStore: ObservableObject {
     /// length. Short form: a default reaches the env-only half of resolution
     /// and cannot see the commission, so it would answer a question the
     /// operator already answered elsewhere.
+    /// `credentials` has NO DEFAULT, deliberately. A default of
+    /// `KeychainCredentialProvider()` is not a test double — it is an
+    /// unlogged dependency on the HOST's state: on a simulator with an empty
+    /// Keychain it answers `nil` to everything, so every "no credential was
+    /// attached" leg passes on the empty store rather than on the wiring.
+    /// The one live construction is `RootView.swift` (`Sources` census == 1).
     init(config: GatewayConfig,
          service: ApprovalsServicing = HTTPApprovalsService(),
-         credentials: CredentialProviding = KeychainCredentialProvider()) {
+         credentials: CredentialProviding) {
         self.config = config
         self.service = service
         self.credentials = credentials

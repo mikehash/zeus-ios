@@ -73,13 +73,19 @@ struct GatewayEditorSheet: View {
     /// already uses at the line below. Production passes nothing; the
     /// default keeps the one production call site (`RootView.swift:172`)
     /// unchanged and keeps the field empty on every real launch.
+    /// `credentials` has NO DEFAULT, deliberately. A default of
+    /// `KeychainCredentialProvider()` is not a test double — it is an
+    /// unlogged dependency on the HOST's state: on a simulator with an empty
+    /// Keychain it answers `nil` to everything, so every "no credential was
+    /// attached" leg passes on the empty store rather than on the wiring.
+    /// The one live construction is `RootView.swift` (`Sources` census == 1).
     init(config: GatewayConfig,
          resolution: GatewayConfig.Resolution,
          tokens: GatewayTokenStoring,
          store: CommissionStoring,
          isPresented: Binding<Bool>,
          transport: PreflightTransporting = URLSessionPreflight(),
-         credentials: CredentialProviding = KeychainCredentialProvider(),
+         credentials: CredentialProviding,
          seedToken: String = "",
          onToast: @escaping (String) -> Void) {
         self.config = config

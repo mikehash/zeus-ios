@@ -240,7 +240,8 @@ final class RouteTests: XCTestCase {
     @MainActor
     func testSelectionIsDeviceLocalAndTheToastSaysSo() {
         let store = RouteCatalogStore(config: Self.endpoint,
-                                      fetcher: StubFetcher(result: .loading))
+                                      fetcher: StubFetcher(result: .loading),
+                                      credentials: StubCredentialProvider())
         let route = Route(id: "ollama", name: "OLLAMA", tagline: "", reach: .lanOnly)
         let toast = store.select(route)
         XCTAssertEqual(store.selected, route, "the tap must change the selection")
@@ -259,7 +260,8 @@ final class RouteTests: XCTestCase {
         let kept = Route(id: "ollama", name: "OLLAMA", tagline: "", reach: .lanOnly)
         let store = RouteCatalogStore(
             config: Self.endpoint,
-            fetcher: StubFetcher(result: .loaded(routes: [kept], activeModel: nil)))
+            fetcher: StubFetcher(result: .loaded(routes: [kept], activeModel: nil)),
+            credentials: StubCredentialProvider())
 
         store.selected = gone
         await store.load()
@@ -277,7 +279,8 @@ final class RouteTests: XCTestCase {
     @MainActor
     func testUnconfiguredGatewayNamesItselfRatherThanSpinning() async {
         let store = RouteCatalogStore(config: .absent,
-                                      fetcher: StubFetcher(result: .loaded(routes: [], activeModel: nil)))
+                                      fetcher: StubFetcher(result: .loaded(routes: [], activeModel: nil)),
+                                      credentials: StubCredentialProvider())
         if case .unconfigured(let why) = store.state {
             XCTAssertTrue(why.contains("ZEUS_GATEWAY_URL"), "the reason must quote the missing input")
         } else {
