@@ -152,7 +152,13 @@ for FL in "${LISTS[@]}"; do
     [ "$STRAY" -eq 0 ] || void "$STRAY driver input path(s) neither under ROOT=$ROOT nor generated under OBJROOT — cannot normalise"
     GOT_N=$(printf '%s\n' "$GOT" | grep -c '[.]swift$')
 
-    printf 'list %-28s inputs=%-3s (+%s generated) tree=%-3s mtime=%s\n' "$ARCH" "$GOT_N" "$GEN" "$TREE_N" "$MT"
+    # `written` is DISPLAY ONLY and says so on the line. Time was the retired
+    # instrument here: `touch`, `git checkout`, `cp -p` and clock skew all move
+    # an mtime with no content change, and content can change under an older
+    # stamp. The verdict below is tree identity (§5b). A reader at a DRIFT
+    # wants to know WHEN the list was written after being told THAT it is
+    # stale — that is the only job this field has.
+    printf 'list %-28s inputs=%-3s (+%s generated) tree=%-3s written=%s (display only; verdict = tree identity, §5b)\n' "$ARCH" "$GOT_N" "$GEN" "$TREE_N" "$MT"
 
     MISSING=$(comm -13 <(printf '%s\n' "$GOT") <(printf '%s\n' "$TREE"))
     EXTRA=$(comm -23 <(printf '%s\n' "$GOT") <(printf '%s\n' "$TREE"))

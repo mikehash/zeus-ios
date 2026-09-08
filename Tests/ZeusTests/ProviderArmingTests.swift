@@ -175,7 +175,7 @@ final class ProviderArmingTests: XCTestCase {
                                     core: core,
                                     providerKey: "sk-real",
                                     baseURL: nil)
-        XCTAssertEqual(reason, "NO MODEL — ANTHROPIC LISTED NONE")
+        XCTAssertEqual(reason, "NO MODEL — Anthropic LISTED NONE")
         XCTAssertTrue(core.setCalls.isEmpty,
                       "a model the app invented is a model no provider serves — the call must not be made")
     }
@@ -186,7 +186,7 @@ final class ProviderArmingTests: XCTestCase {
                                     core: core,
                                     providerKey: nil,
                                     baseURL: nil)
-        XCTAssertEqual(reason, "NO KEY FOR ANTHROPIC — ENTER ONE IN ROUTES")
+        XCTAssertEqual(reason, "NO KEY FOR Anthropic — ENTER ONE IN ROUTES")
         XCTAssertTrue(core.setCalls.isEmpty)
     }
 

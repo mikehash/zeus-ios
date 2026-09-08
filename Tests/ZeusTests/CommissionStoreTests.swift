@@ -232,12 +232,19 @@ final class ManagedDeferralTests: XCTestCase {
 
         // `model` has no default: the caller must have ASKED the provider.
         // This leg names the writer's contract, not the CTA's plumbing.
-        c.recordRoutesChoice(model: "claude-x")
+        c.recordRoutesChoice(providerID: "anthropic", model: "claude-x")
 
         XCTAssertEqual(c.route, .byok)
         XCTAssertEqual(c.model, "claude-x")
-        XCTAssertEqual(c.provider, Commission.routesProviderID)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), c.summary)
+        XCTAssertEqual(c.provider, "anthropic")
+        // THE SUMMARY RENDERS THE CORE'S LABEL, NOT `id.uppercased()`.
+        let saved = ProviderCatalog.current
+        defer { ProviderCatalog.current = saved }
+        ProviderCatalog.current = StubCatalog(rows: [
+            ProviderRow(id: "anthropic", label: "Anthropic", shape: .key)
+        ])
+        XCTAssertTrue(c.summary.contains("Anthropic\u{00A0}·\u{00A0}OWN KEY"), c.summary)
+        XCTAssertFalse(c.summary.contains("ANTHROPIC"), "the wire id must not be upper-cased into a display form: \(c.summary)")
         XCTAssertFalse(c.summary.contains("no provider"), c.summary)
     }
 
@@ -263,30 +270,34 @@ final class ManagedDeferralTests: XCTestCase {
                       "the model must come from the provider at the step, never from a literal")
     }
 
-    /// THE DEFAULT MUST NOT CREEP BACK, and this is the leg that says so in a
-    /// form a grep can hold: `Commissioning.swift` may name a provider in
-    /// exactly ONE place — `routesProviderID`, the constant of the routes step,
-    /// reachable only by an operator action. Any second occurrence is either a
-    /// decoder default (the fabrication this commit removed) or a comment
-    /// quoting the literal, which is the self-match that tripped this file
-    /// three times: the guard cannot tell them apart, so the file carries none.
-    /// The count is the invariant, not the absence.
-    func testCommissioningNamesAProviderInExactlyOnePlace() throws {
+    /// THE FILE NAMES NO PROVIDER AT ALL, AND THE INVARIANT IS NOW ZERO.
+    ///
+    /// It used to be ONE — `routesProviderID`, the hardcoded id of a
+    /// single-card routes step. The picker retired it: rows come from
+    /// `list_providers()` and the id the operator taps is the only literal
+    /// that ever reaches `provider`. Zero is a STRONGER invariant than one and
+    /// it needed the POS control re-anchored, because a guard whose subject is
+    /// deleted stops asserting silently rather than loudly.
+    func testCommissioningNamesNoProviderLiteralAtAll() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(src.contains("static let routesProviderID"),
+        // POS CONTROL, RE-ANCHORED. The old control asserted the CONSTANT
+        // exists — retiring the constant would have left this guard asserting
+        // about a thing that no longer exists, which fails silently rather
+        // than loudly. It now anchors on the step that does the writing.
+        XCTAssertTrue(src.contains("func recordRoutesChoice"),
                       "POS control: the grep is reading the right file")
-        let literal = "\"" + Commission.routesProviderID + "\""
+        let literal = "\"anthropic\""
         let hits = src.components(separatedBy: literal).count - 1
-        XCTAssertEqual(hits, 1,
+        XCTAssertEqual(hits, 0,
                        """
-                       exactly one site may name a provider literal. Found \(hits). \
-                       A second is either a decoder default — nil means nobody chose — \
-                       or a comment quoting the literal, and this guard cannot tell \
-                       them apart. Cite the shape, not the string.
+                       shipping source may name NO provider literal. Found \(hits). \
+                       Any hit is a decoder default, a step constant, or a comment \
+                       quoting one, and this guard cannot tell them apart. \
+                       Cite the shape, not the string.
                        """)
     }
 
@@ -298,7 +309,7 @@ final class ManagedDeferralTests: XCTestCase {
         let data = try XCTUnwrap(record.data(using: .utf8))
         let c = try JSONDecoder().decode(Commission.self, from: data)
         XCTAssertEqual(c.provider, "ollama")
-        XCTAssertTrue(c.summary.contains("OLLAMA\u{00A0}·\u{00A0}OWN KEY"), c.summary)
+        XCTAssertTrue(c.summary.contains("Ollama\u{00A0}·\u{00A0}OWN KEY"), c.summary)
     }
 
     /// And the whole path, through the store the app actually uses — the
@@ -318,7 +329,7 @@ final class ManagedDeferralTests: XCTestCase {
     /// (2) The summary prints a value something wrote, not a route count.
     func testSummaryNamesTheProviderAndNeverAFabricatedRouteCount() {
         let c = Commission(route: .byok, provider: "anthropic", callsign: "MIGUEL", nodeEnrolled: false)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), "summary must name the provider set at routes: \(c.summary)")
+        XCTAssertTrue(c.summary.contains("Anthropic\u{00A0}·\u{00A0}OWN KEY"), "summary must name the provider set at routes: \(c.summary)")
         XCTAssertFalse(c.summary.contains("11 routes"), "no route count: nothing measured one")
         XCTAssertFalse(c.summary.lowercased().contains("managed"), "summary must not print a mode the app cannot produce")
     }
@@ -330,7 +341,7 @@ final class ManagedDeferralTests: XCTestCase {
         let a = Commission(provider: "anthropic", callsign: "X").summary
         let b = Commission(provider: "ollama", callsign: "X").summary
         XCTAssertNotEqual(a, b, "summary must be derived from `provider`, not fixed")
-        XCTAssertTrue(b.contains("OLLAMA\u{00A0}·\u{00A0}OWN KEY"), b)
+        XCTAssertTrue(b.contains("Ollama\u{00A0}·\u{00A0}OWN KEY"), b)
     }
 
     /// (3) The capture seed is a mode that exists, and its provider id is one
@@ -346,7 +357,7 @@ final class ManagedDeferralTests: XCTestCase {
         XCTAssertEqual(seeded.route, .byok)
         XCTAssertFalse(seeded.summary.lowercased().contains("managed"),
                        "the captured summary frame must not carry the string `managed`: \(seeded.summary)")
-        XCTAssertTrue(seeded.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), seeded.summary)
+        XCTAssertTrue(seeded.summary.contains("Anthropic\u{00A0}·\u{00A0}OWN KEY"), seeded.summary)
         // The id must be one `Provider::from_prefix` knows (zeus-core:8922).
         let coreAccepted = ["anthropic", "openai", "ollama", "openrouter", "google", "gemini",
                             "groq", "mistral", "together", "fireworks", "azure", "bedrock",
@@ -367,7 +378,11 @@ final class ManagedDeferralTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(src.contains("YOUR OWN KEYS"), "POS control: the grep can find a card title")
+        // POS CONTROL, RE-ANCHORED. It used to name the single BYOK card's title;
+        // the picker retired that card — rows come from the core's catalog now —
+        // so the control anchors on the step that renders them. A control whose
+        // subject is deleted stops controlling silently.
+        XCTAssertTrue(src.contains("private var routesStep"), "POS control: the grep can find the routes step")
         XCTAssertFalse(src.contains("MANAGED — NOVA CREDITS"), "the MANAGED card must not render")
         XCTAssertFalse(src.contains("11 routes, zero keys"), "its copy must go with it")
         XCTAssertFalse(src.contains("Pick how I reach the models"),
@@ -413,7 +428,7 @@ final class CopyRegisterTests: XCTestCase {
                        "the retired noun must not ship in a rendered string")
         // The rendered value itself, not just the source line.
         let c = Commission(route: .byok, provider: "anthropic", callsign: "ATLAS", nodeEnrolled: false)
-        XCTAssertTrue(c.summary.contains("ANTHROPIC\u{00A0}·\u{00A0}OWN KEY"), c.summary)
+        XCTAssertTrue(c.summary.contains("Anthropic\u{00A0}·\u{00A0}OWN KEY"), c.summary)
         XCTAssertFalse(c.summary.contains("BYOK"), c.summary)
     }
 

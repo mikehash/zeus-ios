@@ -105,7 +105,7 @@ enum CoreArming {
         // defaultable field: it means ROUTES never obtained a model list, and
         // inventing one would send the core a model name no provider serves.
         guard let model = commission.model else {
-            return "NO MODEL — \(id.uppercased()) LISTED NONE"
+            return "NO MODEL — \(ProviderCatalog.label(for: id)) LISTED NONE"
         }
         let key: String?
         if keylessProviders.contains(id) {
@@ -114,13 +114,13 @@ enum CoreArming {
             key = providerKey
         }
         guard let key, !key.isEmpty else {
-            return "NO KEY FOR \(id.uppercased()) — ENTER ONE IN ROUTES"
+            return "NO KEY FOR \(ProviderCatalog.label(for: id)) — ENTER ONE IN ROUTES"
         }
         do {
             try core.setProvider(id: id, model: model, key: key, baseUrl: baseURL)
             return nil
         } catch {
-            return "\(id.uppercased()) REFUSED: \(error)"
+            return "\(ProviderCatalog.label(for: id)) REFUSED: \(error)"
         }
     }
 

@@ -240,7 +240,7 @@ final class ForkStepTests: XCTestCase {
 
     func testDoneHeadlineProviderOnRecordArm() {
         var record = Commission()
-        record.provider = Commission.routesProviderID
+        record.provider = "anthropic"
         XCTAssertEqual(CommissioningStep.done.narration(commission: record),
                        "Provider on your record. I arm on the next screen.")
     }
@@ -251,7 +251,7 @@ final class ForkStepTests: XCTestCase {
     /// invariant those two legs exist to protect in one line.
     func testDoneHeadlineArmsAreNotTheSameSentence() {
         var record = Commission()
-        record.provider = Commission.routesProviderID
+        record.provider = "anthropic"
         XCTAssertNotEqual(CommissioningStep.done.narration(commission: Commission()),
                           CommissioningStep.done.narration(commission: record),
                           "the done headline must be a function of the record, not a constant")
@@ -261,7 +261,7 @@ final class ForkStepTests: XCTestCase {
     /// `CoreArming.arm` exists in the process. It must not come back.
     func testNoCoreClaimSurvivesInTheDoneHeadline() {
         var record = Commission()
-        record.provider = Commission.routesProviderID
+        record.provider = "anthropic"
         for arm in [CommissioningStep.done.narration(commission: Commission()),
                     CommissioningStep.done.narration(commission: record)] {
             for banned in ["nominal", "live", "ready", "armed"] {

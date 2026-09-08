@@ -274,9 +274,11 @@ struct Commission: Equatable, Codable {
         // and defaulting one here would print a provider the operator never
         // chose onto the completion screen — the fabricated route-count class
         // of `Commission.summary`, one field over. Absent decodes to absent.
-        // The one legitimate provider literal in this file is
-        // `routesProviderID` (below), a constant of the STEP, reachable only
-        // by an operator action.
+        // This file now names NO provider at all: the ROUTES step renders
+        // the core's own catalog and persists the id the operator tapped, so
+        // the only literal that ever reaches `provider` came from
+        // `list_providers()`. The guard on this is a count of ZERO in
+        // shipping source, not a count of one.
         provider = try c.decodeIfPresent(String.self, forKey: .provider)
         callsign = try c.decode(String.self, forKey: .callsign)
         nodeEnrolled = try c.decode(Bool.self, forKey: .nodeEnrolled)
@@ -321,16 +323,10 @@ struct Commission: Equatable, Codable {
     /// count nothing measured — a fabricated number on the completion screen,
     /// the same class as a latency on a pill no probe produced. What replaces
     /// it is the provider the operator actually set at the routes step,
-    /// uppercased, and nothing else.
-    /// The id this step writes when the operator takes the single BYOK card.
-    ///
-    /// It is a CONSTANT OF THE STEP, not a default of the type: `provider` is
-    /// optional and nil means nobody chose. Only an operator action reaching
-    /// here may name a provider. The value is one the core resolves
-    /// (`Provider::from_prefix`, zeus-core:8922) — a literal the core refuses
-    /// would be a commission the bridge rejects on the first send.
-    static let routesProviderID = "anthropic"
-
+    /// rendered through the CORE'S OWN LABEL and nothing else. Not
+    /// `id.uppercased()`: that was Swift inventing a display form for a value
+    /// it does not own (`xiaomimimo` → `XIAOMIMIMO`), which is what
+    /// `ProviderInfo.label` exists to prevent.
     /// EXTRACTED BECAUSE THE VIEW BODY IS NOT OBSERVABLE IN THIS TARGET.
     /// Deleting the write inside the CTA closure left all 283 tests green
     /// (measured) — the third instance today of value-asserted /
@@ -375,7 +371,7 @@ struct Commission: Equatable, Codable {
     /// nil is representable and means "the provider listed nothing", which is a
     /// state `CoreArming.arm` renders — it is not the same as a model the app
     /// chose.
-    mutating func recordRoutesChoice(providerID: String = Commission.routesProviderID,
+    mutating func recordRoutesChoice(providerID: String,
                                      model chosenModel: String?) {
         route = .byok
         provider = providerID
@@ -386,7 +382,7 @@ struct Commission: Equatable, Codable {
         // nil is a real state, not a missing value to paper over: a legacy
         // record never held a provider, and the screen says so rather than
         // naming one the operator did not choose.
-        let routeText = provider.map { Theme.joined([$0.uppercased(), "OWN KEY"]) } ?? "no provider"
+        let routeText = provider.map { Theme.joined([ProviderCatalog.label(for: $0), "OWN KEY"]) } ?? "no provider"
         let nodeText = nodeEnrolled ? "1 node enrolled" : "solo"
         let operatorText = callsign.isEmpty ? "operator" : "operator \(callsign.lowercased())"
         return Theme.joined(["zeus core", routeText, nodeText, operatorText])
@@ -426,6 +422,28 @@ struct CommissioningView: View {
         forkPick ?? commission.deployment ?? .local
     }
     @State private var scanning = false
+
+    /// The provider row the operator has TAPPED, held in the view.
+    ///
+    /// Same shape as `forkPick` one field over: a preselection is what the
+    /// screen is showing, not what the flow produced. `commission.provider`
+    /// stays nil until CONTINUE writes it, so "was shown a list" and "chose"
+    /// remain distinguishable in the stored record.
+    @State private var providerPick: String? = nil
+
+    /// The model the operator TYPED. Required for every shape.
+    ///
+    /// There is no default literal and no guess. `list_models` is Ollama-only
+    /// by construction (`lib.rs:236` returns `Unsupported` for every other
+    /// prefix), so a picker that relied on `firstModel` would leave 21 of 26
+    /// providers unable ever to arm — `NO MODEL — <label> LISTED NONE` on
+    /// every install. The field is the collectable half; the KEY field beside
+    /// it is not collectable until the provider-scoped keychain lands, and the
+    /// screen shows those as two states rather than averaging them into one.
+    @State private var modelText: String = ""
+
+    /// Set once per appearance of ROUTES, from the core's own catalog.
+    @State private var providerRows: [ProviderRow] = []
 
     var body: some View {
         ZStack {
@@ -662,55 +680,8 @@ struct CommissioningView: View {
             }
 
         case .routes:
-            VStack(spacing: 10) {
-                // ONE CARD, NOT TWO, AND NOTHING RENDERS FOR MANAGED —
-                // no greyed card, no "coming soon". A stated non-action is
-                // still a non-action on a screen the operator taps.
-                RouteCard(
-                    title: "YOUR OWN KEYS",
-                    copy: "Direct to providers. The key stays on this phone.",
-                    selected: true
-                ) { commission.route = .byok }
+            routesStep
 
-                do {
-                    // The hint is part of the contract: the key field here is
-                    // not the only place keys can be added.
-                    Text("MORE ROUTES ANYTIME IN NODES → ROUTE")
-                        .font(Theme.mono(8.5))
-                        .tracking(1.0)
-                        .foregroundStyle(Theme.w(0.35))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .transition(.opacity)
-                }
-
-                // The CTA states that a network round-trip WILL happen — BYOK
-                // validates a key, and with MANAGED gone there is no branch
-                // where it does not. The label is the only warning there is.
-                PrimaryButton("VALIDATE + CONTINUE", glyph: "arrow.right") {
-                    // THE STEP WRITES THE PROVIDER. It is not a type-level
-                    // default: `Commission.provider` is `String?` and nil means
-                    // the operator never chose one, which the summary prints as
-                    // such. Only an operator action through this step may name
-                    // a provider. The id is one `Provider::from_prefix` accepts
-                    // (zeus-core:8922) — the picker that lets him choose among
-                    // them arrives with the first `setProvider` caller; until
-                    // it does, this single card IS the choice he made.
-                    // The model comes FROM THE PROVIDER, asked here, at the
-                    // one moment an operator names a provider. v1 takes the
-                    // first entry; the picker that lets him choose among them
-                    // is the next cut. nil is a real answer (a keyed provider
-                    // whose `list_models` is Unsupported in v1) and is stored
-                    // as such — `CoreArming.arm` renders it, nothing guesses.
-                    let id = Commission.routesProviderID
-                    let model = CoreArming.firstModel(
-                        for: id,
-                        core: try? EmbeddedCore.shared.get(),
-                        key: nil,
-                        baseURL: nil)
-                    commission.recordRoutesChoice(providerID: id, model: model)
-                    step = .nodes
-                }
-            }
 
         case .nodes:
             VStack(spacing: 0) {
@@ -812,6 +783,148 @@ struct CommissioningView: View {
             try? await Task.sleep(for: .milliseconds(1200))
             step = .routes
         }
+    }
+
+    /// ROUTES: THE CORE'S CATALOG, THE OPERATOR'S CHOICE.
+    ///
+    /// Before this cut the step rendered ONE card with a hardcoded id and
+    /// upper-cased it for display. Rows now come from `list_providers()`, the
+    /// LABEL is rendered and the ID is persisted, and the model is typed
+    /// because no catalog can supply it for a keyed provider in v1.
+    ///
+    /// The KEY field is DISABLED WITH ITS REASON rather than absent: a
+    /// provider whose shape says `Key` genuinely needs one, and a screen that
+    /// simply omitted the field would be silent about a requirement the arm
+    /// message (`NO KEY FOR <label> — ENTER ONE IN ROUTES`) points right back
+    /// at. Disabled-with-reason is this app's established form for a state
+    /// that is real but not yet actionable — the same register as `UNSET`.
+    @ViewBuilder
+    private var routesStep: some View {
+        let selected = providerPick.flatMap { id in providerRows.first { $0.id == id } }
+
+        VStack(spacing: 10) {
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(providerRows, id: \.id) { row in
+                        RouteCard(
+                            title: row.label,
+                            copy: row.shape.rowCopy,
+                            selected: row.id == providerPick
+                        ) {
+                            providerPick = row.id
+                            commission.route = .byok
+                            modelText = CoreArming.firstModel(
+                                for: row.id,
+                                core: try? EmbeddedCore.shared.get(),
+                                key: nil,
+                                baseURL: nil) ?? ""
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+
+            if let selected {
+                TextField("", text: $modelText, prompt:
+                    Text("MODEL").font(Theme.mono(12)).foregroundStyle(Theme.w(0.2))
+                )
+                .font(Theme.mono(13))
+                .foregroundStyle(Theme.text)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .padding(.horizontal, 14)
+                .frame(height: 46)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.corner)
+                        .fill(Theme.w(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Theme.corner)
+                                .stroke(Theme.w(0.10), lineWidth: 1)
+                        )
+                )
+                .accessibilityLabel("Model for \(selected.label)")
+
+                if case .key = selected.shape {
+                    disabledKeyField(for: selected)
+                }
+                if case let .unsupported(reason) = selected.shape {
+                    Text("\(selected.label.uppercased()) CANNOT BE SET FROM THIS SCREEN — \(reason.uppercased())")
+                        .font(Theme.mono(8.5))
+                        .tracking(1.0)
+                        .foregroundStyle(Theme.w(0.35))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            do {
+                // The hint is part of the contract: the key field here is
+                // not the only place keys can be added.
+                Text("MORE ROUTES ANYTIME IN NODES → ROUTE")
+                    .font(Theme.mono(8.5))
+                    .tracking(1.0)
+                    .foregroundStyle(Theme.w(0.35))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+            }
+
+            // The CTA is disabled until BOTH halves are answered, because the
+            // record it writes has no representable "partly chosen" state.
+            PrimaryButton("VALIDATE + CONTINUE", glyph: "arrow.right") {
+                guard let id = providerPick else { return }
+                let typed = modelText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !typed.isEmpty else { return }
+                // THE STEP WRITES THE PROVIDER AND THE MODEL, both from the
+                // operator. `Commission.provider` is `String?` and nil means
+                // nobody chose; nothing in this file names a provider now.
+                commission.recordRoutesChoice(providerID: id, model: typed)
+                step = .nodes
+            }
+            .disabled(!Self.routesCTAEnabled(providerPick: providerPick, modelText: modelText))
+        }
+        .onAppear { providerRows = ProviderCatalog.current.rows() }
+    }
+
+    /// EXTRACTED BECAUSE THE VIEW BODY IS NOT OBSERVABLE IN THIS TARGET.
+    ///
+    /// Measured: replacing the CTA's `.disabled(...)` with `.disabled(false)`
+    /// left all 424 tests green — a SwiftUI modifier inside a `body` has no
+    /// importable surface, so the gate had no guard at all. As a static
+    /// function over its two inputs it does.
+    ///
+    /// BOTH halves are required because the record has no representable
+    /// "partly chosen" state: `recordRoutesChoice` writes provider AND model
+    /// together, and a CTA that fired on one of them would write a commission
+    /// whose other half the operator never gave.
+    static func routesCTAEnabled(providerPick: String?, modelText: String) -> Bool {
+        guard providerPick != nil else { return false }
+        return !modelText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The key field, present and inert, saying why.
+    private func disabledKeyField(for row: ProviderRow) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("API KEY")
+                .font(Theme.mono(9))
+                .tracking(1.4)
+                .foregroundStyle(Theme.unarmedTint)
+            Text("KEY ENTRY ARRIVES WITH THE ON-PHONE KEY STORE")
+                .font(Theme.mono(8.5))
+                .tracking(1.0)
+                .foregroundStyle(Theme.unarmedTint)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .frame(height: 46)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.corner)
+                .fill(Theme.w(0.02))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.corner)
+                        .stroke(Theme.w(0.06), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("API key for \(row.label). Not yet enterable — key entry arrives with the on-phone key store.")
     }
 
     private var backdrop: some View {
