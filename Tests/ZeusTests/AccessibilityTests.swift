@@ -223,6 +223,32 @@ final class OrbVoiceOverTests: XCTestCase {
                                                  status: "LINKED", state: $0,
                                                  disarmReason: GatewayConfig.noProviderMessage)
         }
+        // ZM's four unarmed x phase assertions. EQUALITY to the literal, not a
+        // set-count: a function returning "" collapses to count 1 too, and
+        // count-1 is satisfied by every constant including the empty one. The
+        // string is the claim, so the string is what is asserted, once per
+        // phase, so a partial regression names its phase.
+        for phase in AgentState.allCases {
+            XCTAssertEqual(
+                SessionView.headerAccessibilityLabel(
+                    sessionID: "abc123de-ffff", status: "LINKED", state: phase,
+                    disarmReason: GatewayConfig.noProviderMessage),
+                "Agent unarmed. Set a provider in Routes.",
+                "unarmed spoken label wrong for phase \(phase)")
+        }
+        // Ruling (1) stated as a refusal, not inferred from equality above: a
+        // VoiceOver operator must never hear a phase word under an UNARMED
+        // pill. Named tokens, so a future recomposition that appends the caps
+        // strings to the sentence fails here even though the prefix matches.
+        for phase in AgentState.allCases {
+            let spoken = SessionView.headerAccessibilityLabel(
+                sessionID: "abc123de-ffff", status: "LINKED", state: phase,
+                disarmReason: GatewayConfig.noProviderMessage)
+            for banned in ["NOMINAL", "SESSION", "LINKED", "REASONING", "\u{00B7}"] {
+                XCTAssertFalse(spoken.contains(banned),
+                    "unarmed spoken label carries `\(banned)`: \(spoken)")
+            }
+        }
         XCTAssertEqual(Set(unarmed).count, 1,
             "unarmed must collapse every phase onto one badge: \(Set(unarmed))")
 

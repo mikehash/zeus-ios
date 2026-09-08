@@ -231,12 +231,15 @@ struct SessionView: View {
     /// `AgentState` cases, so an armed label differs across every state — that
     /// difference is what makes "reads the engine phase" measurable rather than
     /// aspirational, and it is asserted directly rather than described here.
-    /// Unarmed, all four collapse onto `UNARMED`: the phase is not wrong, it is
+    /// Unarmed, all four collapse onto ONE PROSE SENTENCE (not `UNARMED` — the
+    /// spoken arm is words, see `unarmedSpokenLabel`): the phase is not wrong, it is
     /// not answering the question, and announcing "reasoning" over a core with
     /// no route to a model is the spoken form of the green-pill lie. The
     /// injectivity leg is therefore TWO-ARMED — armed count ==
-    /// `AgentState.allCases.count`, unarmed count == 1 — with the arms asserted
-    /// unequal so neither can pass on a constant.
+    /// `AgentState.allCases.count`, unarmed EQUAL to the literal for each of
+    /// the four phases — with the arms asserted unequal so neither can pass on
+    /// a constant. Count-1 alone is not enough: a function returning `""` has
+    /// count 1 and says nothing, so the unarmed arm asserts the STRING.
     ///
     /// The badge and the status line are both carried because they answer
     /// different questions: phase (what the agent is doing) and topology (can
@@ -254,10 +257,30 @@ struct SessionView: View {
     /// exact defect this parameter exists to close, reintroduced by omission.
     /// Four of the five callers are tests, and the fifth is the render at
     /// `:219`; making them all state the readiness is the point.
+    /// The spoken payload when the core is unarmed. ZM's words, verbatim.
+    ///
+    /// NOT the pill's `UNARMED`, and not a composition of the caps strings:
+    /// this is prose because it is spoken, and it carries the repair because
+    /// the label is the screen-reader operator's ONLY channel to this screen.
+    /// The general rule — a slot that cannot act must not name a repair — has
+    /// its exception exactly here: this slot IS the operator's channel, so
+    /// withholding the repair would leave them with a state and no route out
+    /// of it. The visual pill withholds it because the screen around it says
+    /// it in a slot that can act.
+    ///
+    /// It REPLACES the composition rather than appending to it. Title and
+    /// status are answers to questions that presuppose an armed core; reading
+    /// "SESSION ABC12345, LINKED, agent unarmed" spends two clauses on
+    /// topology before reaching the one fact that matters. The visual header
+    /// keeps them because the eye takes a pill in parallel with the text; a
+    /// voice is serial and pays for every word.
+    static let unarmedSpokenLabel = "Agent unarmed. Set a provider in Routes."
+
     static func headerAccessibilityLabel(sessionID: String?,
                                          status: String,
                                          state: AgentState,
                                          disarmReason: String?) -> String {
+        guard disarmReason == nil else { return Self.unarmedSpokenLabel }
         let title = sessionTitle(for: sessionID)
             .replacingOccurrences(of: Theme.separator, with: " ")
             .replacingOccurrences(of: "—", with: "not yet assigned")
