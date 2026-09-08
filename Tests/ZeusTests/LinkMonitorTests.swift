@@ -142,7 +142,7 @@ final class LinkMonitorTests: XCTestCase {
         monitor.start()
         monitor.start()
         try await Task.sleep(for: .milliseconds(100))
-        monitor.stop()
+        await monitor.stop()
         let n = probe.calls
         // Three stacked loops at 40ms over 100ms would be ~9; one loop is 2-3.
         // Asserting the UPPER bound only: the lower bound is a timing claim
@@ -157,7 +157,12 @@ final class LinkMonitorTests: XCTestCase {
                                   interval: .milliseconds(20))
         monitor.start()
         try await Task.sleep(for: .milliseconds(60))
-        monitor.stop()
+        // Awaited cancellation: when stop() returns, the in-flight probe (if
+        // any) has completed and the loop has observed the cancel, so the
+        // count read here is FINAL BY CONSTRUCTION — no settle window, no
+        // wall-clock race. The old sync form read mid-flight and the 80ms
+        // sleep below then caught the straggler as a 4-vs-3 failure.
+        await monitor.stop()
         let atStop = probe.calls
         XCTAssertGreaterThanOrEqual(atStop, 1, "never polled — leg is vacuous")
         try await Task.sleep(for: .milliseconds(80))
@@ -291,7 +296,7 @@ final class LinkMonitorTests: XCTestCase {
         monitor.resume()
         monitor.resume()          // second resume must be a no-op
         try await Task.sleep(for: .milliseconds(130))
-        monitor.stop()
+        await monitor.stop()
 
         // One loop at 40ms over ~130ms is 3-4 probes; two stacked loops would
         // be 6-8. The bound is generous on the low side and still separates

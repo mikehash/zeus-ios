@@ -297,9 +297,21 @@ final class LinkMonitor: ObservableObject {
         }
     }
 
-    func stop() {
-        pollTask?.cancel()
+    /// Awaited cancellation. The sync form cancelled the task and returned
+    /// immediately, so a probe already in flight when `stop()` landed would
+    /// complete and increment after the caller read the count — the 4-vs-3
+    /// straggler in `testStopHaltsPolling`. Awaiting `task?.value` means the
+    /// in-flight probe finishes, the loop observes the cancel, and only THEN
+    /// does this return — so a count read after `stop()` is final by
+    /// construction, not by sleep.
+    ///
+    /// Sync call sites wrap in `Task { await monitor.stop() }`; `deinit`
+    /// keeps plain `cancel()` — it asserts nothing and cannot await.
+    func stop() async {
+        let task = pollTask
         pollTask = nil
+        task?.cancel()
+        await task?.value
     }
 
     /// Background transition: stop polling AND invalidate the verdict.
@@ -320,8 +332,13 @@ final class LinkMonitor: ObservableObject {
     ///
     /// Unconfigured is exempt — it is not a measurement, it is the absence of
     /// a target, and it cannot go stale because nothing was ever probed.
+    /// Cancels without awaiting: `suspend()` is the scene-phase call site —
+    /// it runs synchronously on `.background` and cannot block on the loop.
+    /// The one in-flight probe it may leave behind is bounded (a single
+    /// interval) and is asserted allowed in `testSuspendStopsPolling`.
     func suspend() {
-        stop()
+        pollTask?.cancel()
+        pollTask = nil
         if case .unconfigured = state { return }
         // Same exemption, same reason: `.embedded` is not a measurement that
         // can go stale. The core does not stop existing while the app is
