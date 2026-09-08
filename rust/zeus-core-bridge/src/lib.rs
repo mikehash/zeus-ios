@@ -4,17 +4,24 @@
 //! the phone**: this crate is the substrate under `EmbeddedTransport`, not a
 //! client for a remote one.
 //!
-//! ## What is pinned, and why the set is exactly four
+//! ## What is pinned, and why the set is exactly five
 //!
-//! Every Zeus dependency is pinned to `mikehash/Zeus@2a2168cd`. The four crates
-//! (`zeus-core`, `zeus-llm`, `zeus-session`, `zeus-memory`) are the set MEASURED
-//! green for `aarch64-apple-ios` — 0 errors in 2m07s on Xcode 26.5 / SDK 26.5 /
-//! rustc 1.97.1. That aperture is stated because a green check is a fact about a
-//! toolchain, not about the code.
+//! **The pin is not repeated in this prose.** It lived here as the literal
+//! `2a2168cd` across two commits that moved it (`b30b6dd`, `a9f4d36`) and was
+//! wrong in a tracked file both times — the same defect the manifest's
+//! `dep-pin`/`crate-tree` keys exist to make visible, one register down where
+//! no guard can see it. The pin is `rev = ` in this crate's `Cargo.toml`, and
+//! `scripts/check_crate_tree.sh` is what asserts the built artifact agrees
+//! with it. A sha typed in a doc comment is a claim with no reader.
 //!
-//! `zeus-agent` is absent: its iOS graph hard-links 14 objc2 framework crates
-//! through `zeus-talos`. It joins once the `automation` feature gate lands on
-//! main. `zeus-mnemosyne` is absent: `rusqlite`/`bundled` is a C sqlite build
+//! The five crates are `zeus-core`, `zeus-llm`, `zeus-session`, `zeus-memory`
+//! and `zeus-agent`. `zeus-agent` joined once its `automation` feature gate
+//! landed: it is taken with `default-features = false`, which is what keeps
+//! the 14 objc2 framework crates behind `zeus-talos` out of the iOS graph.
+//! Both `aarch64-apple-ios` and `-sim` are MEASURED green under
+//! `rustc 1.95.0` (the crate-root `rust-toolchain.toml`) — that aperture is
+//! stated because a green check is a fact about a toolchain, not about the
+//! code. `zeus-mnemosyne` is absent: `rusqlite`/`bundled` is a C sqlite build
 //! never cross-compiled against the iOS SDK here.
 //!
 //! ## The one piece of real engineering
@@ -290,6 +297,30 @@ impl ZeusCore {
     pub fn index_size(self: Arc<Self>) -> u32 {
         self.index.len() as u32
     }
+
+    /// Whether a provider has been selected on THIS core.
+    ///
+    /// ## The subject, stated because a near-neighbour is what shipped before
+    ///
+    /// This reads the one `Option` that `send` reads (`self.client`), so it
+    /// answers exactly the question `send` will answer: is there a client to
+    /// send with. It is NOT "did the operator pick a provider" — that fact
+    /// lives on disk in the commission, and Swift derived readiness from it
+    /// while this `Option` was `None` for the life of the process. A string
+    /// on disk and an armed core are two different subjects; the UI showed
+    /// READY on the first and sent on the second.
+    ///
+    /// ## What it does NOT promise
+    ///
+    /// `true` means a `LlmClient` was constructed — the key was non-empty and
+    /// the prefix resolved. It says nothing about whether the provider is
+    /// REACHABLE or the key is VALID; both of those are discovered on send and
+    /// arrive as the provider's own error text. Unarmed and unreachable are
+    /// two different failures and this call only sees the first.
+    pub fn has_provider(self: Arc<Self>) -> bool {
+        self.rt
+            .block_on(async { self.client.lock().await.is_some() })
+    }
 }
 
 // ============================================================================
@@ -479,6 +510,40 @@ mod tests {
 
     /// `set_provider` must route through `Provider::from_prefix` — including
     /// its aliases — and must refuse unknown prefixes rather than defaulting.
+    /// `has_provider` must read the SAME cell `send` reads, and it must
+    /// discriminate — a getter hardcoded to `true` passes any armed-only test,
+    /// and one hardcoded to `false` passes any unarmed-only test. So both arms
+    /// are asserted on ONE core, with an explicit not-equal so a collapsed
+    /// implementation cannot green both.
+    ///
+    /// No network: `set_provider` constructs the client and does not contact
+    /// the provider. This says nothing about reachability — see the export's
+    /// doc comment.
+    #[test]
+    fn has_provider_reports_the_cell_send_reads() {
+        let dir = std::env::temp_dir().join(format!("zcb-armed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).unwrap();
+
+        let before = core.clone().has_provider();
+        assert!(!before, "a freshly built core has selected no provider");
+
+        core.clone()
+            .set_provider("ollama".into(), "qwen3:8b".into(), "unused-by-ollama".into())
+            .expect("the ollama prefix resolves and a non-empty key builds a client");
+
+        let after = core.clone().has_provider();
+        assert!(after, "after set_provider the core must report armed");
+        assert_ne!(
+            before, after,
+            "has_provider must DISCRIMINATE — a constant passes one arm and this \
+             pair is the only thing that refuses it"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn provider_prefix_is_the_core_map() {
         assert_eq!(Provider::from_prefix("anthropic"), Some(Provider::Anthropic));
