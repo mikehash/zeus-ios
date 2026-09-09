@@ -505,6 +505,11 @@ struct CommissioningView: View {
     /// Set once per appearance of ROUTES, from the core's own catalog.
     @State private var providerRows: [ProviderRow] = []
 
+    /// The search text. VIEW STATE ONLY — never written to the record and
+    /// never cleared by a tap, so a search that produced a choice still shows
+    /// what was searched for; the operator can see WHY the list is short.
+    @State private var providerQuery: String = ""
+
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
@@ -863,9 +868,51 @@ struct CommissioningView: View {
         let selected = providerPick.flatMap { id in providerRows.first { $0.id == id } }
 
         VStack(spacing: 10) {
+            // SEARCH-FIRST: the field sits ABOVE the list because 26 rows
+            // is past the point where scanning beats typing, and a search box
+            // discovered after scrolling has already failed its purpose.
+            TextField("", text: $providerQuery, prompt:
+                Text("SEARCH PROVIDERS").font(Theme.mono(12)).foregroundStyle(Theme.w(0.2))
+            )
+            .font(Theme.mono(13))
+            .foregroundStyle(Theme.text)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .padding(.horizontal, 14)
+            .frame(height: 40)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.corner)
+                    .fill(Theme.w(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.corner)
+                            .stroke(Theme.w(0.10), lineWidth: 1)
+                    )
+            )
+            .accessibilityLabel("Search providers")
+
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(providerRows, id: \.id) { row in
+                    let groups = ProviderCatalog.grouped(providerRows, query: providerQuery)
+                    // A QUERY THAT MATCHES NOTHING SAYS SO. An empty scroll
+                    // view and a list still loading are the same pixels; the
+                    // needle is echoed back so the operator can see what was
+                    // actually searched for.
+                    if groups.isEmpty && !providerRows.isEmpty {
+                        Text("NO PROVIDER MATCHES \"\(providerQuery.uppercased())\"")
+                            .font(Theme.mono(9))
+                            .tracking(1.0)
+                            .foregroundStyle(Theme.w(0.35))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                    }
+                    ForEach(groups, id: \.kind) { group in
+                        Text(group.kind.header)
+                            .font(Theme.mono(8.5))
+                            .tracking(1.2)
+                            .foregroundStyle(Theme.w(0.3))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    ForEach(group.rows, id: \.id) { row in
                         RouteCard(
                             title: row.label,
                             copy: row.shape.rowCopy,
@@ -896,6 +943,7 @@ struct CommissioningView: View {
                                 key: nil,
                                 baseURL: typedURL.isEmpty ? nil : typedURL) ?? ""
                         }
+                    }
                     }
                 }
             }

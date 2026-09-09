@@ -91,3 +91,78 @@ enum ProviderCatalog {
         current.rows().first { $0.id == id }?.label ?? id
     }
 }
+
+/// THE GROUPING KEY IS NOT `CredentialKind`.
+///
+/// `CredentialKind.unsupported` carries the core's own `reason` string, so two
+/// unsupported providers with different reasons are `!=` and would land in two
+/// different groups — a list that grows a section per sentence. The section is
+/// a coarser fact than the row: WHAT WILL THIS ASK ME FOR, four answers, fixed
+/// order. `CaseIterable` is load-bearing: the order below IS the rendered
+/// order, and the `init(_:)` switch is exhaustive so a fifth `CredentialKind`
+/// fails to compile here rather than silently vanishing from the picker.
+enum ProviderGroupKind: String, CaseIterable, Equatable {
+    case key
+    case url
+    case none
+    case unsupported
+
+    init(_ kind: CredentialKind) {
+        switch kind {
+        case .key: self = .key
+        case .url: self = .url
+        case .none: self = .none
+        case .unsupported: self = .unsupported
+        }
+    }
+
+    /// The section header. States the ASK, not the shape's name — `KEY` is a
+    /// type, `NEEDS AN API KEY` is what the operator is about to do.
+    var header: String {
+        switch self {
+        case .key: return "NEEDS AN API KEY"
+        case .url: return "NEEDS AN ENDPOINT"
+        case .none: return "NOTHING TO ENTER"
+        case .unsupported: return "NOT FROM THIS SCREEN"
+        }
+    }
+}
+
+struct ProviderGroup: Equatable {
+    let kind: ProviderGroupKind
+    let rows: [ProviderRow]
+}
+
+extension ProviderCatalog {
+    /// SEARCH-FIRST, GROUPED BY WHAT THE ROW WILL ASK FOR.
+    ///
+    /// Pure over (rows, query) because the view body has no importable
+    /// surface in this target — the same reason `routesCTAEnabled` was
+    /// extracted. Every property below is asserted against THIS function; the
+    /// view is a `ForEach` over its output and holds no ordering logic of its
+    /// own.
+    ///
+    /// - The query matches LABEL **or** ID, case- and diacritic-insensitively.
+    ///   Id-matching is deliberate: the id is what gets PERSISTED and what the
+    ///   arm messages name, so an operator who read `ollama` in an error must
+    ///   be able to type it back. Matching only the label would make the one
+    ///   string the app shows in failures unsearchable.
+    /// - EMPTY GROUPS ARE DROPPED, not rendered empty. A `NOT FROM THIS
+    ///   SCREEN` header over nothing is a claim that such providers exist in
+    ///   this build.
+    /// - RELATIVE ORDER WITHIN A GROUP IS THE CORE'S. No alphabetising and no
+    ///   favourites — the catalog's order is a fact the app does not own, and
+    ///   a "popular first" list is the hardcoded-preference class this whole
+    ///   arc has been retiring.
+    static func grouped(_ rows: [ProviderRow], query: String) -> [ProviderGroup] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matched = needle.isEmpty ? rows : rows.filter { row in
+            row.label.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                || row.id.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }
+        return ProviderGroupKind.allCases.compactMap { kind in
+            let members = matched.filter { ProviderGroupKind($0.shape) == kind }
+            return members.isEmpty ? nil : ProviderGroup(kind: kind, rows: members)
+        }
+    }
+}
