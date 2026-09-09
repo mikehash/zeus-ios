@@ -907,7 +907,21 @@ struct CommissioningView: View {
             }
             .disabled(!Self.routesCTAEnabled(providerPick: providerPick, modelText: modelText))
         }
-        .onAppear { providerRows = ProviderCatalog.current.rows() }
+        .onAppear {
+            providerRows = ProviderCatalog.current.rows()
+            // CAPTURE SEAM. Writes the same two `@State` fields a tap and a
+            // keystroke write, and nothing else — no record write, no key.
+            // Inert unless `-zeusPick` is passed, and `LaunchArgs.pickedRoute`
+            // is `nil` in release, so this is a no-op in a shipped build.
+            //
+            // Guarded on `providerPick == nil` so a re-appearance of ROUTES
+            // (backstep, then forward again) cannot stomp a choice the
+            // operator has since made by hand.
+            if providerPick == nil, let seed = LaunchArgs.pickedRoute {
+                providerPick = seed.id
+                if let m = seed.model { modelText = m }
+            }
+        }
     }
 
     /// EXTRACTED BECAUSE THE VIEW BODY IS NOT OBSERVABLE IN THIS TARGET.

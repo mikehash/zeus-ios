@@ -89,6 +89,58 @@ enum LaunchArgs {
         #endif
     }
 
+    /// `-zeusPick <id> [<model>]` — preselect a ROUTES row, and optionally
+    /// type the model, so the KEYED state is photographable.
+    ///
+    /// WHY IT EXISTS: `-zeusStep routes` opens the step with
+    /// `providerPick == nil`, which is one tap short of the only state worth
+    /// photographing — the `SecureField` and the enabled model field are
+    /// revealed by a row TAP, and `simctl` has no tap primitive. So the
+    /// capture set could show that the picker renders from the core's
+    /// catalog, and could not show what a chosen keyed provider looks like.
+    /// That gap was stated on the channel rather than papered over; this
+    /// closes it.
+    ///
+    /// ## It writes VIEW state, not the record
+    ///
+    /// The returned id lands in `providerPick` and the model in `modelText` —
+    /// the same two `@State` fields a tap and a keystroke write. It does NOT
+    /// call `recordRoutesChoice`, so "was shown a preselection" and "chose"
+    /// stay distinguishable in the stored record exactly as they are for a
+    /// human. A frame captured through this proves the keyed row RENDERS;
+    /// it proves nothing about whether CONTINUE writes, which is
+    /// `CommissionStoreTests`' subject and not a screenshot's.
+    ///
+    /// NO KEY OPERAND, deliberately. A flag that seeded `keyText` would put a
+    /// secret-shaped literal on a command line and into shell history for the
+    /// sake of photographing dots. The field renders its prompt state, which
+    /// is the state that differs from the disabled one.
+    ///
+    /// APERTURE: `#if DEBUG`, inert in release, inert unless passed. The id
+    /// is NOT validated against the catalog here — an unknown id preselects
+    /// nothing, because `routesStep` matches rows by id and a miss simply
+    /// leaves the picker unselected. That is the honest failure: the frame
+    /// shows an unselected picker rather than a fabricated row.
+    static var pickedRoute: (id: String, model: String?)? {
+        #if DEBUG
+        guard let id = value(for: "-zeusPick") else { return nil }
+        // The model is an OPTIONAL second positional. Read via `value(for:)`
+        // semantics at the offset rather than assumed present: a bare
+        // `-zeusPick anthropic` is a legitimate invocation that photographs
+        // the row selected with the model field empty — which is itself a
+        // state the CTA gate refuses, and worth a frame.
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-zeusPick"),
+              let m = args.index(i, offsetBy: 2, limitedBy: args.endIndex),
+              m < args.endIndex,
+              !args[m].hasPrefix("-")
+        else { return (id, nil) }
+        return (id, args[m])
+        #else
+        return nil
+        #endif
+    }
+
     /// `-zeusMuteVoice` — suppress narration during capture.
     ///
     /// Not cosmetic: `AVSpeechSynthesizer` drives the orb's `.speaking` mode,
