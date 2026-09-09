@@ -60,14 +60,55 @@ DEST="generic/platform=iOS Simulator"
 #    `targets:` (the app). It is a text parse of YAML, not a YAML parser — if
 #    project.yml grows a form this cannot read, the POS control at step 3
 #    fires VOID (zero files) rather than reporting a false clean.
+#
+#    IT DID, AND THE VOID IS WHY THIS BRANCH EXISTS. xcodegen's `sources:`
+#    accepts BOTH a bare scalar (`- Sources/ZeusApp`) and a mapping
+#    (`- path: … / buildPhase: …`). Bundling the build manifest as a resource
+#    needs the mapping form, and the old one-armed rule fed the whole literal
+#    line — `path: Frameworks/…` — to `git add`, which answered
+#    `pathspec … did not match any files`, rc=128. It VOIDed rather than
+#    passing, which is the guard behaving correctly: a parser that silently
+#    dropped the entry would have reported a clean tree for a file set it
+#    could not see. Both forms are read now, and the `- [a-zA-Z]` bound on the
+#    scalar arm keeps a continuation key (`        buildPhase: resources`)
+#    from being taken as a path.
 SRC_DIRS=()
 while read -r _d; do [ -n "$_d" ] && SRC_DIRS+=("$_d"); done < <(
     awk '/^  '"$SCHEME"':$/{t=1; next}
          t && /^    sources:/{s=1; next}
-         t && s && /^      - /{sub(/^      - /,""); print; next}
+         t && s && /^      - path: /{sub(/^      - path: /,""); print; next}
+         t && s && /^      - [a-zA-Z]/{sub(/^      - /,""); print; next}
          t && s && /^    [a-z]/{exit}' project.yml
 )
 [ "${#SRC_DIRS[@]}" -ge 1 ] || { echo "VOID: no sources: entries parsed from project.yml for target $SCHEME"; exit 2; }
+
+# ── 0b. The tree-identity aperture is the TRACKED half of `sources:` ────────
+#
+# 🔴 NOT EVERY `sources:` ENTRY IS A SOURCE FILE. The target now lists
+# `Frameworks/ZeusCore.xcframework/zeus-build-manifest.txt` as a resource so
+# the app can render its own core's provenance on a phone. That path is a
+# BUILD PRODUCT inside a gitignored directory: `git add` refuses it (rc=1,
+# "ignored by one of your .gitignore files"), the recompute produces nothing,
+# and this guard VOIDs — measured, not predicted.
+#
+# The right aperture is the tracked half, and the reason is not convenience:
+# this guard's subject is "did the source tree change since the compile", and
+# a build product has no place in a SOURCE identity — its own provenance is
+# guarded one file over by `check_crate_tree.sh`, which compares the archive's
+# manifest against the worktree tree of the crate that produced it. Folding a
+# generated artifact into the source stamp would make every rebuild read as
+# source drift.
+#
+# `git check-ignore` is the discriminator, and the split is PRINTED rather
+# than silently applied: an entry vanishing from the aperture is exactly the
+# thing that turns a guard into decoration.
+TREE_PATHS=()
+SKIPPED=()
+for _p in "${SRC_DIRS[@]}"; do
+    if git check-ignore -q -- "$_p" 2>/dev/null; then SKIPPED+=("$_p"); else TREE_PATHS+=("$_p"); fi
+done
+[ "${#TREE_PATHS[@]}" -ge 1 ] || { echo "VOID: every sources: entry is git-ignored — nothing to hash"; exit 2; }
+[ "${#SKIPPED[@]}" -eq 0 ] || echo "  tree-identity aperture EXCLUDES (git-ignored, build products): ${SKIPPED[*]}"
 
 void() { echo "VOID: $*"; exit 2; }
 drift() { echo "DRIFT: $*"; exit 3; }
@@ -211,7 +252,7 @@ if [ -f "$STAMP" ]; then
     # loud in stderr and invisible in a value-capture. Measured on this box.
     IDX=$(mktemp -u)
     add_rc=0
-    GIT_INDEX_FILE="$IDX" git add -- "${SRC_DIRS[@]}" 2>/tmp/membership.stamp.err || add_rc=$?
+    GIT_INDEX_FILE="$IDX" git add -- "${TREE_PATHS[@]}" 2>/tmp/membership.stamp.err || add_rc=$?
     ACTUAL=""
     [ "$add_rc" -eq 0 ] && { ACTUAL=$(GIT_INDEX_FILE="$IDX" git write-tree 2>>/tmp/membership.stamp.err) || ACTUAL=""; }
     rm -f "$IDX"
@@ -225,11 +266,11 @@ if [ -f "$STAMP" ]; then
         echo "DRIFT: the driver input list describes a DIFFERENT source tree than the one on disk."
         echo "  stamped at build time : $DECLARED"
         echo "  worktree now          : $ACTUAL"
-        echo "  covered paths         : ${SRC_DIRS[*]}"
+        echo "  covered paths         : ${TREE_PATHS[*]}"
         echo "  Every number taken from this build is about code that is no longer here."
         status=3
     else
-        echo "FRESH: sources-tree $ACTUAL == stamp (${SRC_DIRS[*]})"
+        echo "FRESH: sources-tree $ACTUAL == stamp (${TREE_PATHS[*]})"
     fi
 fi
 

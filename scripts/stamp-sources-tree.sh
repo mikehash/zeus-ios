@@ -58,7 +58,8 @@ SRC_DIRS=()
 while read -r _d; do [ -n "$_d" ] && SRC_DIRS+=("$_d"); done < <(
     awk '/^  Zeus:$/{t=1; next}
          t && /^    sources:/{s=1; next}
-         t && s && /^      - /{sub(/^      - /,""); print; next}
+         t && s && /^      - path: /{sub(/^      - path: /,""); print; next}
+         t && s && /^      - [a-zA-Z]/{sub(/^      - /,""); print; next}
          t && s && /^    [a-z]/{exit}' project.yml
 )
 [ "${#SRC_DIRS[@]}" -ge 1 ] || {
@@ -66,9 +67,24 @@ while read -r _d; do [ -n "$_d" ] && SRC_DIRS+=("$_d"); done < <(
     exit 0
 }
 
+# THE APERTURE IS THE TRACKED HALF, and it is derived HERE by the same rule the
+# consumer uses — not copied as a value. A shared value is what the `2a2168cd`
+# hardcode was; a shared RULE run twice is the comparison. `sources:` now
+# carries a build product (the bundled core manifest) which `git add` refuses
+# as ignored, and a producer that fed it would emit no stamp at all — the
+# consumer would then read VOID forever and nobody would see a source change.
+TREE_PATHS=()
+for _p in "${SRC_DIRS[@]}"; do
+    git check-ignore -q -- "$_p" 2>/dev/null || TREE_PATHS+=("$_p")
+done
+[ "${#TREE_PATHS[@]}" -ge 1 ] || {
+    echo "warning: stamp-sources-tree: every sources: entry is git-ignored — membership guard will read VOID"
+    exit 0
+}
+
 IDX=$(mktemp -u)                       # -u: a NAME, not a file. See above.
 add_rc=0
-GIT_INDEX_FILE="$IDX" git add -- "${SRC_DIRS[@]}" 2>/dev/null || add_rc=$?
+GIT_INDEX_FILE="$IDX" git add -- "${TREE_PATHS[@]}" 2>/dev/null || add_rc=$?
 tree=""
 if [ "$add_rc" -eq 0 ]; then
     tree=$(GIT_INDEX_FILE="$IDX" git write-tree 2>/dev/null) || tree=""

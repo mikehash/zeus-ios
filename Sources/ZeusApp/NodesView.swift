@@ -94,6 +94,22 @@ struct NodesView: View {
     /// the same store here would be two pictures of one decision.
     var resolution: GatewayConfig.Resolution
 
+    /// The core handle this pane reads `index_size()` from.
+    ///
+    /// A PARAMETER, RETAINED — gate two of the pair (i) turned on. The value
+    /// existing in the bridge is half; the view being able to REACH it is the
+    /// other half, and this view held no handle at all. `RootView` gets one
+    /// inside a static helper (`armedResolution`) and does not keep it, so a
+    /// handle constructed here would be a SECOND core over the same workspace
+    /// directory — the `InMemoryProviderKeyStore` fault, one subsystem over.
+    /// It arrives from `EmbeddedCore.shared`, which is the process's one core.
+    ///
+    /// OPTIONAL, and the optional is load-bearing: `EmbeddedCore.shared` is a
+    /// `Result`, and a core that failed to initialise is exactly the state
+    /// where an invented `LIVE-LINK` would be most wrong. `nil` renders
+    /// `NO CORE`, which is what happened.
+    var core: ZeusCoreProtocol?
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -146,6 +162,49 @@ struct NodesView: View {
         case .malformed(let raw, _):     return raw
         case .resolved(let endpoint):    return endpoint.url.host ?? endpoint.url.absoluteString
         }
+    }
+
+    /// The phone row's badge — the SAME derivation the HOME tile and the
+    /// SESSION header pill read.
+    ///
+    /// Was `Badge(text: "ACTIVE", color: Theme.ok)`: a literal green `ok` over
+    /// a core with no provider on it. `ProviderArming.swift`'s own header was
+    /// written for that defect and it survived one file over, in a third
+    /// consumer. There is no engine phase in scope here — this row is about
+    /// the NODE, not a turn — so the phase argument is `.ambient` and the
+    /// readiness half is the whole of what varies. `ReadinessBadge` collapses
+    /// all four phases onto `UNARMED` when `disarmReason != nil`, so an
+    /// unarmed core reads `UNARMED` regardless of what is passed here.
+    private var nodeBadge: ReadinessBadge {
+        ReadinessBadge.forState(.ambient,
+                                disarmReason: resolution.config.disarmReason)
+    }
+
+    /// `N FILES INDEXED` / `INDEX EMPTY` / `NO CORE`.
+    private var mnemosyneValue: String {
+        Self.mnemosyneValue(indexSize: core?.indexSize())
+    }
+
+    /// Pure over the core's answer, so both the row and the toast are the same
+    /// function of the same reading and cannot disagree.
+    ///
+    /// `nil` is NOT folded into the empty case. "No core to ask" and "a core
+    /// that answered zero" are different facts, and the whole subject of this
+    /// row is that an index with nothing in it must be distinguishable from a
+    /// probe that never ran.
+    static func mnemosyneValue(indexSize: UInt32?) -> String {
+        guard let n = indexSize else { return "NO CORE" }
+        return n == 0 ? "INDEX EMPTY" : "\(n) FILES INDEXED"
+    }
+
+    /// What the tap reports — a fresh reading, named as one.
+    static func mnemosyneToast(indexSize: UInt32?) -> String {
+        guard let n = indexSize else {
+            return "MNEMOSYNE — NO CORE ON THIS DEVICE"
+        }
+        return n == 0
+            ? "MNEMOSYNE — INDEX EMPTY"
+            : "MNEMOSYNE — \(n) FILES INDEXED"
     }
 
     private var gatewayRowLabel: String  { Self.gatewayRowLabel(for: resolution.config) }
@@ -207,25 +266,35 @@ struct NodesView: View {
                         .font(Theme.display(11, .bold))
                         .tracking(2.2)                     // 0.2em at 11pt
                         .foregroundStyle(Theme.text)
-                    Text("zeus-core 0.9 · this iphone")
+                    Text(CoreProvenance.nodeSubtitle())
                         .font(Theme.mono(9))
                         .tracking(0.9)
                         .foregroundStyle(Theme.r(0.7))
                 }
                 Spacer(minLength: 0)
-                Badge(text: "ACTIVE", color: Theme.ok)
+                Badge(text: nodeBadge.text, color: nodeBadge.tint)
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
             .padding(.bottom, 4)
 
             VStack(spacing: 0) {
-                // :682 — the value is `remote ? 'SYNC T-2MIN' : 'LIVE-LINK'`.
-                // Same missing `remote` source as SessionView's statusLine;
-                // pinned to the linked arm for the same reason.
+                // (h) — WAS `LIVE-LINK`, with a comment pinning it to "the same
+                // missing `remote` source as SessionView's statusLine". That
+                // comment was true of a REMOTE gateway and FALSE of the
+                // embedded core, which exports `index_size` for exactly this
+                // question — the bridge's own docstring calls it "a vacuity
+                // probe, not a statistic": the only way to tell an empty index
+                // from a no-match. Consumers in `Sources/` were 0.
+                //
+                // The tap USED to raise `MNEMOSYNE CONSISTENT — NO DELTA`: a
+                // result reported for a check that never ran. That is a
+                // fabrication rather than a stale label, so the tap now
+                // re-reads and reports what it found — including the abstention
+                // when there is no core to ask.
                 NodeRow(icon: "cylinder.split.1x2", label: "Mnemosyne",
-                        value: "LIVE-LINK") {
-                    onToast("MNEMOSYNE CONSISTENT — NO DELTA")
+                        value: mnemosyneValue) {
+                    onToast(Self.mnemosyneToast(indexSize: core?.indexSize()))
                 }
                 // No selection yet renders the gateway's own word for its
                 // state, not an invented default.

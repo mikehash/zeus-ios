@@ -478,7 +478,8 @@ struct RootView: View {
                           gatewayEditorConfig = config
                           gatewayEditor = true
                       },
-                      resolution: configSource.resolution)
+                      resolution: configSource.resolution,
+                      core: try? EmbeddedCore.shared.get())
         }
     }
 }

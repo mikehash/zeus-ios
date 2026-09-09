@@ -15,6 +15,12 @@ targets:
       # for anyone with Xcode and no Rust toolchain at all. Regenerate with
       # scripts/build-xcframework.sh — never hand-edit; the file says so too.
       - Sources/ZeusCoreFFI
+      # PROVENANCE, BUNDLED. Not a copy — the path IS the manifest the
+      # xcframework build wrote, so the bundled bytes cannot drift from the
+      # archive the app links. `buildPhase: resources` because a .txt in a
+      # sources dir would be classified by extension; this one is named.
+      - path: Frameworks/ZeusCore.xcframework/zeus-build-manifest.txt
+        buildPhase: resources
     postCompileScripts:
       # Producer half of the source-freshness stamp read by
       # scripts/check_membership.sh. POST-COMPILE, not post-build: it must run
