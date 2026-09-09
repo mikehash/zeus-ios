@@ -16,8 +16,13 @@ import SwiftUI
 /// The record cannot replace it. `Commission.nodeEnrolled` is a `Bool` with
 /// no identity — no name, no host, no list — so the true arm has nothing to
 /// NAME. A pane that renders nothing when there are no nodes is honest; a
-/// pane that renders a node nobody enrolled is not. The Bool's own render,
-/// `1 node enrolled` in the summary strip, stays: that is what it can say.
+/// pane that renders a node nobody enrolled is not.
+///
+/// (f) FINISHED THE JOB: the Bool's last render — `1 node enrolled` in the
+/// summary strip — is gone too. Nothing in a release build writes `true`
+/// (the sole writer was the DEBUG capture seed), so that arm was unreachable
+/// text describing an absent node. The strip reads `solo` until the record
+/// carries a node list.
 ///
 /// Retired with it, because the block was their only reachable caller:
 /// `micToggle`, the revoke sheet + `confirmRevoke` + its overlay/animation,

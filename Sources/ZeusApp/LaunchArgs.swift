@@ -56,7 +56,10 @@ enum LaunchArgs {
         return Commission(route: .byok,
                           provider: "anthropic",
                           callsign: "ATLAS",
-                          nodeEnrolled: true)
+                          // (f): `false`, because `true` is a state no
+                          // production path can reach — seeding it made the
+                          // captured frames document a fiction.
+                          nodeEnrolled: false)
     }
     #endif
 

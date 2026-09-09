@@ -542,4 +542,79 @@ final class CopyRegisterTests: XCTestCase {
                            "c2 landed: the engine follows a saved URL, so the caveat is a lie")
         }
     }
+
+    // MARK: - (f) the strip counts no node it cannot name
+
+    /// VALUE leg. The summary reads `solo` WHATEVER the Bool says.
+    ///
+    /// Two records differing ONLY in `nodeEnrolled` must produce the same
+    /// strip. The vacuity assert is required: two equal fixtures would pass
+    /// this while testing nothing.
+    func testTheSummaryStripReadsSoloRegardlessOfTheEnrolledBool() {
+        let solo = Commission(route: .byok, provider: "anthropic",
+                              callsign: "ATLAS", nodeEnrolled: false)
+        let claimed = Commission(route: .byok, provider: "anthropic",
+                                 callsign: "ATLAS", nodeEnrolled: true)
+        XCTAssertNotEqual(solo, claimed,
+                          "vacuity: the two fixtures must differ, or this leg compares a value to itself")
+        XCTAssertEqual(solo.summary, claimed.summary,
+                       "the strip must not render a count the record cannot name")
+        XCTAssertTrue(solo.summary.contains("solo"), solo.summary)
+    }
+
+    /// ABSENCE leg, code lines only, with its own POS control.
+    ///
+    /// The retired string survives in `NodesView.swift` as prose explaining
+    /// the retirement — a whole-file needle would hit my own explanation,
+    /// which is (c)'s `All systems nominal` fault one commit over.
+    func testTheEnrolledCountIsNotRenderedAnywhereInTheShippingSource() throws {
+        var hits = 0
+        var control = 0
+        for name in ["Commissioning.swift", "NodesView.swift", "HomeView.swift"] {
+            let code = codeLines(try source(name))
+            XCTAssertFalse(code.isEmpty, "\(name): the walk read nothing")
+            hits += code.filter { $0.contains("node enrolled") }.count
+            control += code.filter { $0.contains("Theme") }.count
+        }
+        XCTAssertGreaterThan(control, 0, "control: the code-line filter kept renderable lines")
+        XCTAssertEqual(hits, 0, "`node enrolled` is a count nothing measures")
+    }
+
+    /// The DEBUG capture seed no longer claims a node.
+    ///
+    /// Read from the constant, not from a reconstructed literal: a local
+    /// `Commission(...)` copy passes with the seed mutated back, which is
+    /// precisely the mutation this leg exists to kill.
+    func testTheCaptureSeedDoesNotClaimAnEnrolledNode() {
+        #if DEBUG
+        XCTAssertFalse(LaunchArgs.captureSeed.nodeEnrolled,
+                       "the seed must not photograph a node no production path can enrol")
+        #endif
+    }
+
+    /// THE REASON leg: nothing in the shipping source writes `true`.
+    ///
+    /// This is the finding the render change rests on. The value legs above
+    /// are blind to it — they assert what `summary` does with the Bool, not
+    /// whether anything can set it. POS control counts the `false` writers
+    /// in the same read, so a zero here cannot be a dead walk.
+    func testNoShippingPathEnrolsANode() throws {
+        var trueWriters = 0
+        var falseWriters = 0
+        for name in ["Commissioning.swift", "NodesView.swift", "RootView.swift",
+                     "ZeusApp.swift", "HomeView.swift"] {
+            let code = codeLines(try source(name))
+            XCTAssertFalse(code.isEmpty, "\(name): the walk read nothing")
+            trueWriters += code.filter {
+                $0.contains("nodeEnrolled = true") || $0.contains("nodeEnrolled: true")
+            }.count
+            falseWriters += code.filter {
+                $0.contains("nodeEnrolled = false") || $0.contains("nodeEnrolled: false")
+            }.count
+        }
+        XCTAssertGreaterThan(falseWriters, 0,
+                             "control: the walk can see nodeEnrolled writers at all")
+        XCTAssertEqual(trueWriters, 0,
+                       "a path that enrols a node landed — the strip owes it a name, not a count")
+    }
 }

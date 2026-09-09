@@ -413,7 +413,22 @@ struct Commission: Equatable, Codable {
         // record never held a provider, and the screen says so rather than
         // naming one the operator did not choose.
         let routeText = provider.map { Theme.joined([ProviderCatalog.label(for: $0), "OWN KEY"]) } ?? "no provider"
-        let nodeText = nodeEnrolled ? "1 node enrolled" : "solo"
+        // (f): `solo` UNCONDITIONALLY, and the Bool is not consulted.
+        //
+        // Measured at c525c937: `nodeEnrolled = true` has ZERO writers in
+        // `Sources/` outside `LaunchArgs.captureSeed` (`#if DEBUG`). The
+        // `SCAN NODE` button at the nodes step writes `scanning`, a label
+        // state, and nothing else; `SKIP — RUN SOLO` and the backstep rule
+        // both write `false`. So in a release build the true arm of this
+        // ternary was UNREACHABLE — `1 node enrolled` could only ever appear
+        // under a capture flag, on a screenshot, describing a node that does
+        // not exist. That is the prototype's `11 routes · managed` in a
+        // different costume: a count nothing measured.
+        //
+        // The Bool survives on the record — it decodes, it persists, and a
+        // node LIST is the phase-B+ record change that will give it identity
+        // — but it has no RENDER until something can name what it counts.
+        let nodeText = "solo"
         let operatorText = callsign.isEmpty ? "operator" : "operator \(callsign.lowercased())"
         return Theme.joined(["zeus core", routeText, nodeText, operatorText])
     }
