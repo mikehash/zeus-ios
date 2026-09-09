@@ -1,0 +1,3 @@
+icon-A.png  The orb whole: centred at ~70% of the frame, faint deep-red 3D lattice, dense amber-to-orange particle core with a soft glow that bleeds onto the near-black warm ground.
+icon-B.png  Inside the sphere: the orb at ~120% so only its centre shows, latitude/longitude lines curving across the frame, sparse particles, one bright off-centre mote lower-right.
+icon-C.png  Minimal: a small solid #FF5028 disc dead centre, a faint #C92808 wireframe sphere around it, and a thin ring of fourteen small particles; the quietest of the three.
