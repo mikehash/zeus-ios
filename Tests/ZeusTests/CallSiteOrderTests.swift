@@ -158,9 +158,42 @@ final class CallSiteOrderTests: XCTestCase {
                            calledIn: "RootView.swift", minimumArity: 7)
     }
 
+    /// Arity 5 → 4 at (d): `link:` was retired with the kitchen block, whose
+    /// `nodeOnline` reads were its only consumers. The floor moves with the
+    /// declaration deliberately — a floor left at 5 would go red on a correct
+    /// tree, and a floor of 0 would pass on an empty one. The not-a-constant
+    /// control below is what keeps 4 meaningful: it asserts the three views'
+    /// label lists are not all the same list.
     func testNodesViewCallSiteMatchesDeclaredOrder() throws {
         try assertMonotone("NodesView", declaredIn: "NodesView.swift",
-                           calledIn: "RootView.swift", minimumArity: 5)
+                           calledIn: "RootView.swift", minimumArity: 4)
+    }
+
+    /// (d) NEG: `link` is gone from BOTH sides. An unused parameter left on
+    /// the declaration is invisible to the monotone leg — it only ever walks
+    /// the labels the CALL passes — so the arity floor alone cannot see a
+    /// declaration that kept a dead operand. POS control in the same
+    /// invocation: `routes` is present on both sides.
+    func testNodesViewNoLongerDeclaresOrPassesLink() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let decl = try String(contentsOf: root.appendingPathComponent("Sources/ZeusApp/NodesView.swift"), encoding: .utf8)
+        let call = try String(contentsOf: root.appendingPathComponent("Sources/ZeusApp/RootView.swift"), encoding: .utf8)
+
+        let declCode = decl.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }.joined(separator: "\n")
+        XCTAssertTrue(declCode.contains("var routes: RouteCatalogStore"),
+                      "POS control: the declaration still carries `routes` — needle alive")
+        XCTAssertFalse(declCode.contains("let link: LinkState"),
+                       "NodesView still declares `link` — an unused parameter is a hole a future caller fills wrongly")
+
+        guard let siteRange = call.range(of: "NodesView(") else {
+            return XCTFail("VOID: no NodesView call site in RootView.swift")
+        }
+        let site = String(call[siteRange.lowerBound...].prefix(400))
+        XCTAssertTrue(site.contains("routes:"), "POS control: the call site passes `routes`")
+        XCTAssertFalse(site.contains("link:"),
+                       "RootView still passes `link:` to NodesView")
     }
 
     func testGatewayEditorSheetCallSiteMatchesDeclaredOrder() throws {

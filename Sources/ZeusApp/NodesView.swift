@@ -6,6 +6,33 @@ import SwiftUI
 /// :667-742 (the `tab === 'nodes'` arm), with the shared `Row` helper at
 /// :377-400 and `Badge` at :341-347.
 ///
+/// ── (d): THE KITCHEN BLOCK IS RETIRED ───────────────────────────────────
+/// This pane used to render a second node — `KITCHEN NODE`, a title, a
+/// slogan, two `NodeSlider`s (volume/brightness), a mic toggle, and
+/// `Ping node` / `Restart` / `Revoke access` — unconditionally, on every
+/// install. It was a prototype fixture: nothing enrolled it, nothing could
+/// reach it, and the sliders and toggle drove `@State` no transport read.
+///
+/// The record cannot replace it. `Commission.nodeEnrolled` is a `Bool` with
+/// no identity — no name, no host, no list — so the true arm has nothing to
+/// NAME. A pane that renders nothing when there are no nodes is honest; a
+/// pane that renders a node nobody enrolled is not. The Bool's own render,
+/// `1 node enrolled` in the summary strip, stays: that is what it can say.
+///
+/// Retired with it, because the block was their only reachable caller:
+/// `micToggle`, the revoke sheet + `confirmRevoke` + its overlay/animation,
+/// `struct NodeSlider` (47 lines, zero remaining uses), the `muted` /
+/// `volume` / `brightness` `@State`s, and the `link: LinkState` parameter —
+/// every `nodeOnline` read lived inside the block. An unused parameter is
+/// the `recordRoutesChoice` default one shape over: a hole a future caller
+/// fills wrongly. A node LIST is a record change, phase-B+.
+///
+/// `ZeusApp.decommission()` survives and its doc still cites NODES → REVOKE
+/// ACCESS as the wiring; that path is gone with the sheet and the function
+/// is currently unraised. Left standing deliberately — decommissioning is a
+/// real capability that needs a home, not a thing to delete because its
+/// only button was a prototype's.
+///
 /// TRANSCRIPTION, NOT DERIVATION — as with `Theme.swift`. The prototype at
 /// that ref is the authority; if it moves this file does not follow and
 /// nothing goes red. The ref is cited so the drift is at least locatable.
@@ -26,26 +53,6 @@ import SwiftUI
 /// silently accepted.
 struct NodesView: View {
 
-    /// :707 — the kitchen node's reachability. No transport exists in this
-    /// tree, so this is state with no producer: it drives the whole pane and
-    /// nothing outside the pane can currently change it. Deliberately kept
-    /// as real state (not a constant) so the offline arm is reachable and
-    /// reviewable, which a hardcoded `true` would make dead code.
-    /// Link state, MEASURED. Was `@State private var nodeOnline = true` — a
-    /// view-local literal whose own comment admitted *"nothing outside this
-    /// view can do yet"*. It is now a parameter, so this view cannot claim a
-    /// link it did not observe: there is no writable source of truth here to
-    /// diverge from the probe.
-    let link: LinkState
-
-    /// Derived once. Every site below reads THIS rather than re-switching, so
-    /// the pill, the tint, the subtitle and the disabled state cannot disagree
-    /// about whether the node is up.
-    private var nodeOnline: Bool { link.isLinked }
-    @State private var muted = false
-    @State private var volume: Double = 0.62
-    @State private var brightness: Double = 0.40
-
     /// :711 — `route.name`.
     ///
     /// FETCHED, not vendored. This was `RouteCatalog.fallback` — one of eight
@@ -62,10 +69,9 @@ struct NodesView: View {
     /// down; `@ObservedObject` because the lifetime belongs to the parent.
     @ObservedObject var routes: RouteCatalogStore
 
-    /// `:410` / `:408` — the two sheets. Separate flags: the prototype can
-    /// have neither open, and nothing in either flow opens both.
+    /// `:410` — the route sheet. The revoke sheet that used to sit beside
+    /// it was the kitchen block's only raiser and went with it in (d).
     @State private var routeSheet = false
-    @State private var confirmRevoke = false
 
     let onToast: (String) -> Void
 
@@ -87,7 +93,6 @@ struct NodesView: View {
         ScrollView {
             VStack(spacing: 0) {
                 mobileNode
-                kitchenNode
                 enrollButton
                 Text("ZEUS · NOVAXAI")
                     .font(Theme.mono(8.5))
@@ -102,10 +107,8 @@ struct NodesView: View {
         // inside it. Inside, the panel would scroll away with the content.
         .overlay {
             if routeSheet { routeSelectSheet }
-            if confirmRevoke { revokeConfirmSheet }
         }
         .animation(.easeOut(duration: 0.28), value: routeSheet)
-        .animation(.easeOut(duration: 0.28), value: confirmRevoke)
         .task { await routes.load() }
     }
 
@@ -188,60 +191,6 @@ struct NodesView: View {
         }
     }
 
-    // MARK: - :797-812  revoke confirm
-
-    /// The confirm sheet. The ONLY site in this view that performs the
-    /// destructive act — the row at `:196` merely raises the flag.
-    ///
-    /// ⚠️ WHAT THIS DOES TODAY: it toasts, exactly as the prototype does
-    /// (`:801`). There is no token-invalidation call behind it because there is
-    /// no such endpoint in `HTTPTransport` (`grep -rn "revoke" Sources` = this
-    /// file only). Wiring a real revocation is a gateway feature, not a sheet
-    /// feature. Stated here rather than implied, so the next reader does not
-    /// assume access was actually revoked because a red button said REVOKE.
-    private var revokeConfirmSheet: some View {
-        SheetLayer(isPresented: $confirmRevoke,
-                   title: "REVOKE ACCESS",
-                   subtitle: "PRINCIPAL TOKEN INVALIDATED") {
-            Text("NODE CONTINUES AUTONOMOUS · RE-ENROLL VIA PAIR CODE")
-                .font(Theme.mono(9.5))
-                .tracking(0.57)
-                .lineSpacing(5)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(Theme.w(0.4))
-                .padding(.bottom, 14)
-
-            Button {
-                confirmRevoke = false
-                onToast("ACCESS REVOKED — RE-ENROLL TO RECONNECT")
-            } label: {
-                Text("REVOKE")
-                    .font(Theme.display(10.5, .bold))
-                    .tracking(2.3)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    // Floor at 48 (the prototype's height), not a fixed 48:
-                    // the label scales.
-                    .frame(minHeight: 48)
-                    .background(Color(hex: 0xE02020))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                confirmRevoke = false
-            } label: {
-                Text("ABORT")
-                    .font(Theme.display(9.5, .bold))
-                    .tracking(1.9)
-                    .foregroundStyle(Theme.w(0.4))
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: Theme.controlSize)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
     // MARK: - :671-686  mobile node (the core)
 
     private var mobileNode: some View {
@@ -307,130 +256,6 @@ struct NodesView: View {
         )
         .padding(.horizontal, 20)
         .padding(.top, 12)
-    }
-
-    // MARK: - :689-731  optimus / kitchen node
-
-    private var kitchenNode: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                iconWell("cpu", tint: nodeOnline ? Theme.accent2 : Theme.w(0.35))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("KITCHEN NODE")
-                        .font(Theme.display(11, .bold))
-                        .tracking(2.2)
-                        .foregroundStyle(Theme.text)
-                    // Was two literals — "kitchen · lan · gateway 0.9" and
-                    // "unreachable · last seen t-12min". The second invented a
-                    // last-seen time nothing recorded. Both arms now render
-                    // the probe's own words.
-                    Text(link.subtitle)
-                        .font(Theme.mono(9))
-                        .tracking(0.9)
-                        .foregroundStyle(Theme.w(0.35))
-                }
-                Spacer(minLength: 0)
-                Badge(text: link.badgeText, color: link.badgeColor)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 6)
-
-            if !nodeOnline {
-                // :713 — the offline explainer. Now reachable: the probe
-                // drives it. Previously dead code behind a `true` literal.
-                Text("NODE AUTONOMOUS AT HOME · SAME AGENT, SAME MEMORY · MNEMOSYNE RECONCILES ON NEXT LINK")
-                    .font(Theme.mono(9.5))
-                    .tracking(0.38)
-                    .lineSpacing(6.65)                     // line-height 1.7
-                    .foregroundStyle(Theme.w(0.35))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
-            }
-
-            if nodeOnline {
-                VStack(spacing: 12) {
-                    NodeSlider(value: $volume, icon: "speaker.wave.2.fill")
-                    NodeSlider(value: $brightness, icon: "sun.max.fill")
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 14)
-
-                micToggle
-            }
-
-            VStack(spacing: 0) {
-                NodeRow(icon: "mappin.and.ellipse", label: "Ping node",
-                        disabled: !nodeOnline) {
-                    onToast("PING — KITCHEN NODE CHIMED")
-                }
-                NodeRow(icon: "power", label: "Restart",
-                        disabled: !nodeOnline) {
-                    onToast("NODE RESTART SEQUENCE INITIATED")
-                }
-                // :730 — opens the confirm sheet. The row itself is still
-                // non-destructive: it only raises a flag. Every destructive
-                // effect lives behind the REVOKE button in the sheet, so a
-                // mis-tap here costs a dismissal and nothing else.
-                NodeRow(icon: "bolt.horizontal.circle", label: "Revoke access",
-                        danger: true, last: true) {
-                    confirmRevoke = true
-                }
-            }
-            .padding(.vertical, 2)
-        }
-        .background(Theme.w(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Theme.w(0.08), lineWidth: Theme.hairline)
-        )
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-    }
-
-    // MARK: - :717-726  mic hot/cold
-
-    private var micToggle: some View {
-        Button {
-            muted.toggle()
-            onToast(muted ? "KITCHEN MIC — COLD" : "KITCHEN MIC — HOT")
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "mic.slash.fill")
-                    .font(Theme.body(16))
-                    .foregroundStyle(muted ? Theme.danger : Theme.accent2)
-                Text("KITCHEN MIC")
-                    .font(Theme.body(14.5, .semibold))
-                    .tracking(0.58)
-                    .foregroundStyle(Theme.text)
-                Spacer(minLength: 0)
-                Text(muted ? "COLD" : "HOT")
-                    .font(Theme.mono(9))
-                    .tracking(1.26)
-                    .foregroundStyle(muted ? Color(hex: 0xFF8A80) : Theme.ok)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke((muted ? Theme.danger : Theme.ok)
-                                        .opacity(Double(0x55) / 255.0),
-                                    lineWidth: Theme.hairline)
-                    )
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Theme.w(0.05))
-                .frame(height: Theme.hairline)
-        }
     }
 
     // MARK: - :735-741  enroll
@@ -524,54 +349,6 @@ struct NodeRow: View {
             if !last {
                 Rectangle().fill(Theme.w(0.05)).frame(height: Theme.hairline)
             }
-        }
-    }
-}
-
-// MARK: - :349+  Slider
-
-/// The prototype's draggable slider. Its pointer maths (`setFrom(clientX)`,
-/// a `trackRef` and manual capture) is replaced by a SwiftUI drag gesture
-/// over a measured track — SAME BEHAVIOUR, DIFFERENT MECHANISM, which is
-/// worth saying because "ported" would overclaim it.
-struct NodeSlider: View {
-    @Binding var value: Double
-    let icon: String
-
-    private let track: CGFloat = 4
-    private let knob: CGFloat = 14
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(Theme.body(15))
-                .foregroundStyle(Theme.w(0.45))
-                // Width only — column slot, same as above. The vertical axis is free.
-                .frame(minWidth: 18)
-
-            GeometryReader { geo in
-                let w = geo.size.width
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.w(0.08)).frame(height: track)
-                    Capsule()
-                        .fill(Theme.accentGradient)
-                        .frame(width: max(0, min(1, value)) * w, height: track)
-                    Circle()
-                        .fill(Theme.text)
-                        .frame(width: knob, height: knob)
-                        .offset(x: max(0, min(1, value)) * w - knob / 2)
-                }
-                .frame(height: knob)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { g in
-                            guard w > 0 else { return }
-                            value = max(0, min(1, g.location.x / w))
-                        }
-                )
-            }
-            .frame(height: knob)
         }
     }
 }

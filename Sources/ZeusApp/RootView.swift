@@ -466,7 +466,7 @@ struct RootView: View {
                 disarmReason: configSource.config.disarmReason
             )
         case .nodes:
-            NodesView(link: link.state, routes: routes, onToast: showToast,
+            NodesView(routes: routes, onToast: showToast,
                       onOpenGatewayEditor: { config in
                           gatewayEditorConfig = config
                           gatewayEditor = true

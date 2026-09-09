@@ -137,7 +137,8 @@ final class VoiceTests: XCTestCase {
     /// `.unavailable` does not arm the button.
     ///
     /// A normal-looking mic whose tap cannot work is precisely the silent
-    /// non-action retired at `NodesView:105`/`:191`. `.denied` DOES stay
+    /// non-action retired with the kitchen block's revoke sheet at (d)
+    /// (`NodesView`, `60d2f06b^`; the coordinates :105/:191 are gone with it). `.denied` DOES stay
     /// actionable, because a trip to Settings and back can change the answer
     /// and the re-tap is what re-reads it.
     func testOnlyTheUnfixableStateDisarmsTheButton() {

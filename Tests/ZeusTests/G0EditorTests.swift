@@ -220,20 +220,24 @@ final class G0EditorTests: XCTestCase {
 
         let mobileRange = src.range(of: "private var mobileNode")
         let rowRange = src.range(of: #"icon: "globe""#)
-        let kitchenRange = src.range(of: "private var kitchenNode")
+        let enrollRange = src.range(of: "private var enrollButton")
 
         let posMobile = mobileRange != nil
         let posRow = rowRange != nil
-        let posKitchen = kitchenRange != nil
-        XCTAssertTrue(posMobile && posRow && posKitchen,
-                      "POS control: mobileNode, the gateway row, and kitchenNode all locate")
+        let posEnroll = enrollRange != nil
+        XCTAssertTrue(posMobile && posRow && posEnroll,
+                      "POS control: mobileNode, the gateway row, and enrollButton all locate")
 
         let start = mobileRange!.lowerBound
         let rowStart = rowRange!.lowerBound
         let block = String(src[start..<rowStart])
 
-        // The row precedes kitchenNode (i.e. it is in mobileNode's body).
-        XCTAssertLessThan(rowStart, kitchenRange!.lowerBound,
+        // The row precedes enrollButton (i.e. it is in mobileNode's body).
+        // Re-anchored at (d): the boundary WAS `kitchenNode`, which that cut
+        // retired — a leg whose subject a later commit removes passes while
+        // measuring nothing. `enrollButton` is the next member after
+        // mobileNode and is not going anywhere: the claim is unchanged.
+        XCTAssertLessThan(rowStart, enrollRange!.lowerBound,
                           "the gateway row lives inside mobileNode, not elsewhere")
 
         // UNCONDITIONAL: no arm-conditional construct between the start of
@@ -242,6 +246,44 @@ final class G0EditorTests: XCTestCase {
             XCTAssertFalse(block.contains(needle),
                            "the gateway row is gated by `\(needle)` — a conditional row hides the switch from the arm that needs it")
         }
+    }
+
+    /// (d) THE BLOCK IS GONE, AND SO ARE ITS ORPHANS.
+    ///
+    /// Text census over CODE LINES ONLY — the tombstone at the head of the
+    /// file names every retired symbol, so a whole-file census answers about
+    /// the file rather than about the program (the `All systems nominal`
+    /// fault from (c), one commit later). The filter carries its own control:
+    /// `private var mobileNode` must survive it, else every miss below is a
+    /// statement about `codeLines` and not about the tree.
+    ///
+    /// The orphans are asserted INDIVIDUALLY rather than as a count, because
+    /// a count is satisfied by any five absences — including five the cut did
+    /// not make. Each name is the claim.
+    func testTheKitchenBlockAndItsOrphansAreRetired() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let src = try String(contentsOf: root.appendingPathComponent("Sources/ZeusApp/NodesView.swift"), encoding: .utf8)
+
+        let codeLines = src.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///")
+                   && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        XCTAssertTrue(codeLines.contains("private var mobileNode"),
+                      "FILTER CONTROL: mobileNode survived the comment strip — the census below is about code")
+
+        for orphan in ["kitchenNode", "micToggle", "revokeConfirmSheet", "confirmRevoke",
+                       "NodeSlider", "KITCHEN NODE", "Revoke access", "Ping node",
+                       "muted", "brightness", "nodeOnline", "LinkState"] {
+            XCTAssertFalse(codeLines.contains(orphan),
+                           "`\(orphan)` survives in code — (d) retired the kitchen block and everything only it could reach")
+        }
+
+        // POS, same invocation: what the pane IS now.
+        XCTAssertTrue(codeLines.contains("private var enrollButton"))
+        XCTAssertTrue(codeLines.contains(#"icon: "globe""#))
     }
 
     // MARK: - The editor's read-back derivations
