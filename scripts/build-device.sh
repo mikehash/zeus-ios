@@ -65,6 +65,39 @@ cd "$REPO" || { echo "VOID: cannot cd to repo root"; exit 2; }
 die_instrument() { echo "🔴 VOID (rc=2, unmeasured): $*" >&2; exit 2; }
 die_build()      { echo "🔴 FAILED (rc=1): $*" >&2; exit 1; }
 
+# ── 1a. ARGUMENTS ──────────────────────────────────────────────────────────
+#
+# Two flags, and the second is only meaningful under the first.
+#
+#   --testflight   after the export, hand the .ipa to App Store Connect.
+#   --dry-run      under --testflight, VALIDATE instead of UPLOAD.
+#
+# `--dry-run` alone is refused rather than ignored. An ignored flag is the
+# quietest possible failure: the operator types the word that means "do not
+# publish", the script does exactly what it would have done anyway, and the
+# only evidence is in the operator's memory of what they typed.
+TESTFLIGHT=0
+DRY_RUN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --testflight) TESTFLIGHT=1 ;;
+    --dry-run)    DRY_RUN=1 ;;
+    -h|--help)
+      echo "usage: build-device.sh [--testflight [--dry-run]]" >&2
+      echo "  env: ZEUS_TEAM_ID, ZEUS_EXPORT_METHOD  (see the refusals below)" >&2
+      exit 0 ;;
+    *) die_instrument "unknown argument '$1'.  usage: build-device.sh [--testflight [--dry-run]]" ;;
+  esac
+  shift
+done
+
+if [ "$DRY_RUN" -eq 1 ] && [ "$TESTFLIGHT" -eq 0 ]; then
+  die_instrument "--dry-run has no meaning without --testflight.
+  There is nothing to dry-run: a device build with no upload step already
+  touches nothing outside this machine. Refusing rather than ignoring, because
+  an ignored --dry-run is indistinguishable from a --dry-run that was honoured."
+fi
+
 # ── 1. REFUSE LOUDLY ───────────────────────────────────────────────────────
 
 if [ -z "${ZEUS_TEAM_ID:-}" ]; then
@@ -135,6 +168,84 @@ if ! printf '%s' "$ZEUS_TEAM_ID" | grep -Eq '^[A-Z0-9]{10}$'; then
   Check for a trailing newline or a pasted 'Team ID:' prefix."
 fi
 
+# ── 1b. APP STORE CONNECT CREDENTIALS — PREFLIGHT, NOT POSTFLIGHT ──────────
+#
+# Read here, ~5 minutes BEFORE the upload needs them, for the same reason
+# ZEUS_TEAM_ID is read before the compile: a credential fault discovered after
+# an archive is a fault whose error text names a JWT, not a missing file.
+#
+# THREE INPUTS, all from a directory OUTSIDE the tree (default ~/.zeus/asc/):
+#
+#   issuer_id            the ASC API issuer UUID       (one line)
+#   key_id               the 10-char ASC API key id    (one line)
+#   AuthKey_<key_id>.p8  the private key
+#
+# The .p8 filename is NOT our choice. `altool` does not take a path to a key;
+# it searches a fixed list of directories for a file named exactly
+# `AuthKey_<apiKey>.p8`, and the only way to add a directory to that list is
+# the API_PRIVATE_KEYS_DIR environment variable. So we do not pass the key —
+# we point altool at the directory and let it find the name it insists on.
+# That is why the filename check below is a hard refusal and not a nicety:
+# a correctly-contented key under the wrong name is invisible to the tool,
+# and its absence surfaces as an authentication error, not a missing file.
+#
+# NOTHING from this directory is ever echoed. The refusals below name PATHS
+# and never contents — a "helpful" error that prints the issuer id puts an
+# account credential into a terminal scrollback and a CI log.
+ASC_DIR="${ZEUS_ASC_DIR:-$HOME/.zeus/asc}"
+ASC_KEY_ID=""
+ASC_ISSUER_ID=""
+
+if [ "$TESTFLIGHT" -eq 1 ]; then
+  if [ "$EXPORT_METHOD" != "app-store-connect" ]; then
+    die_instrument "--testflight requires ZEUS_EXPORT_METHOD=app-store-connect (got '$ZEUS_EXPORT_METHOD').
+  Refusing to override it for you: the method decides what the .ipa IS, and a
+  development-signed .ipa is rejected by App Store Connect after the upload
+  has already spent your time. Set the variable and mean it."
+  fi
+
+  [ -d "$ASC_DIR" ] || die_instrument "no App Store Connect credentials directory at $ASC_DIR
+
+  Create it (chmod 700) and put three things in it:
+    issuer_id            — the issuer UUID from App Store Connect → Users and
+                           Access → Integrations → App Store Connect API
+    key_id               — the 10-character Key ID from the same page
+    AuthKey_<key_id>.p8  — the private key, downloadable EXACTLY ONCE at
+                           key-creation time. Apple will not re-issue it.
+
+  Override the location with ZEUS_ASC_DIR. It is outside the tree by default
+  and must stay outside it: a .p8 is a live account credential."
+
+  for f in issuer_id key_id; do
+    [ -f "$ASC_DIR/$f" ] || die_instrument "missing $ASC_DIR/$f  (one line, no quotes)"
+    [ -s "$ASC_DIR/$f" ] || die_instrument "$ASC_DIR/$f is empty"
+  done
+
+  # `tr -d` strips the trailing newline a text editor adds and any stray CR.
+  # Not cosmetic: these go into a JWT, and a key id with a newline authenticates
+  # as nothing while looking correct in every echo.
+  ASC_KEY_ID=$(tr -d ' \t\r\n' < "$ASC_DIR/key_id")
+  ASC_ISSUER_ID=$(tr -d ' \t\r\n' < "$ASC_DIR/issuer_id")
+
+  printf '%s' "$ASC_KEY_ID" | grep -Eq '^[A-Z0-9]{10}$' \
+    || die_instrument "the key id in $ASC_DIR/key_id is not 10 uppercase alphanumerics.
+  (Its length is $(printf '%s' "$ASC_KEY_ID" | wc -c | tr -d ' ') characters. The value is not printed here on purpose.)"
+
+  P8="$ASC_DIR/AuthKey_${ASC_KEY_ID}.p8"
+  [ -f "$P8" ] || die_instrument "no private key at $P8
+
+  altool searches for that EXACT filename — AuthKey_<key_id>.p8 — and takes no
+  path argument. If your file is named something else, rename it; if the key id
+  in $ASC_DIR/key_id does not match the one in the filename, one of the two is
+  from a different key."
+
+  # altool's only way to see a directory that is not one of its four defaults.
+  export API_PRIVATE_KEYS_DIR="$ASC_DIR"
+
+  command -v xcrun >/dev/null || die_instrument "xcrun not on PATH"
+  xcrun --find altool >/dev/null 2>&1 || die_instrument "altool not found (xcrun --find altool). Full Xcode required; Command Line Tools alone do not ship it."
+fi
+
 command -v xcodegen  >/dev/null || die_instrument "xcodegen not on PATH (brew install xcodegen)"
 command -v xcodebuild >/dev/null || die_instrument "xcodebuild not on PATH (install Xcode, then xcode-select)"
 
@@ -167,6 +278,14 @@ echo "  repo        : $REPO"
 echo "  sha         : $(git rev-parse --short HEAD 2>/dev/null || echo '(not a git tree)')"
 echo "  team        : $ZEUS_TEAM_ID"
 echo "  method      : $ZEUS_EXPORT_METHOD  →  $EXPORT_METHOD"
+if [ "$TESTFLIGHT" -eq 1 ]; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  upload      : DRY RUN — altool --validate-app (nothing is published)"
+  else
+    echo "  upload      : LIVE — altool --upload-app → App Store Connect"
+  fi
+  echo "  asc creds   : $ASC_DIR  (key $ASC_KEY_ID)"
+fi
 echo "  archive     : $ARCHIVE"
 echo "  export      : $EXPORT_DIR"
 echo
@@ -314,12 +433,67 @@ echo
 echo "✅ $IPA"
 echo "   $IPA_BYTES bytes · $ARCHIVE_ID v$ARCHIVE_VER · method=$EXPORT_METHOD"
 echo
+# ── 7. UPLOAD ──────────────────────────────────────────────────────────────
+#
+# Until this section existed the script PRINTED an altool command for a human
+# to paste. That is not an upload path — it is a document that happens to be
+# emitted by a program, and it drifts from the script that emits it the moment
+# either changes. It is retired here.
+if [ "$TESTFLIGHT" -eq 1 ]; then
+  # --validate-app runs the SAME server-side checks as --upload-app (bundle id,
+  # signing, icon, version, entitlements, export compliance) and publishes
+  # nothing. So the dry run is not a lesser test of the upload — it is the same
+  # test with the mutation withheld, which is the only useful kind.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    ALTOOL_VERB="--validate-app"
+    echo "→ altool --validate-app  (DRY RUN — nothing is published)"
+  else
+    ALTOOL_VERB="--upload-app"
+    echo "→ altool --upload-app  (LIVE — this publishes a build to TestFlight)"
+  fi
+
+  # The key itself is never on this command line; altool finds AuthKey_<id>.p8
+  # inside API_PRIVATE_KEYS_DIR, exported at the preflight. So `ps` during the
+  # upload shows an issuer id and a key id and no private key material.
+  rc=0
+  xcrun altool "$ALTOOL_VERB" \
+    -f "$IPA" \
+    -t ios \
+    --apiKey "$ASC_KEY_ID" \
+    --apiIssuer "$ASC_ISSUER_ID" \
+    >/tmp/zeus-altool.log 2>&1 || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    echo "── last 40 lines of /tmp/zeus-altool.log ──" >&2
+    tail -40 /tmp/zeus-altool.log >&2
+    die_build "altool $ALTOOL_VERB rc=$rc  (full log: /tmp/zeus-altool.log)"
+  fi
+
+  # rc=0 is the tool's opinion; the artefact is the fact — same rule as the
+  # .ipa size assert. altool has historically exited 0 while reporting errors
+  # in its own output, so the log is read rather than trusted.
+  if grep -qi 'ERROR ITMS\|error-code' /tmp/zeus-altool.log; then
+    tail -40 /tmp/zeus-altool.log >&2
+    die_build "altool exited 0 but its log reports errors (full log: /tmp/zeus-altool.log)"
+  fi
+
+  echo
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "✅ VALIDATED — App Store Connect accepted this build's shape."
+    echo "   Nothing was published. Re-run without --dry-run to upload."
+  else
+    echo "✅ UPLOADED — build $ARCHIVE_VER is with App Store Connect."
+    echo "   Processing takes ~5-15 min before it appears in TestFlight."
+    echo "   App Store Connect → TestFlight → iOS builds."
+  fi
+  exit 0
+fi
+
 case "$EXPORT_METHOD" in
   app-store-connect)
-    echo "   NEXT — TestFlight. This .ipa will NOT install directly; it is for upload:"
-    echo "     xcrun altool --upload-app -f \"$IPA\" -t ios \\"
-    echo "       --apiKey \"\$ZEUS_ASC_KEY_ID\" --apiIssuer \"\$ZEUS_ASC_ISSUER_ID\""
-    echo "   or drag it into Transporter.app."
+    echo "   This .ipa is for UPLOAD ONLY — it will not install directly."
+    echo "   Re-run with --testflight to hand it to App Store Connect,"
+    echo "   or --testflight --dry-run to validate without publishing."
     ;;
   *)
     echo "   NEXT — put it on a phone:"

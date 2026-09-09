@@ -139,17 +139,30 @@ For sending the build to someone who is not sitting at this Mac.
 ```
 export ZEUS_TEAM_ID=ABCDE12345
 export ZEUS_EXPORT_METHOD=app-store-connect
-cd ~/zeus-ios && ./scripts/build-device.sh
+cd ~/zeus-ios && ./scripts/build-device.sh --testflight --dry-run
 ```
 
-**What you see:** the same build, then a `.ipa` and the upload command. **This
-`.ipa` will not install directly — it is upload-only.** Drag it into
-`Transporter.app`, or:
+**First, the credentials.** `--testflight` reads three things from `~/.zeus/asc/`
+(override with `ZEUS_ASC_DIR`), outside the tree, and refuses before the build
+rather than after it:
 
 ```
-xcrun altool --upload-app -f <the .ipa> -t ios \
-  --apiKey "$ZEUS_ASC_KEY_ID" --apiIssuer "$ZEUS_ASC_ISSUER_ID"
+~/.zeus/asc/
+  issuer_id             the issuer UUID    (ASC → Users and Access → Integrations)
+  key_id                the 10-char Key ID (same page)
+  AuthKey_<key_id>.p8   the private key — downloadable EXACTLY ONCE, at
+                        key-creation time. Apple will not re-issue it.
 ```
+
+The `.p8` filename is not our choice: `altool` takes no path to a key, it
+searches for that exact name inside `API_PRIVATE_KEYS_DIR`. A correct key under
+the wrong filename is invisible to the tool, so the script refuses on the name.
+
+**`--dry-run` runs `altool --validate-app`** — the same server-side checks as a
+real upload (bundle id, signing, icon, version, entitlements, export
+compliance), publishing nothing. **Drop `--dry-run` to upload for real.** The
+script no longer prints a command for you to paste; it performs the upload and
+reads altool's log, because altool has exited 0 while reporting errors.
 
 Then in App Store Connect → TestFlight, wait for processing (5–30 min), add
 yourself as an internal tester, and the build appears in the TestFlight app on
