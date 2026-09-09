@@ -51,12 +51,19 @@ XCODE_V="$(xcodebuild -version | tr '\n' ' ')"
 # crate-sha changes on every unrelated commit (a test-only commit moves it),
 # so it cannot answer "were the sources that produced this archive the sources
 # in the tree?". The tree object can, and is stable across commits that do not
-# touch the crate.
+# touch the crate. It is taken from the WORKTREE (scripts/lib/worktree_tree.sh)
+# so an uncommitted edit compiled into the .a is recorded as such.
 DEP_PIN="$(grep -m1 -oE 'rev = "[0-9a-f]+"' "$CRATE_DIR/Cargo.toml" | head -1)"
 DEP_PIN_SHORT="$(printf '%s' "$DEP_PIN" | sed -nE 's/.*"([0-9a-f]+)".*/\1/p' | cut -c1-8)"
-CRATE_TREE="$(cd "$REPO_ROOT" && git rev-parse HEAD:rust/zeus-core-bridge)"
+# crate-tree is measured on the WORKTREE, not `HEAD:<path>`: this stamps what
+# was actually COMPILED. cargo reads the files on disk, so a stamp taken from
+# the committed tree describes a different artifact than the one being built
+# whenever the crate is dirty — and dirty is the state a developer builds in.
+# scripts/check_crate_tree.sh recomputes with the SAME function.
+. "$REPO_ROOT/scripts/lib/worktree_tree.sh"
+CRATE_TREE="$(cd "$REPO_ROOT" && worktree_subtree rust/zeus-core-bridge)" || CRATE_TREE=""
 [ -n "$DEP_PIN" ]    || { echo "VOID: no rev = \"…\" in $CRATE_DIR/Cargo.toml" >&2; exit 2; }
-[ -n "$CRATE_TREE" ] || { echo "VOID: could not resolve HEAD:rust/zeus-core-bridge" >&2; exit 2; }
+[ -n "$CRATE_TREE" ] || { echo "VOID: could not measure the worktree tree of rust/zeus-core-bridge" >&2; exit 2; }
 
 SDK_IOS=""; SDK_SIM=""
 sdk_or_die() {

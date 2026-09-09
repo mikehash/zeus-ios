@@ -2,8 +2,8 @@
 # Does the LINKED archive correspond to the crate sources the tree holds?
 #
 # Answers ONE question the iOS test target structurally cannot: is
-# `crate-tree:` in the build manifest equal to a FRESHLY RECOMPUTED
-# `git rev-parse HEAD:rust/zeus-core-bridge`?
+# `crate-tree:` in the build manifest equal to a FRESHLY RECOMPUTED tree
+# object of rust/zeus-core-bridge AS IT SITS IN THE WORKTREE?
 #
 # ── Why this guard exists off-device ───────────────────────────────────────
 #
@@ -27,11 +27,24 @@
 #
 # ── APERTURE ───────────────────────────────────────────────────────────────
 #
-# `git rev-parse HEAD:<path>` reads the COMMITTED tree object. Uncommitted or
-# staged edits under rust/zeus-core-bridge/ are UNMEASURED: you can dirty the
-# crate, rebuild, and pass. That gap is named rather than papered over. It is
-# reported below as an explicit note when the crate is dirty, so the reading
-# travels with the condition that produced it.
+# The worktree, via scripts/lib/worktree_tree.sh — the SAME function the
+# producer stamps with. Uncommitted edits under rust/zeus-core-bridge/ are
+# MEASURED, and there is no dirty-crate note here any more because there is no
+# longer a world this guard cannot see.
+#
+# It used to read `git rev-parse HEAD:<path>`, and so did the producer. Two
+# halves keyed on the committed tree agree on a clean tree and are JOINTLY
+# BLIND on a dirty one. The discriminating case: build clean, edit one crate
+# source, do NOT rebuild — the .a no longer corresponds to the sources on disk
+# and the old guard printed `OK`, because HEAD had not moved. Measured at the
+# cut: worktree faf19835 -> 5f75dc0d = DRIFT rc=1, while `HEAD:` still read
+# faf19835 and matched the manifest. That is the row the old aperture could
+# not pass.
+#
+# The reciprocal case still holds: dirty, build, THEN commit. The producer
+# stamped the worktree; the commit turns those same bytes into the committed
+# tree; content unchanged, so this reads rc=0 with no rebuild. Provenance keys
+# on CONTENT, which is why committing cannot invalidate a correct artifact.
 #
 # Exit codes, three-valued per the runner's contract:
 #   0  the archive corresponds to the committed crate sources
@@ -63,11 +76,12 @@ DECLARED="$(grep -m1 '^crate-tree:' "$MANIFEST" | awk '{print $2}')"
 # ── the control, run ALONE with its rc asserted before any filtering ───────
 # A dead git and a healthy-empty result are the same empty string downstream,
 # so the producer's status is checked on its own line before the value is used.
+. "$(dirname "$0")/lib/worktree_tree.sh"
 ACTUAL=""
 rc=0
-ACTUAL="$(git rev-parse "HEAD:$CRATE_PATH" 2>/tmp/check_crate_tree.err)" || rc=$?
+ACTUAL="$(worktree_subtree "$CRATE_PATH" 2>/tmp/check_crate_tree.err)" || rc=$?
 [ "$rc" -eq 0 ] || {
-  echo "VOID: \`git rev-parse HEAD:$CRATE_PATH\` exited $rc — the control never"
+  echo "VOID: worktree_subtree $CRATE_PATH exited $rc — the control never"
   echo "      ran, so any verdict below would be an artifact of the probe."
   sed 's/^/      /' /tmp/check_crate_tree.err 2>/dev/null
   exit 2
@@ -96,20 +110,16 @@ if [ "$DECLARED" != "$ACTUAL" ]; then
   echo "         $DECLARED"
   echo "       but the tree holds"
   echo "         $ACTUAL"
-  echo "The .a in Frameworks/ does not correspond to $CRATE_PATH as committed."
+  echo "The .a in Frameworks/ does not correspond to $CRATE_PATH in the worktree."
   echo "A streamed reply in this state is a real token stream through the WRONG"
   echo "binary. Rebuild: scripts/build-xcframework.sh"
   exit 1
 fi
 
-# Dirty-crate note. Not a failure — a stated aperture, so the pass is read with
-# the condition that produced it rather than as an unqualified green.
-DIRTY="$(git status --porcelain -- "$CRATE_PATH" | wc -l | tr -d ' ')"
-if [ "$DIRTY" != "0" ]; then
-  echo "NOTE: $DIRTY uncommitted path(s) under $CRATE_PATH/ — those edits are"
-  echo "      UNMEASURED by this guard, which reads the committed tree object."
-  git status --porcelain -- "$CRATE_PATH" | sed 's/^/        /'
-fi
+# The dirty-crate NOTE that used to sit here is DELETED, not relaxed: it named
+# a world this guard could not see, and the guard can now see it. A note under
+# an `OK:` is the membership guard's pre-fix shape one directory over — the
+# reader takes the exit code and the first word, and the apology scrolls.
 
-echo "OK: archive crate-tree == HEAD:$CRATE_PATH ($ACTUAL)"
+echo "OK: archive crate-tree == worktree $CRATE_PATH ($ACTUAL)"
 exit 0
