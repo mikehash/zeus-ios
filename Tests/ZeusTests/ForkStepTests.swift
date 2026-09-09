@@ -358,7 +358,7 @@ final class ForkStepTests: XCTestCase {
     /// they already set.
     func testRepairButtonIsWithheldWhenTheRecordHasAProvider() throws {
         var withProvider = Commission()
-        withProvider.recordRoutesChoice(providerID: "anthropic", model: "m")
+        withProvider.recordRoutesChoice(providerID: "anthropic", model: "m", baseURL: nil)
         XCTAssertNotNil(withProvider.provider)
         XCTAssertNil(Commission().provider,
                      "a fresh record has no provider; the two arms must differ")

@@ -232,7 +232,7 @@ final class ManagedDeferralTests: XCTestCase {
 
         // `model` has no default: the caller must have ASKED the provider.
         // This leg names the writer's contract, not the CTA's plumbing.
-        c.recordRoutesChoice(providerID: "anthropic", model: "claude-x")
+        c.recordRoutesChoice(providerID: "anthropic", model: "claude-x", baseURL: nil)
 
         XCTAssertEqual(c.route, .byok)
         XCTAssertEqual(c.model, "claude-x")

@@ -236,6 +236,7 @@ struct Commission: Equatable, Codable {
         case deployment
         case gatewayURL = "gateway_url"
         case model
+        case providerBaseURL = "provider_base_url"
     }
 
     init(route: Route = .byok,
@@ -244,7 +245,8 @@ struct Commission: Equatable, Codable {
          nodeEnrolled: Bool = false,
          deployment: Deployment? = nil,
          gatewayURL: String? = nil,
-         model: String? = nil) {
+         model: String? = nil,
+         providerBaseURL: String? = nil) {
         self.route = route
         self.provider = provider
         self.callsign = callsign
@@ -252,6 +254,7 @@ struct Commission: Equatable, Codable {
         self.deployment = deployment
         self.gatewayURL = gatewayURL
         self.model = model
+        self.providerBaseURL = providerBaseURL
     }
 
     /// HAND-WRITTEN BECAUSE ADDING A FIELD IS A MIGRATION.
@@ -288,6 +291,7 @@ struct Commission: Equatable, Codable {
         // existed did not hold a model, and `decode` would throw keyNotFound →
         // CommissionStore.load returns nil → the operator re-onboards.
         model = try c.decodeIfPresent(String.self, forKey: .model)
+        providerBaseURL = try c.decodeIfPresent(String.self, forKey: .providerBaseURL)
     }
 
     var route: Route = .byok
@@ -315,6 +319,25 @@ struct Commission: Equatable, Codable {
     /// A hardcoded default here would be a claim about someone else's
     /// catalogue with no reader to catch it going stale.
     var model: String?
+
+    /// WHERE THE `url`-SHAPE PROVIDER LIVES, as the operator typed it.
+    ///
+    /// SEPARATE FROM `gatewayURL` ON PURPOSE. That field is the REMOTE arm's
+    /// endpoint — `GatewayConfig.resolve` reads it to decide what transport
+    /// this app talks over, and `recordDeployment` nils it on a LOCAL fork.
+    /// Writing an Ollama daemon URL there would make a LOCAL install
+    /// indistinguishable from a REMOTE gateway config one layer up: two
+    /// subjects sharing a spelling, which is the fault class this codebase has
+    /// already paid for three times.
+    ///
+    /// `nil` means the operator has not given one. It is NOT defaulted to
+    /// `http://localhost:11434`: on the simulator localhost is the Mac and the
+    /// default happens to work, on a phone localhost is the phone and the
+    /// route can never reach the operator's rig. The bridge's own
+    /// `OLLAMA_DEFAULT_URL` fallback stays — it is the core's business — but
+    /// this app must never reach it, so a `.url` provider is armed with a
+    /// value or refuses to arm.
+    var providerBaseURL: String?
 
     /// The `done` summary line.
     ///
@@ -372,10 +395,17 @@ struct Commission: Equatable, Codable {
     /// state `CoreArming.arm` renders — it is not the same as a model the app
     /// chose.
     mutating func recordRoutesChoice(providerID: String,
-                                     model chosenModel: String?) {
+                                     model chosenModel: String?,
+                                     baseURL rawBaseURL: String?) {
         route = .byok
         provider = providerID
         model = chosenModel
+        // Normalised to nil the same way `recordGatewayURL` normalises its
+        // own: an empty string is a URL the core will accept and then fail on
+        // at the wire, which reports as a provider error instead of as the
+        // missing field it is.
+        let trimmed = rawBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        providerBaseURL = (trimmed?.isEmpty ?? true) ? nil : trimmed
     }
 
     var summary: String {
@@ -453,6 +483,9 @@ struct CommissioningView: View {
     /// carries no secret (`CommissionStore.swift` docstring); this string is
     /// written to the Keychain by CONTINUE and to nothing else.
     @State private var keyText: String = ""
+    /// The `url`-shape provider's endpoint. Empty is a real state: the CTA
+    /// refuses it rather than substituting a default.
+    @State private var baseURLText: String = ""
 
     /// Set once per appearance of ROUTES, from the core's own catalog.
     @State private var providerRows: [ProviderRow] = []
@@ -829,15 +862,24 @@ struct CommissioningView: View {
                             // half-finished choice leaves no orphan secret.
                             if let previous = providerPick, previous != row.id {
                                 keyText = ""
+                                baseURLText = ""
                                 keys.removeProviderKey(for: previous)
                             }
                             providerPick = row.id
                             commission.route = .byok
+                            // THE PROBE GETS THE SAME URL THE ARM WILL.
+                            // `list_models` is Ollama-only in v1, so this is
+                            // the one call that reaches a `.url` provider —
+                            // passing nil here sends it to the bridge's
+                            // localhost fallback, which on a phone is the
+                            // phone, and the row then reads
+                            // `Ollama LISTED NONE` for a rig answering fine.
+                            let typedURL = baseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
                             modelText = CoreArming.firstModel(
                                 for: row.id,
                                 core: try? EmbeddedCore.shared.get(),
                                 key: nil,
-                                baseURL: nil) ?? ""
+                                baseURL: typedURL.isEmpty ? nil : typedURL) ?? ""
                         }
                     }
                 }
@@ -866,6 +908,9 @@ struct CommissioningView: View {
 
                 if case .key = selected.shape {
                     keyField(for: selected)
+                }
+                if case .url = selected.shape {
+                    baseURLField(for: selected)
                 }
                 if case let .unsupported(reason) = selected.shape {
                     Text("\(selected.label.uppercased()) CANNOT BE SET FROM THIS SCREEN — \(reason.uppercased())")
@@ -896,7 +941,9 @@ struct CommissioningView: View {
                 // THE STEP WRITES THE PROVIDER AND THE MODEL, both from the
                 // operator. `Commission.provider` is `String?` and nil means
                 // nobody chose; nothing in this file names a provider now.
-                commission.recordRoutesChoice(providerID: id, model: typed)
+                commission.recordRoutesChoice(providerID: id,
+                                              model: typed,
+                                              baseURL: baseURLText)
                 // THE SECRET GOES TO THE KEYCHAIN, NOT TO THE RECORD. The
                 // write is here and only here, after the record write, so a
                 // key can never be stored for a provider the flow did not
@@ -905,7 +952,10 @@ struct CommissioningView: View {
                 if !secret.isEmpty { keys.setProviderKey(secret, for: id) }
                 step = .nodes
             }
-            .disabled(!Self.routesCTAEnabled(providerPick: providerPick, modelText: modelText))
+            .disabled(!Self.routesCTAEnabled(providerPick: providerPick,
+                                             modelText: modelText,
+                                             shape: selected?.shape,
+                                             baseURLText: baseURLText))
         }
         .onAppear {
             providerRows = ProviderCatalog.current.rows()
@@ -935,9 +985,60 @@ struct CommissioningView: View {
     /// "partly chosen" state: `recordRoutesChoice` writes provider AND model
     /// together, and a CTA that fired on one of them would write a commission
     /// whose other half the operator never gave.
-    static func routesCTAEnabled(providerPick: String?, modelText: String) -> Bool {
+    static func routesCTAEnabled(providerPick: String?,
+                                 modelText: String,
+                                 shape: CredentialKind?,
+                                 baseURLText: String) -> Bool {
         guard providerPick != nil else { return false }
-        return !modelText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !modelText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        // A `.url` provider with no URL is the one shape that can pass every
+        // other gate and still be unarmable: the id is chosen, a model may be
+        // typed by hand, and only the endpoint is missing. Refusing here is
+        // what makes `CoreArming.arm`'s NO URL arm unreachable in practice
+        // rather than a screen the operator meets after commissioning.
+        if case .url = shape {
+            return !baseURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return true
+    }
+
+    /// The endpoint field for a `.url`-shape provider.
+    ///
+    /// `TextField`, not `SecureField`: this is an address, not a credential,
+    /// and masking it would hide a typo in the one value the operator has to
+    /// get exactly right.
+    ///
+    /// `http://localhost:11434` is the PROMPT and never the VALUE. A prefilled
+    /// value is the bridge's hardcoded default moved up one layer wearing the
+    /// operator's name — it would be written to the record as though he had
+    /// chosen it, and on a phone it points at the phone. As a prompt it is
+    /// discoverable and still has to be owned.
+    private func baseURLField(for row: ProviderRow) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("ENDPOINT")
+                .font(Theme.mono(9))
+                .tracking(1.4)
+                .foregroundStyle(Theme.w(0.35))
+            TextField("", text: $baseURLText, prompt:
+                Text("http://localhost:11434").font(Theme.mono(12)).foregroundStyle(Theme.w(0.2))
+            )
+            .font(Theme.mono(13))
+            .foregroundStyle(Theme.w(0.92))
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled(true)
+            .keyboardType(.URL)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.corner)
+                    .fill(Theme.w(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.corner)
+                            .stroke(Theme.w(0.10), lineWidth: 1)
+                    )
+            )
+            .accessibilityLabel("Endpoint for \(row.label)")
+        }
     }
 
     /// The key field. Collectable now; it was inert until the provider-scoped

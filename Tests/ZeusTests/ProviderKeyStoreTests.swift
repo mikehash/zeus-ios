@@ -64,7 +64,7 @@ final class ProviderKeyStoreTests: XCTestCase {
 
     func testTheKeyIsNeverInTheCommissionRecord() throws {
         var c = Commission()
-        c.recordRoutesChoice(providerID: "anthropic", model: "claude-sonnet-4-6")
+        c.recordRoutesChoice(providerID: "anthropic", model: "claude-sonnet-4-6", baseURL: nil)
         let blob = try JSONEncoder().encode(c)
         let json = String(data: blob, encoding: .utf8) ?? ""
 

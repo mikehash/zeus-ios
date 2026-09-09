@@ -221,16 +221,23 @@ struct RootView: View {
         var commissionForArming = store.load()
         if let seeded {
             commissionForArming?.recordRoutesChoice(providerID: seeded.id,
-                                                    model: seeded.model)
+                                                    model: seeded.model,
+                                                    baseURL: seeded.baseURL)
         }
         // The key is read for the provider ON THE RECORD, which is the one
         // about to be armed — not for the picker's current selection, which
         // does not exist in this process yet.
         let key = commissionForArming?.provider.flatMap { keys.providerKey(for: $0) }
+        // THE RECORD IS THE SOURCE, not the debug seed. `LaunchArgs
+        // .seededProvider` is `#else return nil` in release, so reading the
+        // seed here meant the argument was UNCONDITIONALLY nil in a shipped
+        // build: a `.url` provider could never be armed with the operator's
+        // endpoint no matter what ROUTES collected. The seed still wins when
+        // present, because its whole job is to stand in for a record.
         CoreArming.arm(commission: commissionForArming,
                        core: core,
                        providerKey: key,
-                       baseURL: seeded?.baseURL)
+                       baseURL: seeded?.baseURL ?? commissionForArming?.providerBaseURL)
         return RootView.resolve(store: store)
             .withCoreReadiness(EmbeddedCoreArming(core: core))
     }

@@ -141,7 +141,12 @@ final class ProviderArmingTests: XCTestCase {
         _ = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
                            core: core,
                            providerKey: nil,
-                           baseURL: nil)
+                           // Ollama is a `.url` provider and the arm now
+                           // refuses one with no endpoint, so this leg supplies
+                           // the half it is not about. It went red on the (i)
+                           // cut, which is the refusal reaching the REAL
+                           // catalog — the core's own verdict, not a stub's.
+                           baseURL: "http://127.0.0.1:11434")
         XCTAssertEqual(core.setCalls.first?.key, CoreArming.ollamaKeyPlaceholder)
         XCTAssertFalse(CoreArming.ollamaKeyPlaceholder.isEmpty,
                        "an empty key is refused by the core with an error naming the header, not the key")
@@ -162,11 +167,40 @@ final class ProviderArmingTests: XCTestCase {
         let refused = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
                                      core: refusing,
                                      providerKey: nil,
-                                     baseURL: nil)
+                                     baseURL: "http://127.0.0.1:11434")
         XCTAssertNotNil(refused)
         XCTAssertNotEqual(refused, GatewayConfig.noProviderMessage,
                           "a provider that refused the call is not a provider nobody chose")
         XCTAssertTrue(refused?.contains("REFUSED") == true, "got \(refused ?? "nil")")
+    }
+
+    /// GATE TWO, BEHAVIOURAL: a `.url` provider with no endpoint is REFUSED
+    /// rather than armed against the bridge's localhost fallback.
+    ///
+    /// On the simulator localhost is the Mac and the fallback happens to work;
+    /// on a phone localhost is the phone, so the route can never reach the
+    /// operator's rig and fails as a connection error naming the wrong cause.
+    func testAURLProviderWithNoEndpointIsRefusedAndNeverArmed() {
+        let core = ArmingCore()
+        let reason = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
+                                    core: core,
+                                    providerKey: nil,
+                                    baseURL: nil)
+        XCTAssertEqual(reason, "NO ENDPOINT FOR Ollama — ENTER ONE IN ROUTES")
+        XCTAssertTrue(core.setCalls.isEmpty,
+                      "refused means NOT ARMED: a reason string beside a live setProvider call "
+                      + "is the worst of both — the screen says unarmed and the core is armed wrong")
+
+        // POS + DISCRIMINATOR in the same invocation: the same call with an
+        // endpoint arms, and it arms WITH THAT ENDPOINT. Without this the leg
+        // above is a statement about `arm` refusing everything.
+        let armed = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
+                                   core: core,
+                                   providerKey: nil,
+                                   baseURL: "http://10.0.0.2:11434")
+        XCTAssertNil(armed, "POS: with an endpoint it arms")
+        XCTAssertEqual(core.setCalls.first?.baseUrl, "http://10.0.0.2:11434",
+                       "the operator's endpoint reaches the core verbatim")
     }
 
     func testAMissingModelIsNamedNotGuessed() {
@@ -209,12 +243,12 @@ final class ProviderArmingTests: XCTestCase {
 
     func testRecordRoutesChoiceStoresTheProvidersModel() {
         var c = Commission()
-        c.recordRoutesChoice(providerID: "ollama", model: "llama3.2:latest")
+        c.recordRoutesChoice(providerID: "ollama", model: "llama3.2:latest", baseURL: nil)
         XCTAssertEqual(c.provider, "ollama")
         XCTAssertEqual(c.model, "llama3.2:latest")
 
         var none = Commission()
-        none.recordRoutesChoice(providerID: "anthropic", model: nil)
+        none.recordRoutesChoice(providerID: "anthropic", model: nil, baseURL: nil)
         XCTAssertNil(none.model, "nil is the provider's answer, stored as such")
     }
 

@@ -107,6 +107,19 @@ enum CoreArming {
         guard let model = commission.model else {
             return "NO MODEL — \(ProviderCatalog.label(for: id)) LISTED NONE"
         }
+        // A `.url` provider armed with nil reaches the bridge's
+        // OLLAMA_DEFAULT_URL — localhost, which on a phone is the phone. That
+        // is a route that can never reach the operator's rig, and it fails as
+        // a connection error naming the wrong cause. Refuse instead.
+        let resolvedBaseURL: String?
+        if case .url = ProviderCatalog.current.shape(for: id) {
+            guard let recorded = baseURL, !recorded.isEmpty else {
+                return "NO ENDPOINT FOR \(ProviderCatalog.label(for: id)) — ENTER ONE IN ROUTES"
+            }
+            resolvedBaseURL = recorded
+        } else {
+            resolvedBaseURL = baseURL
+        }
         let key: String?
         if keylessProviders.contains(id) {
             key = ollamaKeyPlaceholder
@@ -117,7 +130,7 @@ enum CoreArming {
             return "NO KEY FOR \(ProviderCatalog.label(for: id)) — ENTER ONE IN ROUTES"
         }
         do {
-            try core.setProvider(id: id, model: model, key: key, baseUrl: baseURL)
+            try core.setProvider(id: id, model: model, key: key, baseUrl: resolvedBaseURL)
             return nil
         } catch {
             return "\(ProviderCatalog.label(for: id)) REFUSED: \(error)"

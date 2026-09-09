@@ -60,7 +60,7 @@ final class ProviderCatalogTests: XCTestCase {
         ])
 
         var c = Commission()
-        c.recordRoutesChoice(providerID: "xiaomimimo", model: "m")
+        c.recordRoutesChoice(providerID: "xiaomimimo", model: "m", baseURL: nil)
 
         // 1. the summary footer
         XCTAssertTrue(c.summary.contains("Xiaomi MiMo"), c.summary)
@@ -115,7 +115,7 @@ final class ProviderCatalogTests: XCTestCase {
             ProviderRow(id: "anthropic", label: "Anthropic", shape: .key)
         ])
         var c = Commission()
-        c.recordRoutesChoice(providerID: "anthropic", model: "claude-sonnet-4-6")
+        c.recordRoutesChoice(providerID: "anthropic", model: "claude-sonnet-4-6", baseURL: nil)
 
         let reason = CoreArming.arm(commission: c, core: CatalogCore(), providerKey: nil, baseURL: nil)
         XCTAssertEqual(reason, "NO KEY FOR Anthropic — ENTER ONE IN ROUTES", String(describing: reason))
@@ -133,7 +133,7 @@ final class ProviderCatalogTests: XCTestCase {
             ProviderRow(id: "ollama", label: "Ollama", shape: .url)
         ])
         var c = Commission()
-        c.recordRoutesChoice(providerID: "ollama", model: "llama3.2:latest")
+        c.recordRoutesChoice(providerID: "ollama", model: "llama3.2:latest", baseURL: nil)
 
         let core = CatalogCore()
         let reason = CoreArming.arm(commission: c, core: core,
@@ -151,8 +151,8 @@ final class ProviderCatalogTests: XCTestCase {
             ProviderRow(id: "anthropic", label: "Anthropic", shape: .key),
             ProviderRow(id: "ollama", label: "Ollama", shape: .url)
         ])
-        var keyed = Commission(); keyed.recordRoutesChoice(providerID: "anthropic", model: "m")
-        var keyless = Commission(); keyless.recordRoutesChoice(providerID: "ollama", model: "m")
+        var keyed = Commission(); keyed.recordRoutesChoice(providerID: "anthropic", model: "m", baseURL: nil)
+        var keyless = Commission(); keyless.recordRoutesChoice(providerID: "ollama", model: "m", baseURL: nil)
 
         let a = CoreArming.arm(commission: keyed, core: CatalogCore(), providerKey: nil, baseURL: nil)
         let b = CoreArming.arm(commission: keyless, core: CatalogCore(), providerKey: nil, baseURL: nil)
@@ -167,15 +167,15 @@ final class ProviderCatalogTests: XCTestCase {
     /// no-importable-surface class one file over from `main.rs`.
     func testTheRoutesCTARequiresBothAProviderAndAModel() {
         typealias V = CommissioningView
-        XCTAssertFalse(V.routesCTAEnabled(providerPick: nil, modelText: ""),
+        XCTAssertFalse(V.routesCTAEnabled(providerPick: nil, modelText: "", shape: nil, baseURLText: ""),
                        "neither half given")
-        XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama", modelText: ""),
+        XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama", modelText: "", shape: .key, baseURLText: ""),
                        "a provider with no model must not write a half record")
-        XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama", modelText: "   "),
+        XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama", modelText: "   ", shape: .key, baseURLText: ""),
                        "whitespace is not a model")
-        XCTAssertFalse(V.routesCTAEnabled(providerPick: nil, modelText: "llama3.2"),
+        XCTAssertFalse(V.routesCTAEnabled(providerPick: nil, modelText: "llama3.2", shape: .key, baseURLText: ""),
                        "a model with no provider must not write a half record")
-        XCTAssertTrue(V.routesCTAEnabled(providerPick: "ollama", modelText: "llama3.2"),
+        XCTAssertTrue(V.routesCTAEnabled(providerPick: "ollama", modelText: "llama3.2", shape: .key, baseURLText: ""),
                       "POS: both halves given — a gate that refused everything would pass every leg above")
     }
 
@@ -202,5 +202,146 @@ final class ProviderCatalogTests: XCTestCase {
             ProviderRow(id: "ollama", label: "Ollama", shape: .url)
         ])
         XCTAssertEqual(ProviderCatalog.current.shape(for: "ollama"), .url)
+    }
+}
+
+// MARK: - (i) The `url` shape: GATE ONE — the field exists and the CTA holds
+
+/// The two gates are SEPARATE CLAIMS and neither implies the other.
+///
+/// Before this cut the picker rendered a field only `if case .key`, and the arm
+/// read its `baseURL` argument from `LaunchArgs.seededProvider` — which is
+/// `#else return nil` in release. So a URL collected by the form would have had
+/// nowhere to go, and a URL on the record would have had no reader. A leg on
+/// either half alone passes while the feature does nothing.
+final class ProviderBaseURLGateTests: XCTestCase {
+
+    private var saved: ProviderCataloging!
+
+    override func setUp() {
+        super.setUp()
+        saved = ProviderCatalog.current
+        ProviderCatalog.current = StubCatalog(rows: [
+            ProviderRow(id: "ollama", label: "Ollama", shape: .url),
+            ProviderRow(id: "anthropic", label: "Anthropic", shape: .key),
+        ])
+    }
+
+    override func tearDown() {
+        ProviderCatalog.current = saved
+        super.tearDown()
+    }
+
+    /// GATE ONE. A `.url` provider with a model but no endpoint must not pass
+    /// the CTA — it is the one shape that satisfies every other gate and is
+    /// still unarmable.
+    func testTheCTARefusesAURLProviderWithNoEndpoint() {
+        typealias V = CommissioningView
+        XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama",
+                                          modelText: "llama3.2",
+                                          shape: .url,
+                                          baseURLText: ""),
+                       "a url-shape provider with no endpoint writes a record that cannot arm")
+        XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama",
+                                          modelText: "llama3.2",
+                                          shape: .url,
+                                          baseURLText: "   "),
+                       "whitespace is not an endpoint")
+        XCTAssertTrue(V.routesCTAEnabled(providerPick: "ollama",
+                                         modelText: "llama3.2",
+                                         shape: .url,
+                                         baseURLText: "http://10.0.0.2:11434"),
+                      "POS: endpoint given — a gate that refused everything would pass the two above")
+        // DISCRIMINATOR: the same empty endpoint must NOT block a `.key`
+        // provider. Without this the leg above is a statement about
+        // `baseURLText.isEmpty`, not about the shape.
+        XCTAssertTrue(V.routesCTAEnabled(providerPick: "anthropic",
+                                         modelText: "claude-sonnet-4-6",
+                                         shape: .key,
+                                         baseURLText: ""),
+                      "a keyed provider has no endpoint to give and must not be gated on one")
+    }
+
+    /// The field is rendered for `.url` and only for `.url`.
+    ///
+    /// Source census, because the branch lives in a view `body` and a `body`
+    /// modifier is unreachable from this target — the same no-importable-surface
+    /// limit that let `.disabled(false)` pass 424 tests.
+    func testTheEndpointFieldIsRenderedForTheURLShape() throws {
+        let src = try source("Commissioning.swift")
+        XCTAssertTrue(src.contains("if case .url = selected.shape {"),
+                      "the url arm must exist beside the key arm")
+        XCTAssertTrue(src.contains("baseURLField(for: selected)"),
+                      "and it must render the endpoint field")
+        // POS in the same invocation: the key arm still stands, so a miss above
+        // is about the url arm and not about the reader.
+        XCTAssertTrue(src.contains("if case .key = selected.shape {"),
+                      "POS: the key arm is untouched")
+    }
+
+    /// GATE TWO. The arm reads the RECORD, not the debug seed.
+    ///
+    /// MUT: revert `RootView` to `baseURL: seeded?.baseURL` and this fires —
+    /// in a release build that argument is unconditionally nil.
+    func testTheArmReadsTheEndpointFromTheRecordAndNotOnlyTheSeed() throws {
+        let src = try source("RootView.swift")
+        XCTAssertTrue(src.contains("commissionForArming?.providerBaseURL"),
+                      "the record must be a source for the arm's baseURL")
+        XCTAssertTrue(src.contains("providerKey: key"),
+                      "POS: the sibling argument still reads the store")
+    }
+
+    /// The record round-trips the endpoint, and an empty field is ABSENCE.
+    func testTheEndpointRoundTripsAndEmptyNormalisesToNil() throws {
+        var c = Commission()
+        c.recordRoutesChoice(providerID: "ollama", model: "llama3.2", baseURL: "  http://10.0.0.2:11434  ")
+        XCTAssertEqual(c.providerBaseURL, "http://10.0.0.2:11434", "trimmed, not stored raw")
+
+        let round = try JSONDecoder().decode(
+            Commission.self, from: try JSONEncoder().encode(c))
+        XCTAssertEqual(round.providerBaseURL, c.providerBaseURL, "survives a store round trip")
+
+        var blank = Commission()
+        blank.recordRoutesChoice(providerID: "ollama", model: "llama3.2", baseURL: "   ")
+        XCTAssertNil(blank.providerBaseURL,
+                     "empty is absence, not an endpoint the core accepts and then fails on")
+    }
+
+    /// MIGRATION: a record written before the key existed still decodes.
+    func testALegacyRecordWithoutAnEndpointStillDecodes() throws {
+        let legacy = #"{"route":"byok","provider":"ollama","callsign":"x","node_enrolled":false,"model":"llama3.2"}"#
+        let c = try JSONDecoder().decode(Commission.self, from: Data(legacy.utf8))
+        XCTAssertNil(c.providerBaseURL)
+        XCTAssertEqual(c.model, "llama3.2", "POS: the sibling key still decodes")
+    }
+
+    /// THE ENDPOINT IS NOT THE GATEWAY URL. Two subjects, two fields — writing
+    /// one through the other makes a LOCAL install read as a REMOTE gateway
+    /// config in `GatewayConfig.resolve`.
+    func testTheEndpointDoesNotTouchTheGatewayURL() {
+        var c = Commission()
+        c.recordRoutesChoice(providerID: "ollama", model: "m", baseURL: "http://10.0.0.2:11434")
+        XCTAssertNil(c.gatewayURL, "the provider endpoint must not land in the remote arm's field")
+        XCTAssertNotEqual(c.providerBaseURL, c.gatewayURL,
+                          "vacuity: two nils would pass the line above while proving nothing")
+    }
+
+    private func source(_ name: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/\(name)")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// The default `http://localhost:11434` appears as a PROMPT and never as a
+    /// stored value: on a phone, localhost is the phone.
+    func testTheLocalhostDefaultIsAPromptAndNotAValue() throws {
+        let src = try source("Commissioning.swift")
+        XCTAssertTrue(src.contains(#"prompt:"#), "POS: the file uses the prompt API")
+        XCTAssertFalse(src.contains(#"baseURLText: String = "http://localhost"#),
+                       "the state must not be seeded with the daemon default")
+        XCTAssertFalse(src.contains(#"providerBaseURL ?? "http://localhost"#),
+                       "and no reader may substitute it either")
     }
 }
