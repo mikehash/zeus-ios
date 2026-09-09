@@ -111,19 +111,11 @@ final class BundleResourceTests: XCTestCase {
     /// rasterised PNGs beside the product for the primary icon; their
     /// presence is bytes derived from the artwork, which config cannot fake.
     ///
-    /// 🔴 THE ARTWORK THIS LEG IS GREEN AGAINST IS A PLACEHOLDER.
-    /// `AppIcon-1024-PLACEHOLDER.png` is a generated mark — a dark field and a
-    /// red glyph, five sampled colours — not brand artwork, and it is a
-    /// TRACKED file, so it ships if nobody replaces it. This leg asserts
-    /// PACKAGING and is blind to that: it is exactly as green on the
-    /// placeholder as it will be on the real icon, by design, because its
-    /// subject is whether `actool` produced an image at all.
-    ///
-    /// The replacement is merakizzz's lane (1024² source, no alpha). The gate
-    /// is NOT here — a leg pinning the placeholder's sha would go red on the
-    /// good event, which trains the reader to delete it. It is a hard item on
-    /// the upload checklist instead: `docs/STORE-UPLOAD-CHECKLIST.md`, item
-    /// "icon sha ≠ placeholder sha", blocking submission, not the suite.
+    /// The artwork this leg is green against is now BRAND ARTWORK, not the
+    /// generated placeholder — see `testTheCatalogCarriesNoPlaceholderArtwork`
+    /// below, which is the leg that separates the two. This leg remains blind
+    /// to WHICH image compiled, by design: its subject is whether `actool`
+    /// produced an image at all.
     func testTheCatalogRasterisedAnIcon() throws {
         let app = try hostAppBundle()
         let names = (try? FileManager.default.contentsOfDirectory(atPath: app.bundleURL.path)) ?? []
@@ -384,5 +376,106 @@ final class BundleResourceTests: XCTestCase {
             "both ATS keys read the same value — the reader is not "
                 + "discriminating between them"
         )
+    }
+
+    /// The catalog carries brand artwork, not the generated placeholder.
+    ///
+    /// 🔴 THIS IS THE LEG THE OTHER ICON LEGS CANNOT BE. `CFBundleIconName`,
+    /// `Assets.car` and the rasterised `AppIcon*.png` are all exactly as green
+    /// on a placeholder as on the shipped mark — their subject is PACKAGING.
+    /// A tracked placeholder therefore ships silently, which is why the gate
+    /// lived on the upload checklist as a human item for four commits.
+    ///
+    /// The reason it could not be a leg then was stated at the site: a leg
+    /// pinning the placeholder's sha would go RED ON THE GOOD EVENT, training
+    /// the reader to delete it. That reasoning inverts once the swap lands —
+    /// the durable claim is ABSENCE, which is green on the shipped icon and on
+    /// every future re-cut of it, and red only on a regression to a generated
+    /// mark. Content-free by construction: it never names the good sha, so it
+    /// survives an artwork revision.
+    ///
+    /// Measured on the SOURCE CATALOG, not the built product, because the
+    /// filename is what `actool` consumes and what a regression would restore.
+    func testTheCatalogCarriesNoPlaceholderArtwork() throws {
+        let dir = try appIconSetDirectory()
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+
+        // POS control in the same invocation: the set is live and readable.
+        // Without this, every absence below is a statement about the reader.
+        XCTAssertTrue(
+            names.contains("Contents.json"),
+            "no Contents.json in the icon set — the directory read is not "
+                + "seeing the catalog, so the absences below prove nothing"
+        )
+        let pngs = names.filter { $0.hasSuffix(".png") }
+        XCTAssertFalse(
+            pngs.isEmpty,
+            "no PNG in the icon set at all — POS control for the placeholder "
+                + "check has nothing to discriminate against"
+        )
+
+        for name in names {
+            XCTAssertFalse(
+                name.uppercased().contains("PLACEHOLDER"),
+                "\(name) is placeholder artwork in the shipping icon set — "
+                    + "a generated mark ships if nobody replaces it, and every "
+                    + "other icon leg is green on it"
+            )
+        }
+
+        let json = try String(
+            contentsOf: dir.appendingPathComponent("Contents.json"), encoding: .utf8
+        )
+        XCTAssertFalse(
+            json.uppercased().contains("PLACEHOLDER"),
+            "Contents.json still names or flags placeholder artwork — either "
+                + "the filename entry or the zeus-artwork-status property "
+                + "survived the swap"
+        )
+    }
+
+    /// Exactly one AppIcon set exists in the catalog.
+    ///
+    /// A second set does not fail the build; `actool` picks the one named by
+    /// `ASSETCATALOG_COMPILER_APPICON_NAME` and the other ships as dead bytes
+    /// — so a stale duplicate is invisible to every packaging leg AND to the
+    /// placeholder leg above, which would pass on the compiled set while a
+    /// generated mark sat in the sibling.
+    func testTheCatalogCarriesExactlyOneAppIconSet() throws {
+        let dir = try appIconSetDirectory().deletingLastPathComponent()
+        let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let sets = entries.filter { $0.hasSuffix(".appiconset") }
+
+        // Vacuity: a reader that saw nothing would report 0, not 1.
+        XCTAssertEqual(
+            sets.count, 1,
+            "expected exactly one .appiconset in Assets.xcassets, found "
+                + "\(sets.count): \(sets.sorted())"
+        )
+        XCTAssertEqual(
+            sets.first, "AppIcon.appiconset",
+            "the single icon set is not named AppIcon, but project.yml sets "
+                + "ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon — the name the "
+                + "build asks for and the name on disk disagree"
+        )
+    }
+
+    /// Repo-relative path to the icon set, resolved from this file.
+    ///
+    /// Source-side, not bundle-side, deliberately: the built product carries
+    /// rasterised output whose filename `actool` chose, so the placeholder's
+    /// NAME is unobservable there. The catalog is where a regression lands.
+    private func appIconSetDirectory() throws -> URL {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // ZeusTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo
+        let dir = root.appendingPathComponent(
+            "Sources/ZeusApp/Assets.xcassets/AppIcon.appiconset"
+        )
+        guard FileManager.default.fileExists(atPath: dir.path) else {
+            throw XCTSkip("icon set not found at \(dir.path)")
+        }
+        return dir
     }
 }

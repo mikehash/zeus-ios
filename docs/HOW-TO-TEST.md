@@ -155,11 +155,10 @@ Then in App Store Connect → TestFlight, wait for processing (5–30 min), add
 yourself as an internal tester, and the build appears in the TestFlight app on
 your phone.
 
-**The placeholder icon is fine here.** `AppIcon-1024-PLACEHOLDER.png` is
-acceptable for TestFlight and for every internal build. The
-`STORE-UPLOAD-CHECKLIST.md` gate that blocks on *icon sha ≠ placeholder* applies
-to **App Store review submission only** — it does not block you from testing.
-Internal TestFlight distribution requires no review at all.
+**The icon is real artwork now.** `AppIcon-1024.png` (Icon A, sha256
+`a983e78a…`) replaced the generated placeholder, and two legs in
+`BundleResourceTests` keep a placeholder from coming back. Nothing about the
+icon blocks a TestFlight build.
 
 ---
 

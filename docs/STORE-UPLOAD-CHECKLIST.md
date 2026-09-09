@@ -10,27 +10,25 @@ Verified against a specific sha. Record the sha when you tick a box.
 
 ## BLOCKING — do not upload with any of these open
 
-- [ ] **Icon sha ≠ placeholder sha.**
-      `Sources/ZeusApp/Assets.xcassets/AppIcon.appiconset/AppIcon-1024-PLACEHOLDER.png`
-      is a **generated mark**, not brand artwork — a dark field and a red
-      glyph, five sampled colours. It is a TRACKED file, so it ships if
-      nobody replaces it, and every packaging leg in `BundleResourceTests`
-      is exactly as green on it as on the real icon (their subject is
-      whether `actool` produced an image, not which image).
-
-      Placeholder identity, recorded so the check is mechanical:
+- [x] **Icon sha ≠ placeholder sha.** — CLOSED at `b66edce`+1.
+      `AppIcon-1024-PLACEHOLDER.png` is deleted from the tree; the shipping
+      file is `AppIcon.appiconset/AppIcon-1024.png`, Icon A, authored on
+      branch `assets/app-icon-a` (`e7cb9465`, source `design/icon/icon-A.svg`).
 
       ```
-      git blob   92959d5b03a0edf9252458fd15d4ced9ae676395
-      sha256     b933612ad12f312e583692376fa48f45bd74e0360118dc524e588515b9218b8f
-      1024x1024 · RGB · no alpha · 27,316 B
+      shipped  sha256  a983e78a9f6951353611c6ffa8845b08b232d9e6f219f1666fb837ac9e43f260
+                       1024x1024 · RGB · hasAlpha no · sRGB IEC61966-2.1 · 578,466 B
+      retired  sha256  b933612ad12f312e583692376fa48f45bd74e0360118dc524e588515b9218b8f
+                       (generated placeholder, git blob 92959d5b)
       ```
 
-      Owner: **merakizzz** (1024², no alpha, no transparency — App Store
-      rejects an alpha channel on the marketing icon). On replacement:
-      drop the `-PLACEHOLDER` suffix from the filename, update
-      `AppIcon.appiconset/Contents.json` (`filename` **and** remove the
-      `properties.zeus-artwork-status` line), and delete this item.
+      The gate is no longer a human item. `BundleResourceTests` now carries
+      `testTheCatalogCarriesNoPlaceholderArtwork` and
+      `testTheCatalogCarriesExactlyOneAppIconSet`, both content-free — they
+      name no good sha, so they survive an artwork revision and go red only on
+      a regression to a generated mark or on a stale duplicate set. The reason
+      this could not be a leg before (a sha pin goes red on the good event)
+      inverted the moment the swap landed: the durable claim is ABSENCE.
 
 - [ ] **`ITSAppUsesNonExemptEncryption` confirmed by merakizzz.**
       Landing as `false` in ② on the stated assumption that the app speaks
