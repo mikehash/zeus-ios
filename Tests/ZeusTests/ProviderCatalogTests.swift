@@ -36,6 +36,7 @@ private final class CatalogCore: ZeusCoreProtocol {
     func indexSize() -> UInt32 { 0 }
     func send(sessionId: String, text: String, sink: TokenSink) throws {}
     func sessions() throws -> [SessionInfo] { [] }
+    func messages(sessionId: String) throws -> [TurnMessage] { [] }
     func remember(fact: String) throws {}
     func search(query: String) -> [SearchHit] { [] }
 }

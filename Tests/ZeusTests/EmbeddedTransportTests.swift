@@ -82,6 +82,7 @@ private final class FakeCore: ZeusCoreProtocol, @unchecked Sendable {
     func remember(fact: String) throws {}
     func search(query: String) -> [SearchHit] { [] }
     func sessions() throws -> [SessionInfo] { [] }
+    func messages(sessionId: String) throws -> [TurnMessage] { [] }
 
     /// UNARMED BY CONSTRUCTION. These legs fake the CORE to exercise the
     /// push→pull adapter's edges; none of them route through provider

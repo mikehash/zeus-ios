@@ -162,6 +162,14 @@ struct EmbeddedTransport: SessionTransport {
             // verbatim rather than replaced with a generic sentence that
             // would lose which provider refused.
             return message
+        case .NoBaseUrl:
+            // The retirement of `OLLAMA_DEFAULT_URL` arriving at the surface.
+            // The crate's own text ("there is no default on a phone") is true
+            // and says nothing about what to DO; the operator is holding a
+            // phone with a routes screen on it, so the sentence names the
+            // field. Same shape as `noProviderMessage`: a state with a known
+            // next action gets the action, not the diagnosis.
+            return "OLLAMA NEEDS A BASE URL — SET ONE IN ROUTES"
         case let .Core(message):
             return message
         }
