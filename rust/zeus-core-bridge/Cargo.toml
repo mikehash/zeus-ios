@@ -18,24 +18,35 @@ name = "zeus_core_bridge"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
-# --- pinned to mikehash/Zeus @ 2bfc08aa11148012fc5aa5db92fea6a88c11d599 ---------------------------------------
-# Re-pinned from 2a2168cd (an ancestor of this sha; `merge-base --is-ancestor`
-# rc=0, so this is a forward move, not a fork). 213d4e7c is the commit that
-# feature-gates zeus-talos behind `automation` — the gate this bridge needs in
-# order to take zeus-agent at all. Every crate below rides the SAME sha: a
+# --- pinned to mikehash/Zeus @ 8e19318ccda7023a5c2ec59e4978c6a0855b8c50 ---------------------------------------
+# Re-pinned from 2bfc08aa (itself re-pinned from 2a2168cd). Each move is
+# FORWARD, not a fork: `merge-base --is-ancestor 2bfc08aa 8e19318c` rc=0,
+# measured before the edit. 213d4e7c is the commit that feature-gates
+# zeus-talos behind `automation` — the gate this bridge needs in order to take
+# zeus-agent at all.
+#
+# This move is taken FOR a specific landed capability, and naming it is the
+# point of the pin: 8e19318c carries `set_workspace_root` /`WORKSPACE_ROOT`
+# (crates/zeus-agent/src/tools.rs:63,75) and the single `aegis_path_refusal`
+# helper called from BOTH the sequential and the parallel tool-execution
+# paths. Without them the phone's file tools are confined by nothing but the
+# OS sandbox, which the SIMULATOR DOES NOT ENFORCE — and every frame we shoot
+# is a simulator frame. The pin is the first wall; the sandbox is the second.
+#
+# Every crate below rides the SAME sha: a
 # git dependency resolves per-rev, and two revs of one repo in one lock file is
 # two copies of every shared type. zeus-mnemosyne is
 # deliberately ABSENT: it pulls rusqlite `bundled`, a C sqlite amalgamation that
 # has never been cross-compiled against the iOS SDK here. Unmeasured C build !=
 # dependency of the first phone build. (Ruled by Zeus100, 2026-09-07.)
-zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
-zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
-zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
-zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599" }
+zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
+zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
+zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
+zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
 # zeus-agent at the same pin, default-features = false: its default set is
-# ["audio","matrix","voice","automation"] (2bfc08aa11148012fc5aa5db92fea6a88c11d599 crates/zeus-agent/Cargo.toml:10)
+# ["audio","matrix","voice","automation"] (8e19318ccda7023a5c2ec59e4978c6a0855b8c50 crates/zeus-agent/Cargo.toml:10)
 # and all four are host-surface — `automation` is the only gate on zeus-talos.
-zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "2bfc08aa11148012fc5aa5db92fea6a88c11d599", default-features = false }
+zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50", default-features = false }
 
 # FULL 40-char revs above, not abbreviations, and the reason is portability not
 # style: mikehash/Zeus carries BOTH `refs/heads/TUI` and
