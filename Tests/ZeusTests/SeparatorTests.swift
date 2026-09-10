@@ -74,4 +74,29 @@ final class SeparatorTests: XCTestCase {
         XCTAssertTrue(label.contains("LINK LOCAL"), label)
         XCTAssertTrue(label.contains(AgentState.ambient.badgeText), label)
     }
+
+    // MARK: - The phone-row subtitle (the fourth surface)
+
+    /// `CoreProvenance.nodeSubtitle()` joined with a bare ` · ` and wrapped on
+    /// the 390pt frame as `core 2bfc08aa ·` / `this iphone` — the dot stranded
+    /// at the line end, which is the defect `Theme.separator` exists to fix.
+    ///
+    /// The absent-manifest arm carries NO separator at all, so a test that
+    /// only asserts "contains no bare glyph" passes on the arm that has no
+    /// glyph to begin with. Both arms are asserted, and the present arm is
+    /// asserted POSITIVELY for the token.
+    func testNodeSubtitleJoinsWithTheToken() {
+        let joined = Theme.joined(["core 2bfc08aa", "this iphone"])
+        XCTAssertTrue(joined.contains(Theme.separator))
+        XCTAssertFalse(joined.replacingOccurrences(of: Theme.separator, with: "|")
+                             .contains("\u{00B7}"),
+                       "bare `\u{00B7}` survives outside the token: \(joined)")
+        // VACUITY: the two arms of `nodeSubtitle` must not be the same string,
+        // or the leg below is asserting nothing about the branch.
+        XCTAssertNotEqual(joined, "this iphone")
+
+        // The no-manifest arm: true unconditionally, and separator-free.
+        let bare = CoreProvenance.nodeSubtitle(in: Bundle(for: SeparatorTests.self))
+        XCTAssertFalse(bare.contains("\u{00B7}"), bare)
+    }
 }

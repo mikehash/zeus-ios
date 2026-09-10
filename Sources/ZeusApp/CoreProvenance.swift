@@ -95,6 +95,6 @@ enum CoreProvenance {
               let pin = value("dep-pin", in: text),
               let short = shortSHA(from: pin)
         else { return "this iphone" }
-        return "core \(short) · this iphone"
+        return Theme.joined(["core \(short)", "this iphone"])
     }
 }
