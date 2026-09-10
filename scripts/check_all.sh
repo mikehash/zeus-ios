@@ -80,8 +80,9 @@ GUARDS=(
   scripts/check_network_shape.sh
   scripts/check_crate_tree.sh
   scripts/check_separator_debt.sh
+  scripts/check_signing_args.sh
 )
-EXPECTED_GUARDS=5
+EXPECTED_GUARDS=6
 
 # ARITY ASSERTION. If the array and the literal disagree, someone added a guard
 # without adding it here, or removed one without removing it. Either way the

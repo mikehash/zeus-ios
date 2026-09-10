@@ -195,6 +195,7 @@ fi
 ASC_DIR="${ZEUS_ASC_DIR:-$HOME/.zeus/asc}"
 ASC_KEY_ID=""
 ASC_ISSUER_ID=""
+ASC_XCODEBUILD_ARGS=()
 
 if [ "$TESTFLIGHT" -eq 1 ]; then
   if [ "$EXPORT_METHOD" != "app-store-connect" ]; then
@@ -244,6 +245,34 @@ if [ "$TESTFLIGHT" -eq 1 ]; then
 
   command -v xcrun >/dev/null || die_instrument "xcrun not on PATH"
   xcrun --find altool >/dev/null 2>&1 || die_instrument "altool not found (xcrun --find altool). Full Xcode required; Command Line Tools alone do not ship it."
+
+  # ── The signing half of these credentials ────────────────────────────────
+  #
+  # altool gets the key by DIRECTORY (above). xcodebuild does not: cloud-managed
+  # signing takes the account on the command line, and `-allowProvisioningUpdates`
+  # WITHOUT it is the defect this array fixes — the flag says "you may mint a
+  # profile", and with no account there is nothing to mint WITH. The failure
+  # surfaces at codesign, several minutes downstream, naming a certificate
+  # rather than a missing credential.
+  #
+  # WHY AN ARRAY AND NOT THREE INLINE ARGUMENTS: these three variables are
+  # EMPTY on a non-TestFlight run (the block that fills them is this one). An
+  # inline literal would hand every ordinary device build
+  # `-authenticationKeyPath $ASC_DIR/AuthKey_.p8 -authenticationKeyID ''` — an
+  # argument whose value is the empty string is not the same as an absent
+  # argument, and the path would name a file that cannot exist. The array is
+  # empty unless this block ran, so the args appear exactly when they mean
+  # something.
+  #
+  # `${ASC_XCODEBUILD_ARGS[@]+"${ASC_XCODEBUILD_ARGS[@]}"}` and not the bare
+  # form: this is bash 3.2 (the macOS system bash) under `set -u`, where
+  # expanding an EMPTY array is an unbound-variable error that would kill every
+  # non-TestFlight build. The `+` guard is not style.
+  ASC_XCODEBUILD_ARGS=(
+    -authenticationKeyPath "$P8"
+    -authenticationKeyID "$ASC_KEY_ID"
+    -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+  )
 fi
 
 command -v xcodegen  >/dev/null || die_instrument "xcodegen not on PATH (brew install xcodegen)"
@@ -356,6 +385,7 @@ xcodebuild archive \
   -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE" \
   -allowProvisioningUpdates \
+  ${ASC_XCODEBUILD_ARGS[@]+"${ASC_XCODEBUILD_ARGS[@]}"} \
   DEVELOPMENT_TEAM="$ZEUS_TEAM_ID" \
   CODE_SIGN_STYLE=Automatic \
   MARKETING_VERSION="$MARKETING_VERSION" \
@@ -411,6 +441,7 @@ xcodebuild -exportArchive \
   -exportPath "$EXPORT_DIR" \
   -exportOptionsPlist "$OPTS" \
   -allowProvisioningUpdates \
+  ${ASC_XCODEBUILD_ARGS[@]+"${ASC_XCODEBUILD_ARGS[@]}"} \
   >/tmp/zeus-export.log 2>&1 || rc=$?
 
 if [ "$rc" -ne 0 ]; then
