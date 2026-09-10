@@ -40,6 +40,8 @@ use zeus_core::{CredentialShape as CoreCredentialShape, Provider};
 use zeus_llm::{LlmClient, OllamaClient, normalize_ollama_url};
 use zeus_memory::{FileEntry, FileIndex, Workspace};
 use zeus_session::Session;
+use zeus_agent::{Agent, AgentEvent};
+use zeus_agent::tools::set_workspace_root;
 
 uniffi::setup_scaffolding!();
 
@@ -59,6 +61,13 @@ pub enum BridgeError {
     Unsupported(String),
     #[error("{0}")]
     Core(String),
+    /// The retirement of `OLLAMA_DEFAULT_URL`. A phone has no `localhost:11434`
+    /// — the loopback on iOS is the PHONE, and nothing serves Ollama there — so
+    /// defaulting to it turned "you did not give me a URL" into a connection
+    /// error against the device itself, four seconds later, with a message
+    /// naming the wrong subject. The absent input is now refused at the door.
+    #[error("ollama needs a base URL — there is no default on a phone")]
+    NoBaseUrl,
 }
 
 // The core's fallible surface returns `zeus_core::Error`, NOT `anyhow::Error` —
@@ -99,7 +108,6 @@ pub struct SearchHit {
     pub name: String,
     pub score: f64,
     pub context: Option<String>,
-    pub line_number: Option<u32>,
 }
 
 // ============================================================================
@@ -109,6 +117,14 @@ pub struct SearchHit {
 /// Swift implements this; the bridge calls it from the runtime thread as tokens
 /// arrive. `on_token` may be called many times, then exactly one of
 /// `on_complete` / `on_error`.
+/// One message of a persisted session, flattened for Swift.
+#[derive(uniffi::Record)]
+pub struct TurnMessage {
+    pub role: String,
+    pub content: String,
+    pub timestamp_rfc3339: String,
+}
+
 #[uniffi::export(callback_interface)]
 pub trait TokenSink: Send + Sync + 'static {
     fn on_token(&self, token: String);
@@ -128,9 +144,21 @@ pub struct ZeusCore {
     rt: Runtime,
     workspace: Workspace,
     sessions_dir: std::path::PathBuf,
-    /// Populated at construction by `scan_workspace`. See `search` for the
-    /// staleness contract — this is a snapshot, not a live view.
-    index: FileIndex,
+    /// The canonical workspace root, RETAINED rather than read back.
+    ///
+    /// `zeus_agent::tools::workspace_root()` is private on main by design — it
+    /// is the guard's own read, and a public getter would let this crate
+    /// *believe* a process global instead of *owning* the value it set. Loop and
+    /// index share one root because ONE VALUE FEEDS BOTH, not because a getter
+    /// agreed. Gate (b) found the privacy by probing the symbol from here; the
+    /// finding is the reason this field exists.
+    root: std::path::PathBuf,
+    /// The live index, behind a lock because `remember` now re-indexes.
+    ///
+    /// Was a plain `FileIndex`: `search` read a snapshot built at `init` and a
+    /// fact written seconds earlier was invisible until relaunch. D3 named the
+    /// two halves — content tokens AND a re-index — and this is the second.
+    index: std::sync::RwLock<FileIndex>,
     client: Mutex<Option<Arc<LlmClient>>>,
 }
 
@@ -162,12 +190,35 @@ impl ZeusCore {
         let index = scan_workspace(&root);
 
         let sessions_dir = root.join("sessions");
+        // The loop persists a turn through `Session::resume_or_create`, which
+        // does NOT create its parent. `Workspace::init` above makes the
+        // workspace but not this; without it every persisted turn fails on a
+        // missing directory and `sessions()` stays empty for a reason that
+        // reads exactly like "no sessions yet".
+        std::fs::create_dir_all(&sessions_dir)
+            .map_err(|e| BridgeError::Core(format!("sessions dir: {e}")))?;
+
+        // Canonicalise ONCE, here, and keep the result. On iOS the container
+        // path is a symlink chain (`/var` → `/private/var`), so a root stored
+        // uncanonicalised never `starts_with` any canonical tool path and the
+        // guard would refuse the app's OWN workspace while looking perfect from
+        // the refusal side. `set_workspace_root` canonicalises too; this crate
+        // does it as well so the value it RETAINS is the same one it set.
+        let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+
+        // D2's production caller. The allow-list buys nothing about paths — it
+        // decides which tools exist, not where they may reach — so the
+        // confinement is this call, landed on main as `5ec2c557`. The OS
+        // sandbox is the SECOND wall: the simulator does not enforce it, and
+        // every frame we shoot is a simulator frame.
+        set_workspace_root(Some(canonical_root.clone()));
 
         Ok(Arc::new(Self {
             rt,
             workspace,
             sessions_dir,
-            index,
+            root: canonical_root,
+            index: std::sync::RwLock::new(index),
             client: Mutex::new(None),
         }))
     }
@@ -236,7 +287,13 @@ impl ZeusCore {
         if provider != Provider::Ollama {
             return Err(BridgeError::Unsupported(id));
         }
-        let url = normalize_ollama_url(base_url.as_deref().unwrap_or(OLLAMA_DEFAULT_URL));
+        // The literal is gone. `unwrap_or(OLLAMA_DEFAULT_URL)` turned an absent
+        // URL into `localhost:11434`, and on a phone THAT LOOPBACK IS THE PHONE
+        // — nothing serves Ollama there, so the operator got a connection
+        // failure four seconds later naming a host he never typed. An absent
+        // input is refused at the door, with the subject named.
+        let raw = base_url.as_deref().filter(|s| !s.trim().is_empty());
+        let url = normalize_ollama_url(raw.ok_or(BridgeError::NoBaseUrl)?);
         let client = if key.is_empty() {
             OllamaClient::new(url)
         } else {
@@ -248,12 +305,17 @@ impl ZeusCore {
         Ok(models.into_iter().map(|m| m.name).collect())
     }
 
-    /// Send `text` on `session_id`, streaming tokens into `sink`.
+    /// Send `text` on `session_id` through the AGENT LOOP, streaming into `sink`.
     ///
-    /// Blocks the calling thread for the duration — Swift calls it off the main
-    /// actor. Chosen over a fire-and-forget spawn because a detached task whose
-    /// handle nobody holds cannot be cancelled and cannot report a panic; the
-    /// caller owning the thread is the honest shape for v1.
+    /// v1 called `client.stream(&messages, &[], None)` — and that empty second
+    /// argument is the tool-schema slice, so the phone could not produce a tool
+    /// call at all: the absence of tools was a LITERAL AT ONE CALL SITE, not a
+    /// missing subsystem. This routes the turn through `zeus_agent::Agent`
+    /// instead, which brings three things the direct call structurally could
+    /// not have: tools, session history (`session.add` on both halves of the
+    /// turn, agent_loop:1657/:2571), and the turn written back to memory.
+    ///
+    /// Blocks the calling thread, as before — Swift calls it off the main actor.
     pub fn send(
         self: Arc<Self>,
         session_id: String,
@@ -265,38 +327,99 @@ impl ZeusCore {
             .block_on(async { self.client.lock().await.clone() })
             .ok_or(BridgeError::NoProvider)?;
 
-        let _ = session_id; // v1: history is not yet threaded — see below.
+        let sessions_dir = self.sessions_dir.clone();
+        let root = self.root.clone();
+        let workspace = self.workspace.clone();
+        // The model the operator ARMED, read off the live client. `Config` must
+        // carry it because the loop reads `config.model` for routing decisions
+        // (agent_loop:625, :2514) even though the `LlmClient` it is handed
+        // already knows it — two readers, and `Config::default()` would give
+        // the second one an EMPTY STRING (zeus-core:7152).
+        let model = format!("{}/{}", client.provider().name(), client.model());
+        let llm = (*client).clone();
 
         self.rt.block_on(async move {
-            let messages = vec![zeus_core::Message::user(text)];
-            // `stream`, not `stream_with_history`: session replay is a separate
-            // cut. Named here rather than left implicit — a reader would
-            // otherwise assume `session_id` selects history, and it does not.
-            let (mut rx, handle) = match client.stream(&messages, &[], None).await {
-                Ok(v) => v,
-                Err(e) => {
-                    sink.on_error(e.to_string());
-                    return Ok(());
-                }
+            let config = build_config(&root, &sessions_dir, &model);
+            let session = Session::resume_or_create(&sessions_dir, &session_id).await;
+            let mut agent = Agent::new(config, llm, workspace, session, None);
+
+            // D1: `message` is DENIED, and not because the channels argument is
+            // `None`. With `None` the tool does not degrade — it returns an
+            // explicit `Error::Tool` (tools.rs:1002-1017). Shipping its schema
+            // would have the model CHOOSE it, burn an iteration, and be refused
+            // by something it cannot tell from a transient failure. A tool that
+            // can only fail is worse than an absent tool.
+            //
+            // The allow-list is the fail-closed form and the deny list is not
+            // redundant: `is_tool_allowed` is DENY-FIRST, so the two names below
+            // that are also absent from the allow-list are refused twice, and a
+            // future tool added to the registry is refused by DEFAULT rather
+            // than silently gained.
+            agent.set_tool_policy(phone_tool_policy());
+
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(64);
+            agent.set_events(tx);
+
+            let turn = tokio::spawn(async move { agent.run_structured(&text).await });
+
+            let full = match pump(&mut rx, sink.as_ref()).await {
+                Some(full) => full,
+                // `pump` already delivered `on_error`; the sink contract allows
+                // exactly one terminal call, so this path must NOT fall through
+                // to the `turn.await` arms below.
+                None => return Ok(()),
             };
 
-            let full = pump(&mut rx, sink.as_ref()).await;
-
-            match handle.await {
-                Ok(resp) => {
-                    // Prefer the joined response's text when it is non-empty:
-                    // the channel carries deltas, the response carries the
-                    // authoritative body.
-                    let text = if resp.content.is_empty() {
+            match turn.await {
+                Ok(Ok(result)) => {
+                    // Prefer the turn's own content when non-empty, for the same
+                    // reason v1 preferred the joined response: the events carry
+                    // deltas, `TurnResult` carries the authoritative body.
+                    let text = if result.content.is_empty() {
                         full
                     } else {
-                        resp.content.clone()
+                        result.content
                     };
                     sink.on_complete(text);
                 }
-                Err(e) => sink.on_error(format!("stream task failed: {e}")),
+                Ok(Err(e)) => sink.on_error(e.to_string()),
+                Err(e) => sink.on_error(format!("turn task failed: {e}")),
             }
             Ok(())
+        })
+    }
+
+    /// The messages of one session, oldest first.
+    ///
+    /// D6: `sessions()` returned ids and there was no export returning a
+    /// session's CONTENT, so "a session list that reopens a conversation" was
+    /// unbuildable regardless of UI. `Session::export_markdown` exists and is
+    /// the wrong shape — it is a document, and a transcript view needs rows.
+    pub fn messages(self: Arc<Self>, session_id: String) -> Result<Vec<TurnMessage>, BridgeError> {
+        let dir = self.sessions_dir.clone();
+        self.rt.block_on(async move {
+            let session = Session::load(&dir, &session_id).await?;
+            Ok(session
+                .messages
+                .iter()
+                .filter(|m| {
+                    // System messages are the persona, not the conversation.
+                    // Rendering them would show the operator a prompt he did
+                    // not write, attributed to nobody.
+                    !matches!(m.role, zeus_core::Role::System)
+                })
+                .map(|m| TurnMessage {
+                    role: match m.role {
+                        zeus_core::Role::User => "user",
+                        zeus_core::Role::Assistant => "assistant",
+                        zeus_core::Role::Tool => "tool",
+                        zeus_core::Role::System => "system",
+                    }
+                    .to_string(),
+                    content: m.content.clone(),
+                    timestamp_rfc3339: m.timestamp.to_rfc3339(),
+                })
+                .collect())
         })
     }
 
@@ -320,23 +443,49 @@ impl ZeusCore {
         Ok(out)
     }
 
-    /// Append a fact to workspace memory.
+    /// Append a fact to workspace memory, then RE-INDEX.
+    ///
+    /// D3, second half. Content tokens alone do not make a remembered fact
+    /// findable: the index is built at `init`, so a fact written at 14:02 is
+    /// invisible to `search` until the process restarts. Both halves or the
+    /// NODES relabel stays blocked — a search field beside a memory write,
+    /// each correct alone, produces a screen where you type the thing you just
+    /// saved and get nothing.
+    ///
+    /// Re-scans the whole workspace rather than patching one entry: the fact
+    /// lands INSIDE `MEMORY.md`, whose name never changes, so a targeted
+    /// update would have to re-tokenise that file's content anyway. Five files
+    /// deep, this is cheaper than the write that preceded it.
     pub fn remember(self: Arc<Self>, fact: String) -> Result<(), BridgeError> {
         self.rt
             .block_on(async { self.workspace.remember(&fact).await })?;
+        let fresh = scan_workspace(&self.root);
+        if let Ok(mut guard) = self.index.write() {
+            *guard = fresh;
+        }
         Ok(())
     }
 
-    /// Search the workspace file index.
+    /// Search the workspace index — names AND content.
     ///
-    /// **Contract, stated because it is narrower than the name:** this reads an
-    /// index of the workspace files scanned at `init`. It is a SNAPSHOT, not a
-    /// live view — a file written after `init` is invisible until the process
-    /// restarts. Re-scan policy is deferred to v1.1; when Mnemosyne is measured
-    /// green under the iOS SDK it becomes a swap behind this same export and
-    /// nothing in Swift changes.
+    /// **Contract, restated because it widened:** v1 indexed FILENAME TOKENS
+    /// ONLY. `scan_workspace` called `FileEntry::new` and never
+    /// `with_first_line`/`with_tags`, so the indexer's 2.0 and 1.0 weight tiers
+    /// (indexer.rs:196-215) were structurally empty and every posting came from
+    /// a file NAME. That is why the NODES field shipped as `FIND A FILE` in C1:
+    /// labelled "memory search" it would have been a wired button over a lying
+    /// label.
+    ///
+    /// Now content tokens ride `with_tags`, and `remember` re-indexes, so a
+    /// remembered fact is findable in the same session that wrote it. The
+    /// snapshot is refreshed on every `remember`; a file written by the LOOP is
+    /// visible on the next `remember` or the next launch, which is stated here
+    /// rather than discovered.
     pub fn search(self: Arc<Self>, query: String) -> Vec<SearchHit> {
-        self.index
+        let Ok(index) = self.index.read() else {
+            return Vec::new();
+        };
+        index
             .search(&query)
             .into_iter()
             .map(|r| SearchHit {
@@ -344,7 +493,6 @@ impl ZeusCore {
                 name: r.entry.name,
                 score: r.score,
                 context: r.context,
-                line_number: r.line_number.map(|n| n as u32),
             })
             .collect()
     }
@@ -356,7 +504,7 @@ impl ZeusCore {
     /// pin's unpopulated `FileIndex` makes indistinguishable. A vacuity probe,
     /// not a statistic.
     pub fn index_size(self: Arc<Self>) -> u32 {
-        self.index.len() as u32
+        self.index.read().map(|i| i.len() as u32).unwrap_or(0)
     }
 
     /// Whether a provider has been selected on THIS core.
@@ -402,13 +550,74 @@ fn resolve_provider(id: &str) -> Result<Provider, BridgeError> {
         .ok_or_else(|| BridgeError::Core(format!("unrecognized provider prefix: {id}")))
 }
 
-/// The core's own Ollama fallback, spelled once here so the two readers
-/// (`apply_base_url` and `list_models`) cannot drift apart. It is a COPY of
-/// zeus-llm:1018's literal, not a shared constant — zeus-llm does not export
-/// one — so a change there is invisible here; the guard is
-/// `apply_base_url_none_leaves_the_core_default`, which asserts through the
-/// core rather than against this string.
-const OLLAMA_DEFAULT_URL: &str = "http://localhost:11434";
+/// The five tools the phone may run.
+///
+/// **Five of NINE, not of eight.** The core set at tools.rs:503-504 is
+/// `read_file, write_file, edit_file, list_dir, shell, python_exec, web_fetch,
+/// spawn, message` — nine names under a comment that says "the 8 essentials".
+/// `python_exec` is the one neither seat named in the plan; there is no Python
+/// on iOS, so it denies alongside `shell` and `spawn`.
+///
+/// This is an ALLOW list and that is load-bearing: `AgentToolPolicy` treats an
+/// EMPTY allow list as "everything not denied" (zeus-core:4666-4683), so a
+/// deny-list phone build silently gains every tool a future registry adds.
+const PHONE_TOOLS: [&str; 5] = ["read_file", "write_file", "edit_file", "list_dir", "web_fetch"];
+
+/// Denied explicitly, though the allow-list already excludes them.
+///
+/// Not redundant: `is_tool_allowed` is DENY-FIRST, so these are refused by two
+/// independent clauses. If a later edit widens the allow list — the plausible
+/// mistake, since "add a tool" reads as a one-line change — these four still
+/// refuse. `message` is here for D1's reason: with `channels: None` it does not
+/// degrade, it returns an explicit `Error::Tool` (tools.rs:1002-1017), and a
+/// tool that can only fail is worse than an absent one because the model cannot
+/// tell the refusal from a transient error and retries.
+const PHONE_DENIED: [&str; 4] = ["shell", "spawn", "python_exec", "message"];
+
+/// The one tool policy, built once and asserted by the D4 legs.
+///
+/// Extracted so the legs measure THE OBJECT THE LOOP IS HANDED. A test that
+/// rebuilt the same struct literal would be a twin of the production policy and
+/// would stay green through any edit to the real one — the re-implements-its-
+/// subject shape. One body, two readers.
+fn phone_tool_policy() -> zeus_core::AgentToolPolicy {
+    zeus_core::AgentToolPolicy {
+        allowed_tools: PHONE_TOOLS.iter().map(|s| s.to_string()).collect(),
+        denied_tools: PHONE_DENIED.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// Build the loop's `Config` FROM THE BRIDGE'S OWN ROOT — never `Config::default()`.
+///
+/// D9, and it is a silent-wrong-answer bug rather than a crash.
+/// `Config::default()` (zeus-core:7152) roots `workspace` at `~/.zeus/workspace`
+/// and returns an EMPTY STRING for the model. On iOS `home_dir()` resolves
+/// inside the app container, so the path EXISTS and is writable — the loop would
+/// operate on a second, parallel workspace, and a file the model wrote would be
+/// invisible to `search` forever. Two workspaces, one app, no error.
+///
+/// `max_iterations` is 12 rather than the default: a phone turn that runs 50
+/// tool iterations is a battery event the operator cannot cancel from the UI.
+fn build_config(
+    root: &std::path::Path,
+    sessions_dir: &std::path::Path,
+    model: &str,
+) -> zeus_core::Config {
+    zeus_core::Config {
+        model: model.to_string(),
+        workspace: root.to_path_buf(),
+        sessions: sessions_dir.to_path_buf(),
+        max_iterations: 12,
+        ..Default::default()
+    }
+}
+
+// `OLLAMA_DEFAULT_URL` was retired here. It was a COPY of zeus-llm:1018's
+// literal — the crate exports no constant — and it encoded a premise that is
+// true on a workstation and FALSE on a phone: that `localhost` is where a model
+// server lives. `list_models` now refuses the absent URL as `NoBaseUrl`.
+// `apply_base_url` never needed it: `None` there already meant "leave the
+// environment alone", which is the core's default, not this crate's.
 
 /// Write `OLLAMA_HOST` for the Ollama arm so the client built next reads it.
 ///
@@ -444,13 +653,38 @@ fn apply_base_url(provider: Provider, base_url: Option<&str>) {
 /// network, and a key. As a free function over any `Receiver<String>` it is
 /// exercised by a test that feeds a channel directly, which is the same code
 /// path the real stream takes.
-async fn pump(rx: &mut tokio::sync::mpsc::Receiver<String>, sink: &dyn TokenSink) -> String {
+/// Returns `None` when it delivered `on_error` — the caller must then make NO
+/// further terminal call, because `TokenSink` permits exactly one.
+///
+/// The event type changed with the loop: v1 pumped `String`, the agent emits
+/// `AgentEvent`. Re-typing the free function rather than inlining the match
+/// keeps the production path and the tested path the SAME code — an inlined
+/// loop inside `send` is unreachable from a test, since reaching it needs a
+/// live provider, a network, and a key.
+async fn pump(rx: &mut tokio::sync::mpsc::Receiver<AgentEvent>, sink: &dyn TokenSink) -> Option<String> {
     let mut full = String::new();
-    while let Some(tok) = rx.recv().await {
-        full.push_str(&tok);
-        sink.on_token(tok);
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            AgentEvent::TextChunk(c) => {
+                full.push_str(&c);
+                sink.on_token(c);
+            }
+            // A tool call is TOKENS THE OPERATOR CAN SEE, not a silent pause.
+            // Without this the phone renders nothing for the seconds a
+            // `read_file` takes, which reads as a hang.
+            AgentEvent::ToolCall { name, .. } => {
+                let line = format!("\n[{}]\n", name.to_uppercase());
+                full.push_str(&line);
+                sink.on_token(line);
+            }
+            AgentEvent::Error(e) => {
+                sink.on_error(e);
+                return None;
+            }
+            _ => {}
+        }
     }
-    full
+    Some(full)
 }
 
 // ============================================================================
@@ -664,16 +898,23 @@ mod tests {
     }
 
     /// Recording sink: proves ORDER and CONTENT, not just arrival.
+    ///
+    /// `errors` exists so the error leg can assert the sink was called ONCE
+    /// with the right message — a bool would prove arrival and hide a double
+    /// terminal call, which is the exact contract `pump`'s `None` protects.
     #[derive(Default)]
     struct Recorder {
         tokens: std::sync::Mutex<Vec<String>>,
+        errors: std::sync::Mutex<Vec<String>>,
     }
     impl TokenSink for Recorder {
         fn on_token(&self, token: String) {
             self.tokens.lock().unwrap().push(token);
         }
         fn on_complete(&self, _full_text: String) {}
-        fn on_error(&self, _message: String) {}
+        fn on_error(&self, message: String) {
+            self.errors.lock().unwrap().push(message);
+        }
     }
 
     /// The streamed-token leg. Feeds a real `mpsc::Receiver` — the exact type
@@ -687,10 +928,10 @@ mod tests {
             .build()
             .unwrap();
         rt.block_on(async {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(8);
             tokio::spawn(async move {
                 for t in ["Zeus ", "core ", "is ", "live"] {
-                    tx.send(t.to_string()).await.unwrap();
+                    tx.send(AgentEvent::TextChunk(t.to_string())).await.unwrap();
                 }
                 // Drop closes the channel; the pump must terminate on close,
                 // not hang. A pump that never returned would fail this test by
@@ -700,7 +941,7 @@ mod tests {
             });
 
             let sink = Recorder::default();
-            let full = pump(&mut rx, &sink).await;
+            let full = pump(&mut rx, &sink).await.expect("clean close yields Some");
 
             assert_eq!(full, "Zeus core is live", "accumulated text");
             let seen = sink.tokens.lock().unwrap().clone();
@@ -709,6 +950,54 @@ mod tests {
                 vec!["Zeus ", "core ", "is ", "live"],
                 "every token forwarded, in order"
             );
+
+            // Vacuity: assert the two things this test claims DIFFER actually
+            // do. If `pump` forwarded nothing, `seen` and the empty vec would
+            // both be empty and the equality above would still be checked
+            // against a literal — so pin non-emptiness explicitly.
+            assert_ne!(seen.len(), 0, "sink received tokens at all");
+            assert!(
+                sink.errors.lock().unwrap().is_empty(),
+                "a clean close must not deliver on_error"
+            );
+        });
+    }
+
+    /// The error leg. `AgentEvent::Error` must deliver `on_error` and return
+    /// `None`, because the caller uses `None` to suppress its own terminal
+    /// call — `TokenSink` permits exactly one, and a double call is invisible
+    /// to a sink that only records a bool.
+    #[test]
+    fn pump_reports_error_once_and_returns_none() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(8);
+            tokio::spawn(async move {
+                tx.send(AgentEvent::TextChunk("partial ".to_string()))
+                    .await
+                    .unwrap();
+                tx.send(AgentEvent::Error("provider refused".to_string()))
+                    .await
+                    .unwrap();
+                // Deliberately NOT dropped early: tokens after the error must
+                // not be forwarded, which only means something if the sender
+                // is still live when `pump` returns.
+                tx.send(AgentEvent::TextChunk("after ".to_string()))
+                    .await
+                    .ok();
+            });
+
+            let sink = Recorder::default();
+            let out = pump(&mut rx, &sink).await;
+
+            assert!(out.is_none(), "error leg returns None so caller stays silent");
+            let errs = sink.errors.lock().unwrap().clone();
+            assert_eq!(errs, vec!["provider refused"], "exactly one error, verbatim");
+            let seen = sink.tokens.lock().unwrap().clone();
+            assert_eq!(seen, vec!["partial "], "no token forwarded after the error");
             // Vacuity: a pump that accumulated but never called the sink would
             // pass the first assertion alone.
             assert_ne!(seen.len(), 0, "sink was actually invoked");
