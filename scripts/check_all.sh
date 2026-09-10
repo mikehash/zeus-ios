@@ -46,8 +46,33 @@ cd "$(dirname "$0")/.." || { echo "VOID: cannot reach repo root"; exit 2; }
 # INVOCATION you give it, so a guard that asks with no path is answering about
 # a different build than the one that was gated. Forwarded from $1, and when $1
 # is absent the guard reads the DEFAULT DerivedData, which is a real but
-# DIFFERENT subject. Usage:  scripts/check_all.sh [derivedDataPath]
+# DIFFERENT subject.
+#
+# 🔴 AND THE FORWARD MUST NOT RESTORE THE DEFAULT ONE LAYER UP.  The membership
+# guard now REFUSES a bare invocation (its own header records why: three false
+# DRIFTs against a build the caller never made). If this runner papered over
+# that by substituting a fallback when $1 is absent, the refusal would be
+# perfectly intact and perfectly unreachable — the guard would still never see
+# a bare call, and the runner would go on answering about the wrong build. A
+# refusal that its only caller defaults past is a comment.
+#
+# So the requirement propagates: this runner requires the subject too, and
+# `--xcode-default` is forwarded VERBATIM rather than translated to an absence.
+#
+# Usage:  scripts/check_all.sh <derivedDataPath>
+#         scripts/check_all.sh --xcode-default
 DERIVED="${1:-}"
+case "$DERIVED" in
+  "") cat >&2 <<'EOF'
+usage: check_all.sh <derivedDataPath>
+       check_all.sh --xcode-default
+
+The suite contains a guard whose subject is a BUILD, so the suite needs the
+build named. There is no default: an unnamed subject is how this suite spent
+three cycles auditing a DerivedData tree nobody had built.
+EOF
+      echo "VOID: no derivedDataPath argument"; exit 2 ;;
+esac
 
 GUARDS=(
   "scripts/check_membership.sh${DERIVED:+ $DERIVED}"

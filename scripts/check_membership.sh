@@ -125,9 +125,52 @@ drift() { echo "DRIFT: $*"; exit 3; }
 # but only about the invocation you actually gave it.
 #
 # So the derived-data path is a PARAMETER. Pass the same one the build used.
+#
+# 🔴 AND THE PARAMETER HAS NO SAFE DEFAULT, so there is no default.  Reading
+# `${1:-}` as "fall back to the default DerivedData" made a bare invocation
+# ANSWER — confidently, about a build the caller never made. Measured three
+# separate times on this branch by the author of this file, who had read the
+# paragraph above each time: a header documenting a footgun has the durability
+# of a comment with no compiler behind it. A guard whose subject is selected by
+# an ABSENT argument is not measuring what the caller believes it is measuring,
+# and its DRIFT and its OK are equally uninformative.
+#
+# So: an absent path VOIDs (rc=2), naming the argument. The default DerivedData
+# is still reachable — but only by NAMING it, because "audit the tree Xcode.app
+# built" is a claim the caller should have to make out loud. An option that can
+# be silently defaulted into is indistinguishable, at the output, from one that
+# was chosen.
+#
+# Note the mutation reading: with the fallback restored, a bare call exits 3
+# (DRIFT) — the SAME rc as a genuine source-drift verdict on a real build. The
+# refusal is rc=2 precisely because "I was not told what to measure" is the
+# absence of a measurement, not a measurement that came out badly.
+usage() {
+    cat >&2 <<'EOF'
+usage: check_membership.sh <derivedDataPath>
+       check_membership.sh --xcode-default
+
+VOID (rc=2): the DerivedData path is required and has no default.
+
+  <derivedDataPath>   the SAME path the audited build ran under
+                      (scripts/check_all.sh forwards its own $1 here)
+  --xcode-default     audit the DEFAULT DerivedData — i.e. what Xcode.app
+                      built. Explicit on purpose: a real but DIFFERENT
+                      subject from a -derivedDataPath build, and picking it
+                      by accident is the fault this refusal exists to stop.
+EOF
+}
+
 DERIVED="${1:-}"
 DD_ARGS=()
-[ -n "$DERIVED" ] && DD_ARGS=(-derivedDataPath "$DERIVED")
+case "$DERIVED" in
+    "")               usage; echo "VOID: no derivedDataPath argument"; exit 2 ;;
+    --xcode-default)  DERIVED=""  # deliberate: no -derivedDataPath flag passed
+                      echo "  subject: DEFAULT DerivedData (--xcode-default, named by the caller)" ;;
+    -*)               usage; echo "VOID: unknown option '$DERIVED'"; exit 2 ;;
+    *)                [ -d "$DERIVED" ] || { echo "VOID: derivedDataPath '$DERIVED' is not a directory"; exit 2; }
+                      DD_ARGS=(-derivedDataPath "$DERIVED") ;;
+esac
 
 settings_rc=0
 settings=$(xcodebuild -scheme "$SCHEME" -destination "$DEST" \

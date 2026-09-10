@@ -31,8 +31,17 @@ xcodebuild -scheme Zeus \
 ### The membership check (use this one)
 
 ```sh
-bash scripts/check_membership.sh      # rc 0 pass · 2 VOID · 3 DRIFT
+bash scripts/check_membership.sh /tmp/dd-manifest   # rc 0 pass · 1 broken · 2 VOID · 3 DRIFT
+bash scripts/check_membership.sh --xcode-default    # audit what Xcode.app built
 ```
+
+The DerivedData path is **required and has no default** — pass the same one the
+audited build ran under. A bare invocation VOIDs rather than answering, because
+`xcodebuild -showBuildSettings` reports on *the invocation you give it*: with no
+path it resolves the default tree and reports NOT COMPILED for files that
+compiled perfectly well, in a build you never made. That false DRIFT was hit
+three times by the author of the guard, each time after reading the header
+warning about it — hence a refusal rather than a paragraph.
 
 Asks the *driver input list* — what the compiler was handed — not the build
 log, which is what it decided to redo. Two faults it exists to avoid, both
