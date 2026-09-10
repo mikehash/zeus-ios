@@ -470,7 +470,8 @@ struct RootView: View {
                 // reason `voiceState` is: a `View` body cannot read the
                 // environment, and a config read in a body would re-run on
                 // every render. One read, one owner, rendered downstream.
-                disarmReason: configSource.config.disarmReason
+                disarmReason: configSource.config.disarmReason,
+                onRemember: remember
             )
         case .nodes:
             NodesView(routes: routes, onToast: showToast,
@@ -501,6 +502,48 @@ extension RootView {
     /// `send` appended to `@State messages` from the view layer; a second
     /// writer added beside it would have been a compile-clean defect. There
     /// is now nothing here to write to.
+
+    /// C1 — commit one transcript turn to Mnemosyne, and report the reading
+    /// that was actually taken.
+    ///
+    /// THE CORE IS FETCHED HERE, NOT HELD. `EmbeddedCore.shared` is the
+    /// process's one core; a handle constructed in this view would be a SECOND
+    /// core over the same workspace directory — the `InMemoryProviderKeyStore`
+    /// fault, one subsystem over, and `NodesView`'s `core` parameter carries
+    /// the same note for the same reason.
+    ///
+    /// FOUR OUTCOMES, FOUR TOASTS, and the separation is the point. A single
+    /// "SAVED" would report identical success for a write that landed, a core
+    /// that never existed, an empty bubble, and a core that raised. Three of
+    /// those wrote nothing.
+    ///
+    /// OFF THE MAIN THREAD. `remember` is a synchronous FFI call into the core
+    /// that appends to a file on disk; every other embedded call in this app
+    /// goes through `EmbeddedCore.queue` for exactly that reason, and doing it
+    /// inline would block the render that is about to show the toast.
+    private func remember(_ message: Message) {
+        guard let fact = Recall.factToWrite(from: message.text) else {
+            showToast(Recall.rememberToast(.empty))
+            return
+        }
+        guard let core = try? EmbeddedCore.shared.get() else {
+            showToast(Recall.rememberToast(.noCore))
+            return
+        }
+        EmbeddedCore.queue.async {
+            let outcome: Recall.RememberOutcome
+            do {
+                try core.remember(fact: fact)
+                outcome = .written
+            } catch {
+                // The core's own message, not ours. A generic "write failed"
+                // here would discard the one string that says WHY — and the
+                // bridge's errors name their cause (`NoWorkspace`, an IO path).
+                outcome = .failed("\(error)")
+            }
+            Task { @MainActor in showToast(Recall.rememberToast(outcome)) }
+        }
+    }
 
     /// :433 — one live toast at a time; a second call replaces the first and
     /// cancels its dismissal, so the earlier timer cannot clear the later

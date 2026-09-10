@@ -78,6 +78,20 @@ struct NodesView: View {
     /// it was the kitchen block's only raiser and went with it in (d).
     @State private var routeSheet = false
 
+    /// C1 — the FIND A FILE field's text.
+    @State private var findQuery: String = ""
+
+    /// The query that was actually RUN, or `nil` if none has been.
+    ///
+    /// Not derived from `findQuery`: the field still holds its text after a
+    /// zero-hit search, so the string cannot tell "typed but not submitted"
+    /// from "submitted and empty-handed." Those render different summaries.
+    @State private var findRan: String? = nil
+
+    /// HELD, not recomputed. `search` is a blocking FFI call; a computed
+    /// property would re-run the core on every render of this pane.
+    @State private var findHits: [SearchHit] = []
+
     let onToast: (String) -> Void
 
     /// Opens the gateway editor for the arm this console was built from.
@@ -114,6 +128,7 @@ struct NodesView: View {
         ScrollView {
             VStack(spacing: 0) {
                 mobileNode
+                findPanel
                 enrollButton
                 Text("ZEUS · NOVAXAI")
                     .font(Theme.mono(8.5))
@@ -330,6 +345,134 @@ struct NodesView: View {
         )
         .padding(.horizontal, 20)
         .padding(.top, 12)
+    }
+
+    // MARK: - C1  find a file (the core's file index)
+
+    /// The core's `search(query:)`, rendered under the name of what it
+    /// actually searches.
+    ///
+    /// ── Why the label says FILE and not MEMORY ──────────────────────────
+    ///
+    /// Walked at pin `2bfc08aa`: the bridge populates the index with
+    /// `FileEntry::new(&rel, name, len)` and never calls `with_first_line` or
+    /// `with_tags` (call sites = 0, POS `index.add` = 1). `FileIndex` weights
+    /// name 3.0, tags 2.0, first_line 1.0 — so the lower two tiers are
+    /// structurally empty and every posting came from a FILE NAME. A fact the
+    /// operator writes with REMEMBER lands inside `memory/MEMORY.md`, whose
+    /// NAME does not change, and is therefore unfindable here — permanently,
+    /// not until relaunch. Calling this "memory search" would build a screen
+    /// where you type the thing you just saved and get nothing.
+    ///
+    /// The results are HELD, not recomputed in the body: `search` is a
+    /// blocking FFI call, and a computed property would re-run it on every
+    /// render of every unrelated state change on this pane.
+    private var findPanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                iconWell("doc.text.magnifyingglass", tint: Theme.accent2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("FIND A FILE")
+                        .font(Theme.display(11, .bold))
+                        .tracking(2.2)
+                        .foregroundStyle(Theme.text)
+                    Text(findSummary)
+                        .font(Theme.mono(9))
+                        .tracking(0.9)
+                        .foregroundStyle(Theme.r(0.7))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            // 44pt is the touch-target floor and the field is free to grow
+            // TALLER — the same measured decision as the session composer,
+            // where pinning `height` clipped the caret line the user types on.
+            TextField("", text: $findQuery, prompt:
+                Text("File name")
+                    .foregroundStyle(Theme.w(0.3))
+            )
+            .font(Theme.body(14))
+            .foregroundStyle(Theme.text)
+            .textFieldStyle(.plain)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .submitLabel(.search)
+            .onSubmit(runFind)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(minHeight: 44)
+            .background(Theme.w(0.04))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Theme.w(0.08), lineWidth: Theme.hairline)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 16)
+            // The field is DISABLED with no core rather than hidden: a field
+            // that vanishes reports nothing, and `NO CORE` in the summary is
+            // the fact the operator needs. Same rule the mnemosyne row runs.
+            .disabled(core == nil)
+            .opacity(core == nil ? 0.35 : 1)
+
+            if !findHits.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(findHits.enumerated()), id: \.offset) { pair in
+                        NodeRow(icon: "doc",
+                                label: pair.element.name,
+                                value: Recall.scoreLabel(pair.element.score),
+                                last: pair.offset == findHits.count - 1) {
+                            // The path is what the row cannot show and the
+                            // operator cannot otherwise get: `name` is already
+                            // rendered, so the tap reports the DIRECTORY.
+                            onToast(Recall.dirLabel(for: pair.element.path)
+                                        .map { "\(pair.element.name) — \($0)" }
+                                        ?? "\(pair.element.name) — WORKSPACE ROOT")
+                        }
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.vertical, 5)
+            }
+        }
+        .padding(.bottom, 10)
+        .background(
+            LinearGradient(colors: [Theme.r(0.07), Theme.w(0.02)],
+                           startPoint: .init(x: 0.25, y: 0.0),
+                           endPoint: .init(x: 0.75, y: 1.0))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.r(0.3), lineWidth: Theme.hairline)
+        )
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+    }
+
+    /// One reading, taken on submit.
+    ///
+    /// `findRan` is a SEPARATE `@State` from `findQuery` and that separation is
+    /// the whole discrimination: the summary must distinguish "has not asked"
+    /// from "asked and got nothing," and a query string alone cannot — the
+    /// field still holds the text after a zero-hit search.
+    private func runFind() {
+        guard let q = Recall.queryToRun(from: findQuery) else {
+            findRan = nil
+            findHits = []
+            return
+        }
+        guard let core else { return }
+        findRan = q
+        findHits = core.search(query: q)
+    }
+
+    private var findSummary: String {
+        Recall.findSummary(query: findRan,
+                           hitCount: findHits.count,
+                           indexSize: core?.indexSize())
     }
 
     // MARK: - :735-741  enroll

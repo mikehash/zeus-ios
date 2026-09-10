@@ -80,9 +80,27 @@ struct SessionView: View {
     /// hole waiting for a second caller, not a convenience anyone used.
     var disarmReason: String?
 
-    // DECLARED LAST, and that is load-bearing: Swift's memberwise init fixes
-    // argument order to declaration order, so this property's position in the
-    // file IS the position of `disarmReason:` at the call site.
+    /// C1 — commit a transcript turn to Mnemosyne through the core's
+    /// `remember(fact:)`.
+    ///
+    /// TAKES THE MESSAGE, NOT THE TEXT. The owner needs the role to decide
+    /// nothing today — but a `(String) -> Void` here would make the call site
+    /// the only place the role is known, and the leg that matters most for
+    /// this feature is that the AGENT's reply gets written and not the
+    /// operator's prompt. Passing the whole message keeps that assertion
+    /// possible one level up, where the core handle lives.
+    ///
+    /// NO DEFAULT, same rule as `onSend` two properties up: an empty closure
+    /// would ship a menu item that highlights, takes the tap, and writes
+    /// nothing — a lie with a tap target on it.
+    var onRemember: (Message) -> Void
+
+    // DECLARATION ORDER IS CALL-SITE ORDER, and that is load-bearing: Swift's
+    // memberwise init fixes argument order to declaration order, so each
+    // property's position in this file IS its position at the call site.
+    // `onRemember:` was appended AFTER `disarmReason:` for that reason — it is
+    // the newest parameter, so it goes last and every existing argument keeps
+    // the position it already had.
 
 
     @State private var input: String = ""
@@ -315,7 +333,29 @@ struct SessionView: View {
             ScrollView {
                 LazyVStack(spacing: 10) {
                     ForEach(messages) { m in
-                        bubbleRow(m).id(m.id)
+                        bubbleRow(m)
+                            .id(m.id)
+                            // C1 — REMEMBER lives on the bubble, not the
+                            // composer, and that is the placement decision.
+                            // The composer holds text the operator has not
+                            // sent yet; a REMEMBER there would write a draft
+                            // and call it a memory. The thing worth keeping is
+                            // a turn that already happened, and the bubble is
+                            // the only surface that names WHICH one.
+                            //
+                            // Suppressed while `streaming`: the text is still
+                            // arriving, so a write here commits a prefix of a
+                            // reply — and the toast would report success over
+                            // a truncated fact.
+                            .contextMenu {
+                                if !m.streaming {
+                                    Button {
+                                        onRemember(m)
+                                    } label: {
+                                        Label("Remember this", systemImage: "brain")
+                                    }
+                                }
+                            }
                     }
                 }
                 .padding(.horizontal, 18)
