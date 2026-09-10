@@ -203,4 +203,126 @@ final class RecallTests: XCTestCase {
         XCTAssertFalse(sessionRaw.contains("core.remember(fact:"),
                        "the CALL needle does not — which is why it is the needle")
     }
+
+    // MARK: - Step B  the relabel, and the two things that keep it honest
+
+    /// Repo root from this file's own path — the same derivation
+    /// `AutoSendSeamTests` and `BackstepTests` use.
+    private func repoRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // ZeusTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo
+    }
+
+    /// THE LEG THE RELABEL EXISTS BEHIND.
+    ///
+    /// `MEMORY SEARCH` is only an honest label while the bridge actually
+    /// indexes CONTENT. At pin `2bfc08aa` it did not — `with_tags` had zero
+    /// call sites, every posting was a file NAME, and a fact written by
+    /// REMEMBER was unfindable permanently. `d5619c8` fixed that.
+    ///
+    /// The failure mode this guards is a PIN MOVE: nothing about a Swift
+    /// string knows which Rust it ships against, so a re-pin to a sha without
+    /// content tokens would silently restore the exact screen C1 refused to
+    /// build. This reads the bridge source in the tree and reds instead.
+    ///
+    /// The needle is built with `+` so this test file does not itself contain
+    /// the literal — the same repair as the bridge's own call-site census,
+    /// which counted its own `.filter` line as a third call site.
+    func testTheLabelIsBackedByTheRust() throws {
+        let bridge = repoRoot()
+            .appendingPathComponent("rust/zeus-core-bridge/src/lib.rs")
+        let src = try String(contentsOf: bridge, encoding: .utf8)
+
+        // Code lines only: the file's doc comments discuss both builders at
+        // length, so a raw `contains` is satisfied by PROSE about the very
+        // absence it is meant to detect.
+        let code = src.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") }
+
+        let tagsCall = "with_" + "tags("
+        let tagged = code.filter { $0.contains(tagsCall) }
+        XCTAssertFalse(tagged.isEmpty, """
+            MEMORY SEARCH is on screen but the bridge does not call \
+            with_tags on any code line — the index is filenames again and \
+            the label is a lie. Either re-pin forward or relabel FIND A FILE.
+            """)
+
+        // POS control, same invocation: a needle known to be PRESENT proves
+        // the stripper did not eat the file. Without it, a bad path or an
+        // over-eager filter returns "0 hits" and reads as the defect.
+        let addCall = "index." + "add("
+        XCTAssertFalse(code.filter { $0.contains(addCall) }.isEmpty,
+                       "control needle absent — this measured the wrong text, not the wrong Rust")
+
+        // The 1.0 tier stays empty ON PURPOSE (indexer.rs:213-221 does not
+        // de-duplicate first_line postings, so a file repeating one word 500
+        // times outranks the file NAMED for it — measured, it failed a leg).
+        // Asserting its absence is what stops a future hand "completing" the
+        // pair and silently re-introducing the unbounded-posting defect.
+        let firstLineCall = "with_first_" + "line("
+        XCTAssertTrue(code.filter { $0.contains(firstLineCall) }.isEmpty, """
+            the first_line tier is populated — that tier does not de-duplicate, \
+            so repetition can outrank a name. If this is deliberate, the \
+            dedup leg in the bridge must move with it.
+            """)
+    }
+
+    /// The old label is GONE from the shipped sources, not merely
+    /// out-numbered by the new one.
+    ///
+    /// A relabel that adds `MEMORY SEARCH` while leaving `FIND A FILE` on a
+    /// second surface passes any "does the new string exist" assertion and
+    /// ships two names for one feature. Both arms are asserted so the
+    /// verdict is a reading, not a preference.
+    func testTheSurfaceCarriesExactlyOneNameForItself() throws {
+        let app = repoRoot().appendingPathComponent("Sources/ZeusApp")
+        let files = try FileManager.default
+            .contentsOfDirectory(at: app, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 5,
+                             "no sources enumerated — the verdict below is vacuous")
+
+        let oldLabel = "FIND A " + "FILE"
+        let newLabel = "MEMORY " + "SEARCH"
+        var renders: [String] = []
+        var stale: [String] = []
+        for f in files {
+            let code = try String(contentsOf: f, encoding: .utf8)
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") }
+            if code.contains(where: { $0.contains("Text(\"\(newLabel)\")") }) {
+                renders.append(f.lastPathComponent)
+            }
+            if code.contains(where: { $0.contains("\"\(oldLabel)\"") }) {
+                stale.append(f.lastPathComponent)
+            }
+        }
+        XCTAssertEqual(renders, ["NodesView.swift"],
+                       "the new label renders from \(renders), expected exactly NodesView")
+        XCTAssertTrue(stale.isEmpty,
+                      "the old label still ships on code lines in \(stale) — two names, one feature")
+    }
+
+    /// The hit-and-miss fixture, over a REMEMBERED fact rather than a
+    /// filename — the shape of the round trip the label now promises.
+    ///
+    /// `findSummary` is the decision under test, so the arms are the three
+    /// readings the operator can get after typing a fact they just saved:
+    /// found it, index has files but not that, index is empty.
+    func testARememberedFactReadsAsFoundNotAsABadQuery() {
+        let found   = Recall.findSummary(query: "zebraquorum", hitCount: 1, indexSize: 6)
+        let missing = Recall.findSummary(query: "zebraquorum", hitCount: 0, indexSize: 6)
+        let noIndex = Recall.findSummary(query: "zebraquorum", hitCount: 0, indexSize: 0)
+
+        XCTAssertNotEqual(found, missing,
+                          "a found fact and a missing one must not read alike")
+        XCTAssertNotEqual(missing, noIndex,
+                          "a term absent from 6 files must not read like an unbuilt index")
+        XCTAssertTrue(found.contains("6"),
+                      "the denominator survives a HIT too, not just a zero: \(found)")
+    }
 }

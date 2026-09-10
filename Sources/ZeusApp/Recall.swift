@@ -11,25 +11,36 @@ import Foundation
 /// operator is told, what a zero-hit search MEANS) lives here as a function of
 /// its inputs, so the legs assert the decision rather than a screenshot.
 ///
-/// ── The naming decision, which is the whole point of the cut ─────────────
+/// ── The naming decision, and why it CHANGED ─────────────────────────────
 ///
-/// The core's `search` is NOT memory search, and calling it that on screen
-/// would be the worst kind of correct — a wired button over a lying label.
-/// Measured at the walk (`e37337f6`, pin `2bfc08aa`):
+/// C1 shipped this surface as `FIND A FILE`, and that was the honest label
+/// at the time. Walked at pin `2bfc08aa`:
 ///
 ///   bridge:496   index.add(FileEntry::new(&rel, name, meta.len()))
-///   FileEntry::new → first_line: None · tags: [] · line_count: 0
-///   with_first_line / with_tags call sites in the bridge = 0   (POS: add = 1)
+///   with_first_line / with_tags call sites in the bridge = 0  (POS: add = 1)
 ///
-/// `FileIndex` weights name 3.0, tags 2.0, first_line 1.0 — and the two
-/// builders that would populate the 2.0 and 1.0 tiers are never called. So
-/// every posting in that index came from a FILE NAME. A fact written by
-/// `remember` appends a line to `memory/MEMORY.md`, whose name never changes,
-/// and is therefore UNFINDABLE by `search` — not stale-until-relaunch, but
-/// permanently. Labelling this surface "memory search" would produce a screen
-/// where you type the thing you just saved and get nothing back.
+/// `FileIndex` weights name 3.0, tags 2.0, first_line 1.0 — both lower tiers
+/// were structurally empty, so every posting came from a FILE NAME. A fact
+/// written by `remember` lands INSIDE `memory/MEMORY.md`, whose name never
+/// changes, and was therefore unfindable — permanently, not until relaunch.
+/// Labelling that "memory search" would have built a screen where you type
+/// the thing you just saved and get nothing back.
 ///
-/// It is labelled `FIND A FILE`. That is what it does.
+/// `d5619c8` closed both halves: `scan_workspace` now reads each text file
+/// (bounded 64 KiB, NUL-rejected) and feeds de-duplicated word tokens to
+/// `with_tags` (weight 2.0), and `remember` re-indexes so a fact is findable
+/// WITHOUT a relaunch. Zeus100's host probe is the receipt:
+/// `remember("zebraquorum …")` → `search("zebraquorum")` was 0 hits before,
+/// 1 hit after.
+///
+/// So the label is now `MEMORY SEARCH`, and `testTheLabelIsBackedByTheRust`
+/// is what keeps that sentence true: it reads the bridge source and asserts
+/// `with_tags` is CALLED. Re-pin the bridge to a sha without content tokens
+/// and the leg reds — the label cannot drift back into a lie silently. Note
+/// what it does NOT assert: `with_first_line` stays uncalled on purpose
+/// (`indexer.rs:213-221` does not de-duplicate that tier, so a file
+/// repeating one word 500 times would outrank the file NAMED for it), which
+/// is why the 1.0 tier is still empty and `SearchHit.context` is still nil.
 enum Recall {
 
     // MARK: - remember

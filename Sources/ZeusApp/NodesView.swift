@@ -78,7 +78,7 @@ struct NodesView: View {
     /// it was the kitchen block's only raiser and went with it in (d).
     @State private var routeSheet = false
 
-    /// C1 — the FIND A FILE field's text.
+    /// C1 — the MEMORY SEARCH field's text (`FIND A FILE` until `d5619c8`).
     @State private var findQuery: String = ""
 
     /// The query that was actually RUN, or `nil` if none has been.
@@ -347,22 +347,28 @@ struct NodesView: View {
         .padding(.top, 12)
     }
 
-    // MARK: - C1  find a file (the core's file index)
+    // MARK: - C1/B  memory search (the core's workspace index)
 
     /// The core's `search(query:)`, rendered under the name of what it
-    /// actually searches.
+    /// actually searches — which CHANGED at `d5619c8`.
     ///
-    /// ── Why the label says FILE and not MEMORY ──────────────────────────
+    /// ── Why the label says MEMORY now, and said FILE before ────────────
     ///
-    /// Walked at pin `2bfc08aa`: the bridge populates the index with
-    /// `FileEntry::new(&rel, name, len)` and never calls `with_first_line` or
-    /// `with_tags` (call sites = 0, POS `index.add` = 1). `FileIndex` weights
-    /// name 3.0, tags 2.0, first_line 1.0 — so the lower two tiers are
-    /// structurally empty and every posting came from a FILE NAME. A fact the
-    /// operator writes with REMEMBER lands inside `memory/MEMORY.md`, whose
-    /// NAME does not change, and is therefore unfindable here — permanently,
-    /// not until relaunch. Calling this "memory search" would build a screen
-    /// where you type the thing you just saved and get nothing.
+    /// At pin `2bfc08aa` the bridge built the index with
+    /// `FileEntry::new(&rel, name, len)` and never called `with_first_line`
+    /// or `with_tags` (call sites = 0, POS `index.add` = 1). `FileIndex`
+    /// weights name 3.0, tags 2.0, first_line 1.0, so both lower tiers were
+    /// structurally empty and every posting came from a FILE NAME — a fact
+    /// written by REMEMBER lands inside `memory/MEMORY.md`, whose name does
+    /// not change, and was unfindable here permanently. That is why C1
+    /// shipped `FIND A FILE`.
+    ///
+    /// `d5619c8` landed both halves the honest label needs: content tokens
+    /// into `with_tags` (bounded 64 KiB, NUL-rejected, de-duplicated) AND a
+    /// re-index inside `remember`, so the fact is findable without a
+    /// relaunch. `Recall.testTheLabelIsBackedByTheRust` reads the bridge
+    /// source and reds if `with_tags` stops being called — the label cannot
+    /// quietly become a lie again by a pin move.
     ///
     /// The results are HELD, not recomputed in the body: `search` is a
     /// blocking FFI call, and a computed property would re-run it on every
@@ -372,7 +378,7 @@ struct NodesView: View {
             HStack(spacing: 12) {
                 iconWell("doc.text.magnifyingglass", tint: Theme.accent2)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("FIND A FILE")
+                    Text("MEMORY SEARCH")
                         .font(Theme.display(11, .bold))
                         .tracking(2.2)
                         .foregroundStyle(Theme.text)
@@ -391,7 +397,7 @@ struct NodesView: View {
             // TALLER — the same measured decision as the session composer,
             // where pinning `height` clipped the caret line the user types on.
             TextField("", text: $findQuery, prompt:
-                Text("File name")
+                Text("A word from a file, or a fact you remembered")
                     .foregroundStyle(Theme.w(0.3))
             )
             .font(Theme.body(14))
