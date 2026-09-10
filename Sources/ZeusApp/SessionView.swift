@@ -62,6 +62,13 @@ struct SessionView: View {
     /// Tapping the mic. Toggles — the same button starts and stops.
     var onVoice: () -> Void = {}
 
+    /// C — open the history sheet.
+    ///
+    /// NO DEFAULT, the `onSend` rule one affordance over: `= {}` here ships a
+    /// button in the header that highlights, takes the tap and does nothing —
+    /// indistinguishable from working software until an operator tries it.
+    var onHistory: () -> Void
+
     /// Why sending is impossible right now, or `nil` if it is possible.
     ///
     /// A STRING rather than a Bool, because a disarmed composer with no reason
@@ -231,6 +238,13 @@ struct SessionView: View {
             // The pill reads the readiness-composed pair, same derivation as
             // the home AGENT tile. `disarmReason` is already in scope here and
             // is the value the composer below gates on.
+            Button(action: onHistory) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(Theme.display(13, .regular))
+                    .foregroundStyle(Theme.r(0.55))
+            }
+            .accessibilityLabel("SESSION HISTORY")
+
             Badge(text: headerBadge.text, color: headerBadge.tint)
         }
         .padding(.horizontal, 20)

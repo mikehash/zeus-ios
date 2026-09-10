@@ -71,6 +71,11 @@ struct RootView: View {
     @State private var gatewayEditor = false
     @State private var gatewayEditorConfig: GatewayConfig? = nil
 
+    /// C — the history sheet. ONE flag, same shape as `gatewayEditor` above
+    /// and for the same reason: a per-tab flag would let two tabs disagree
+    /// about whether one sheet is open.
+    @State private var history = false
+
     /// The session loop. RootView READS the transcript and calls `send`; it
     /// cannot append a message or set an agent state, because neither is
     /// writable from here. The seed lives in the engine's initialiser.
@@ -331,6 +336,15 @@ struct RootView: View {
             // toast but a higher zIndex so an editor opened while a toast is
             // up draws above it — the editor is a decision, the toast is a
             // receipt, and the decision outranks it.
+            // C — history, over the tabs but UNDER the gateway editor: a
+            // lookup does not outrank a decision.
+            if history {
+                HistorySheet(core: try? EmbeddedCore.shared.get(),
+                             isPresented: $history)
+                    .transition(.move(edge: .bottom))
+                    .zIndex(75)
+            }
+
             if let config = gatewayEditorConfig, gatewayEditor {
                 GatewayEditorSheet(config: config,
                                    resolution: configSource.resolution,
@@ -466,6 +480,8 @@ struct RootView: View {
                 // thing they need to check before sending.
                 voiceState: voice.state,
                 onVoice: voice.toggle,
+                // C — the history sheet's only entry point.
+                onHistory: { history = true },
                 // Resolved HERE rather than inside the view, for the same
                 // reason `voiceState` is: a `View` body cannot read the
                 // environment, and a config read in a body would re-run on
