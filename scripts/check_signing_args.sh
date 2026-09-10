@@ -72,5 +72,30 @@ UNGUARDED=$(printf '%s\n' "$CODE" | grep -c '[^+]"\${ASC_XCODEBUILD_ARGS\[@\]}"'
   echo "FAIL: $UNGUARDED unguarded array expansion(s) — bash 3.2 + set -u kills every non-TestFlight build"
   FAIL=1; }
 
+# ── SESSION LEG ────────────────────────────────────────────────────────────
+# Added 2026-09-10 after the errSecInternalComponent round. The identity
+# warning above the archive said `-allowProvisioningUpdates` can mint an
+# identity — true for a missing CERT, false for a missing SESSION, which is the
+# one absence nothing can mint past. The script must consult
+# `launchctl managername` and must NOT report a 0-identity count taken from a
+# sessionless process as a fact about the keychain (zeus106: 16 certs present,
+# find-identity = 0).
+# NEEDLE IS THE CALL, NOT THE WORD. First cut counted 'launchctl managername'
+# anywhere; the mutation that REPLACED the call still read 1, because the
+# warning message quotes the command name back to the operator. A probe named
+# after its subject matches its own error text — Standard #3, at a census.
+SESSION_PROBE=$(printf '%s\n' "$CODE" | grep -c '\$(launchctl managername')
+[ "$SESSION_PROBE" -eq 1 ] || {
+  echo "FAIL: \$(launchctl managername) called $SESSION_PROBE times, expected 1 — the one absence -allowProvisioningUpdates cannot mint past goes unnamed"
+  FAIL=1; }
+
+# The identity census must sit INSIDE a session branch. A bare
+# `IDENT_COUNT=$(security find-identity ...)` at top level re-publishes a
+# number whose aperture is the session, which is the fault this leg exists for.
+IDENT_GUARDED=$(printf '%s\n' "$CODE" | grep -c 'SESSION_MANAGER')
+[ "$IDENT_GUARDED" -ge 2 ] || {
+  echo "FAIL: SESSION_MANAGER read at $IDENT_GUARDED sites, expected >=2 (set once, branched on for the warning and for the identity census)"
+  FAIL=1; }
+
 [ "$FAIL" -eq 0 ] || exit 1
-echo "OK: both xcodebuild invocations carry the ASC account · array defined 1, expanded 2 · POS invocations=$POS_INVOCATIONS issuer_id reads=$POS_ISSUER_FILE"
+echo "OK: both xcodebuild invocations carry the ASC account · array defined 1, expanded 2 · session probe $SESSION_PROBE, SESSION_MANAGER sites $IDENT_GUARDED · POS invocations=$POS_INVOCATIONS issuer_id reads=$POS_ISSUER_FILE"

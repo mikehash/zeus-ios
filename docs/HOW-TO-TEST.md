@@ -244,10 +244,42 @@ that has never completed.
 - Path 0 (simulator) — this is what the whole test suite and every screenshot
   on this branch run against.
 
+### Before anything: are you in a GUI session?
+
+```
+launchctl managername
+```
+
+If this answers anything other than `Aqua` — `System`, `Background`, or
+`Standalone` — **stop**. You are in tmux, ssh, or a launchd job, and code
+signing will fail with `errSecInternalComponent` no matter what you do next.
+
+This is **not** a locked keychain, and the two are constantly confused because
+they produce the same error. A sessionless process unlocks keychains perfectly
+well; it simply cannot get `login.keychain` into its search list. Measured on
+zeus106: creating and unlocking a fresh keychain `rc=0`, reading a *secret* from
+`login.keychain-db` `rc=44` "item not found", reading *public certs* from the
+same file → 16 hits. The file is readable. The session is missing.
+
+Consequences, both of which will mislead you:
+
+- `security unlock-keychain` cannot fix it (`-u` answers *"User interaction is
+  not allowed"*).
+- `-allowProvisioningUpdates` cannot mint past it. That flag can create an
+  *identity*; it cannot create a *session* to hold one.
+- `security find-identity` reads **0 valid identities** on a machine whose
+  keychain is full of them. Do not report that zero as a fact about the
+  keychain — it is a fact about your session.
+
+The fix is a shell that lives in the logged-in GUI session: a **Terminal.app
+window on the console**, or `sudo launchctl asuser <uid> …`. `build-device.sh`
+checks this first and says so before it compiles anything.
+
 **NOT proven — nobody has run it:**
 - That a signed archive exports. On this box
-  `security find-identity -v -p codesigning` returns **0 valid identities**, so
-  the archive dies at signing with:
+  `security find-identity -v -p codesigning` returns **0 valid identities**
+  (measured from a sessionless shell, so the number is about the session, not
+  the keychain — see above), so the archive dies at signing with:
 
   ```
   error: No Accounts: Add a new account in Accounts settings.

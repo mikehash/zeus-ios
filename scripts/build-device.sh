@@ -278,7 +278,40 @@ fi
 command -v xcodegen  >/dev/null || die_instrument "xcodegen not on PATH (brew install xcodegen)"
 command -v xcodebuild >/dev/null || die_instrument "xcodebuild not on PATH (install Xcode, then xcode-select)"
 
-# ── 2. SIGNING IDENTITY PRESENCE, AS A SEPARATE LEG ────────────────────────
+# ── 2. THE SECURITY SESSION, BEFORE THE KEYCHAIN ──────────────────────────
+#
+# INCIDENT (2026-09-10, Zeus100's coordinator Mac, then reproduced on zeus106).
+# `codesign` answered errSecInternalComponent and the first read was "the login
+# keychain is locked — the operator should click Allow". It was the wrong ask.
+#
+# `errSecInternalComponent` has TWO causes and they need OPPOSITE fixes:
+#
+#   (a) LOCKED keychain          → `security unlock-keychain`, or the GUI prompt.
+#   (b) NO SECURITY SESSION      → nothing to unlock. A process outside the Aqua
+#                                  session (tmux, ssh, launchd Background) cannot
+#                                  put login.keychain into its search list at all.
+#
+# Measured on zeus106, sessionless: creating a keychain and unlocking it rc=0
+# (unlocking works PERFECTLY), reading a secret from login.keychain-db rc=44
+# "item not found", reading PUBLIC certs from the same file 16 hits — the FILE
+# is readable, the SESSION is missing. Zeus100's box: managername=Background,
+# `security unlock-keychain -u` answers "User interaction is not allowed".
+#
+# `launchctl managername` discriminates in one line, and it is the ONE absence
+# `-allowProvisioningUpdates` cannot mint past: the flag can create an identity,
+# it cannot create a session to hold one.
+SESSION_MANAGER=$(launchctl managername 2>/dev/null) || SESSION_MANAGER=""
+SESSION_MANAGER="${SESSION_MANAGER:-UNKNOWN}"
+
+if [ "$SESSION_MANAGER" != "Aqua" ]; then
+  echo "🔴 launchctl managername = '$SESSION_MANAGER' (not Aqua): this shell has no GUI security session."
+  echo "    Code signing will fail with errSecInternalComponent."
+  echo "    This is NOT a locked keychain — unlock-keychain cannot fix it, and"
+  echo "    -allowProvisioningUpdates cannot mint past it."
+  echo "    Run this script from a Terminal.app window inside the logged-in GUI session."
+fi
+
+# ── 2b. SIGNING IDENTITY PRESENCE, AS A SEPARATE LEG ──────────────────────
 #
 # Distinct from the env check above: the variables can be perfectly set on a
 # machine with no keychain identity, and that failure surfaces ~4 minutes
@@ -286,12 +319,23 @@ command -v xcodebuild >/dev/null || die_instrument "xcodebuild not on PATH (inst
 # because `-allowProvisioningUpdates` can create an identity on the fly when
 # the machine is signed into Xcode — so an empty keychain is not proof of
 # doom, only of risk. Stated, not enforced.
-IDENT_COUNT=$(security find-identity -v -p codesigning 2>/dev/null | grep -c 'valid identities found' >/dev/null 2>&1; security find-identity -v -p codesigning 2>/dev/null | grep -Eo '^ *[0-9]+ valid identities found' | grep -Eo '[0-9]+' | head -1)
-IDENT_COUNT="${IDENT_COUNT:-0}"
-if [ "$IDENT_COUNT" = "0" ]; then
-  echo "⚠️  security find-identity: 0 valid codesigning identities in this keychain."
-  echo "    Continuing — -allowProvisioningUpdates can mint one if Xcode is signed in."
-  echo "    If the archive fails at signing, this line is why."
+#
+# APERTURE — this leg only has a subject when a session exists. A sessionless
+# process reads 0 identities on a machine whose keychain is FULL of them (proven
+# on zeus106: 16 certs in login.keychain, `find-identity` = 0 valid). Reporting
+# that 0 as a fact about the keychain is a measurement published without the
+# aperture that produced it, so under a non-Aqua session this leg abstains.
+if [ "$SESSION_MANAGER" != "Aqua" ]; then
+  echo "⚠️  security find-identity: NOT MEASURED — no GUI session (see above)."
+  echo "    A sessionless process reads 0 identities on a machine that has many."
+else
+  IDENT_COUNT=$(security find-identity -v -p codesigning 2>/dev/null | grep -Eo '^ *[0-9]+ valid identities found' | grep -Eo '[0-9]+' | head -1)
+  IDENT_COUNT="${IDENT_COUNT:-0}"
+  if [ "$IDENT_COUNT" = "0" ]; then
+    echo "⚠️  security find-identity: 0 valid codesigning identities in this keychain."
+    echo "    Continuing — -allowProvisioningUpdates can mint one if Xcode is signed in."
+    echo "    If the archive fails at signing, this line is why."
+  fi
 fi
 
 ARCHIVE_DIR="${ZEUS_BUILD_DIR:-$REPO/build/device}"
