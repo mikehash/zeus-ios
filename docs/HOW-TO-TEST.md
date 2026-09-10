@@ -85,7 +85,7 @@ ZEUS tab. Tabs at the bottom, live orb at the top.
 To jump straight to a screen without tapping:
 
 ```
-xcrun simctl launch booted com.zeus.Zeus -zeusTab session
+xcrun simctl launch booted ai.novaxai.zeus.mobile -zeusTab session
 ```
 
 `-zeusTab` accepts `zeus` · `session` · `nodes`. A **typo falls back to `zeus`
@@ -251,7 +251,7 @@ that has never completed.
 
   ```
   error: No Accounts: Add a new account in Accounts settings.
-  error: No profiles for 'com.zeus.Zeus' were found
+  error: No profiles for 'ai.novaxai.zeus.mobile' were found
   ```
 
   That is the *expected* failure for an unsigned box, it exits `rc=1` (build
@@ -262,7 +262,7 @@ that has never completed.
 
 **So the first person to run Path 1 or Path 2 should expect to find something.**
 The likely candidates, in order: no Apple account signed into Xcode
-(*Xcode → Settings → Accounts*), and the App ID `com.zeus.Zeus` not existing on
+(*Xcode → Settings → Accounts*), and the App ID `ai.novaxai.zeus.mobile` not existing on
 your team yet — automatic signing usually creates it, but if it does not, make it
 by hand in the developer portal.
 

@@ -62,6 +62,37 @@ final class BundleResourceTests: XCTestCase {
         )
     }
 
+    /// THE HOUSE BUNDLE ID, PINNED TO THE LITERAL THE ASC RECORD EXISTS FOR.
+    ///
+    /// 🔴 THE RECORD IS THE SOURCE; THIS STRING IS ITS NAME. An App Store
+    /// Connect record is keyed by bundle id, and an archive built with any
+    /// other id does not fail with "wrong identifier" — it fails at upload
+    /// looking like an AUTHENTICATION problem, because the key authenticates
+    /// fine and simply has no app of that id to write to. That is why this is
+    /// a leg and not a comment: the failure mode of getting it wrong is a
+    /// misleading error at the far end of a ten-minute archive.
+    ///
+    /// MEASURED ON THE BUILT PRODUCT, not on `project.yml`. The tracked
+    /// `Info.plist` carries `$(PRODUCT_BUNDLE_IDENTIFIER)` — a REFERENCE, so
+    /// reading the tracked file would assert the spelling of a variable and
+    /// say nothing about the value substituted into the bundle that ships.
+    /// `bundleIdentifier` here is the resolved value in `Zeus.app`.
+    ///
+    /// The literal is written out rather than composed from a prefix: a value
+    /// derived from `bundleIdPrefix` + target name can be changed by editing
+    /// either half, neither of which contains the word "identifier".
+    func testTheBuiltProductCarriesTheHouseBundleID() throws {
+        let app = try hostAppBundle()
+        XCTAssertEqual(
+            app.bundleIdentifier,
+            "ai.novaxai.zeus.mobile",
+            "the built product's CFBundleIdentifier is "
+                + "\(app.bundleIdentifier ?? "absent") — the App Store Connect "
+                + "record exists for ai.novaxai.zeus.mobile, and an archive "
+                + "with any other id is rejected at upload"
+        )
+    }
+
     /// THE LEG THE SILENT ZERO NEEDED.
     ///
     /// `CFBundleIconName` is written into the built plist by the asset catalog

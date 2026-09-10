@@ -1,6 +1,9 @@
 name: Zeus
 options:
-  bundleIdPrefix: com.zeus
+  # Only reaches targets that do NOT state PRODUCT_BUNDLE_IDENTIFIER — i.e.
+  # ZeusTests, not Zeus. Aligned to the house so the test bundle is not the
+  # last inhabitant of a namespace the app has left.
+  bundleIdPrefix: ai.novaxai.zeus
   deploymentTarget:
     iOS: "17.0"
 targets:
@@ -85,6 +88,17 @@ targets:
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
         TARGETED_DEVICE_FAMILY: "1"
+        # THE APP STORE CONNECT RECORD IS THE SOURCE; THIS LITERAL IS ITS NAME.
+        # An app's bundle id is not a naming preference — it is the key an
+        # existing ASC record is keyed by, and an archive whose id does not
+        # match is rejected at upload with an authentication-shaped error
+        # rather than "wrong id". It is stated HERE, explicitly, rather than
+        # left to `options.bundleIdPrefix` + target name, because a value
+        # DERIVED from two other fields can be changed by editing either one
+        # of them without anyone reading the word "identifier". The record
+        # exists for ai.novaxai.zeus.mobile; pinned by
+        # BundleResourceTests.testTheBuiltProductCarriesTheHouseBundleID.
+        PRODUCT_BUNDLE_IDENTIFIER: ai.novaxai.zeus.mobile
     entitlements:
       # POINTS AT a tracked, hand-written file — it is deliberately NOT an
       # inline `properties:` block. An inline block would make xcodegen

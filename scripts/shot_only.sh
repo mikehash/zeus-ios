@@ -8,7 +8,7 @@ set -u
 SHA=$(cd "$(dirname "$0")/.." && git rev-parse --short HEAD)
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 UDID="${ZEUS_CAPTURE_UDID:?set ZEUS_CAPTURE_UDID}"
-BUNDLE_ID="com.zeus.Zeus"
+BUNDLE_ID="ai.novaxai.zeus.mobile"
 OUT="$REPO/build/fork-frames"
 mkdir -p "$OUT"
 shot() {

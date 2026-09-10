@@ -39,7 +39,7 @@
 set -uo pipefail
 
 DEVICE="${ZEUS_CAPTURE_DEVICE:-iPhone 17 Pro Max}"
-BUNDLE_ID="com.zeus.Zeus"
+BUNDLE_ID="ai.novaxai.zeus.mobile"
 # Device slug folds the DEVICE identity into the default output path.
 # Incident (2026-09-08): the default was a fixed "build/store-screenshots" with no
 # device in it, so a second-width run SILENTLY CLOBBERED the first — an iPhone 16e

@@ -6,7 +6,7 @@ set -u
 SHA=$(cd "$(dirname "$0")/.." && git rev-parse --short HEAD)
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DEVICE="${ZEUS_CAPTURE_DEVICE:-iPhone 17 Pro}"
-BUNDLE_ID="com.zeus.Zeus"
+BUNDLE_ID="ai.novaxai.zeus.mobile"
 OUT="$REPO/build/fork-frames"
 BAD=2
 die() { echo "INSTRUMENT: $*" >&2; exit $BAD; }
