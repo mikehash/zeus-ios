@@ -476,11 +476,29 @@ impl ZeusCore {
     /// labelled "memory search" it would have been a wired button over a lying
     /// label.
     ///
-    /// Now content tokens ride `with_tags`, and `remember` re-indexes, so a
-    /// remembered fact is findable in the same session that wrote it. The
-    /// snapshot is refreshed on every `remember`; a file written by the LOOP is
-    /// visible on the next `remember` or the next launch, which is stated here
-    /// rather than discovered.
+    /// Content tokens now ride `with_tags` (weight 2.0), so a fact appended by
+    /// `remember` is findable in the same session that wrote it. Two apertures,
+    /// both real: only the first **64 KiB** of a file is read
+    /// (`read_text_head`), and at most 4,096 unique tokens per file are kept —
+    /// a fact past either bound is not findable, and that is a narrower claim
+    /// than "content is indexed".
+    ///
+    /// `with_first_line` is deliberately NOT called, and the 1.0 tier stays
+    /// structurally empty. MEASURED: the indexer tokenises `first_line` with no
+    /// de-duplication (indexer.rs:213-221), so a file whose first line repeats
+    /// one word 500 times contributes 500 postings at 1.0 and outranks the file
+    /// actually NAMED for that word at 3.0 — the leg
+    /// `content_tokens_are_deduplicated_so_repetition_cannot_outrank_a_name`
+    /// failed exactly that way on the first cut. Feeding content into a tier
+    /// that cannot bound it re-introduces the unbounded-posting defect that
+    /// de-duplicating the tags was cut to avoid. Consequence, stated: the
+    /// `context` field of a `SearchHit` remains `None` — same ruling as
+    /// `line_number`, a field no producer can honestly fill returns when a
+    /// bounded content tier exists to fill it.
+    ///
+    /// The snapshot is refreshed on every `remember`; a file written by the
+    /// LOOP is visible on the next `remember` or the next launch, which is
+    /// stated here rather than discovered.
     pub fn search(self: Arc<Self>, query: String) -> Vec<SearchHit> {
         let Ok(index) = self.index.read() else {
             return Vec::new();
@@ -727,12 +745,88 @@ fn scan_workspace(root: &std::path::Path) -> FileIndex {
                     .unwrap_or(&path)
                     .to_string_lossy()
                     .to_string();
-                index.add(FileEntry::new(&rel, name, meta.len()));
+                let mut entry = FileEntry::new(&rel, name, meta.len());
+                if let Some(text) = read_text_head(&path) {
+                    entry = entry.with_line_count(text.lines().count());
+                    let tokens = content_tokens(&text);
+                    if !tokens.is_empty() {
+                        entry = entry.with_tags(tokens);
+                    }
+                }
+                index.add(entry);
             }
         }
     }
 
     index
+}
+
+/// Read at most `MAX_CONTENT_BYTES` of a file, or `None` if it is not text.
+///
+/// Bounded because the phone rebuilds this index on every `remember`: an
+/// unbounded read of a workspace the LOOP has been writing into turns a
+/// one-line memory write into a whole-disk read. 64 KiB is the aperture, and
+/// it is stated rather than implied — a fact written past that offset in one
+/// file is NOT findable, which is a smaller lie than "content is indexed"
+/// with no bound at all.
+///
+/// Binary rejection is by NUL byte, not by extension: an extension allow-list
+/// silently drops the extensionless files a workspace is full of (`AGENTS`,
+/// `Makefile`), and `from_utf8` alone accepts a UTF-8-clean binary blob.
+fn read_text_head(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+
+    const MAX_CONTENT_BYTES: usize = 64 * 1024;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; MAX_CONTENT_BYTES];
+    let n = file.read(&mut buf).ok()?;
+    buf.truncate(n);
+    if buf.contains(&0) {
+        return None;
+    }
+    // Lossy, not strict: a 64 KiB cut can land mid-codepoint, and discarding a
+    // whole file because its last byte is half a `—` indexes nothing for the
+    // sake of one character.
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Word tokens from file content, for `with_tags` (weight 2.0).
+///
+/// ## Why this exists, measured
+///
+/// `scan_workspace` called `FileEntry::new` only, so `tags` and `first_line`
+/// were empty for every entry and the indexer's 2.0 and 1.0 tiers were
+/// STRUCTURALLY empty — every posting came from a file NAME. A fact appended
+/// by `remember` lands inside `MEMORY.md`, whose name never changes, so
+/// re-indexing found it zero times: measured on host as
+/// `remember("zebraquorum…")` then `search("zebraquorum")` = 0 hits, against a
+/// POS of `search("MEMORY")` = 1.
+///
+/// De-duplicated and capped: the indexer pushes one posting per token
+/// occurrence, so an un-deduplicated file of 8,000 words is 8,000 postings
+/// scoring 2.0 each — one large file would outrank every filename for every
+/// term it happens to contain. Unique tokens make the tier a
+/// does-this-file-contain-the-word signal, which is what a search field over
+/// five files needs.
+fn content_tokens(text: &str) -> Vec<String> {
+    const MAX_TOKENS: usize = 4096;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for raw in text.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        if raw.len() < 2 {
+            continue;
+        }
+        let token = raw.to_lowercase();
+        if seen.insert(token.clone()) {
+            out.push(token);
+            if out.len() >= MAX_TOKENS {
+                break;
+            }
+        }
+    }
+    out
 }
 
 // ============================================================================
@@ -879,6 +973,132 @@ mod tests {
         assert!(
             index.search("kubernetes").is_empty(),
             "absent term must not match"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Zeus100's host probe, as a standing leg.
+    ///
+    /// The claim that failed: the `search` doc, the docs table and my own post
+    /// all said content tokens landed, while `scan_workspace` still called
+    /// `FileEntry::new` only. Measured on host: `remember("zebraquorum…")` then
+    /// `search("zebraquorum")` = 0 hits against a POS of `search("MEMORY")` = 1.
+    /// Re-indexing cannot find a fact inside a file whose NAME never changes.
+    ///
+    /// Three arms, and the NEG is the one that makes the other two mean
+    /// anything: an index that scored every file for every query passes both
+    /// the content hit and the filename POS.
+    #[test]
+    fn remembered_fact_is_findable_by_content() {
+        let dir = std::env::temp_dir().join(format!("zcb-content-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).unwrap();
+
+        core.clone().remember("zebraquorum is the probe token".to_string()).unwrap();
+
+        let hits = core.clone().search("zebraquorum".to_string());
+        assert_eq!(
+            hits.len(),
+            1,
+            "a token written INSIDE MEMORY.md must be findable by content"
+        );
+        assert!(
+            hits[0].path.ends_with("MEMORY.md"),
+            "the hit must be the file the fact landed in, got {}",
+            hits[0].path
+        );
+
+        // POS: the filename tier still works, so a content-tier regression is
+        // distinguishable from the index being empty.
+        assert!(
+            !core.clone().search("MEMORY".to_string()).is_empty(),
+            "filename tier must still score"
+        );
+
+        // NEG: a token never written anywhere.
+        assert!(
+            core.clone().search("quetzalcoatl".to_string()).is_empty(),
+            "a token in no file must score nothing"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The 64 KiB aperture is a real boundary, so it gets a leg on both sides.
+    ///
+    /// Without the far arm this is a test of the near arm only, and a bound
+    /// silently raised to `usize::MAX` (an unbounded read of a workspace the
+    /// loop writes into) would pass.
+    #[test]
+    fn content_index_respects_the_64_kib_aperture() {
+        let dir = std::env::temp_dir().join(format!("zcb-aperture-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut body = String::from("nearsentinel\n");
+        while body.len() < 70 * 1024 {
+            body.push_str("filler filler filler\n");
+        }
+        body.push_str("farsentinel\n");
+        std::fs::write(dir.join("big.md"), &body).unwrap();
+
+        let index = scan_workspace(&dir);
+        assert_eq!(index.search("nearsentinel").len(), 1, "inside the aperture");
+        assert!(
+            index.search("farsentinel").is_empty(),
+            "past 64 KiB is NOT indexed — the bound is real and stated"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A binary file must not enter the content tier.
+    ///
+    /// NUL rejection, not an extension allow-list: a workspace is full of
+    /// extensionless text files and `from_utf8` alone accepts a UTF-8-clean
+    /// blob. POS arm asserts the file is still INDEXED BY NAME — rejecting its
+    /// content must not drop it from the index.
+    #[test]
+    fn binary_files_are_named_but_not_content_indexed() {
+        let dir = std::env::temp_dir().join(format!("zcb-binary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("blob.bin"), b"opaquetoken\x00\x01\x02more").unwrap();
+
+        let index = scan_workspace(&dir);
+        assert_eq!(index.len(), 1, "the file is still indexed");
+        assert_eq!(index.search("blob").len(), 1, "POS: by NAME");
+        assert!(
+            index.search("opaquetoken").is_empty(),
+            "a token inside a binary must not enter the content tier"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Content tokens are de-duplicated, and this is a ranking property not a
+    /// cosmetic one.
+    ///
+    /// The indexer pushes one posting per token occurrence at weight 2.0, so an
+    /// un-deduplicated file repeating a word 500 times scores 1,000 for it and
+    /// outranks the file actually NAMED for it (3.0). The leg asserts the
+    /// ordering, which is the observable a search field renders.
+    #[test]
+    fn content_tokens_are_deduplicated_so_repetition_cannot_outrank_a_name() {
+        let dir = std::env::temp_dir().join(format!("zcb-dedup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("runbook.md"), "deploy steps").unwrap();
+        std::fs::write(dir.join("noise.md"), "runbook ".repeat(500)).unwrap();
+
+        let index = scan_workspace(&dir);
+        let hits = index.search("runbook");
+        assert_eq!(hits.len(), 2, "both files match");
+        assert!(
+            hits[0].entry.path.ends_with("runbook.md"),
+            "the file NAMED runbook must outrank the file that repeats it, got {}",
+            hits[0].entry.path
         );
 
         let _ = std::fs::remove_dir_all(&dir);
