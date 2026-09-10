@@ -1312,4 +1312,67 @@ mod tests {
             "Unsupported group (azure, bedrock, vertex)"
         );
     }
+
+    // ========================================================================
+    // D4 — the tool policy, measured at the policy object the loop is handed.
+    //
+    // My own walk proposed a different leg: "ask for `shell` explicitly, assert
+    // no tool call". RETRACTED before it shipped. The policy FILTERS THE SCHEMAS
+    // (agent_loop:2155) before the model is prompted, so the model is never told
+    // `shell` exists and will not ask for it. That leg passes with the deny path
+    // never executing — it measures the model's vocabulary, not our guard.
+    // ========================================================================
+
+    /// The policy the bridge builds refuses every denied name.
+    ///
+    /// `is_tool_allowed` is DENY-FIRST (zeus-core:4737), which is why the four
+    /// denied names appear in `denied_tools` even though the allow-list already
+    /// omits them: absence relies on the allow-list staying non-empty, and an
+    /// EMPTY allow-list means everything.
+    #[test]
+    fn phone_policy_refuses_every_denied_name() {
+        let policy = phone_tool_policy();
+        // The names are written OUT, not read from `PHONE_DENIED`. A needle
+        // derived from its own subject cannot see the subject vanish: emptying
+        // the constant makes `for name in PHONE_DENIED` iterate ZERO times and
+        // this leg passes green over a policy that denies nothing. Measured —
+        // that mutation left only the arity leg red.
+        for name in ["shell", "spawn", "python_exec", "message"] {
+            assert!(!policy.is_tool_allowed(name), "{name} must be refused on a phone");
+        }
+        // Vacuity: a policy that refused EVERYTHING passes the loop above while
+        // breaking the product. The allowed set must still be allowed.
+        for name in PHONE_TOOLS {
+            assert!(policy.is_tool_allowed(name), "{name} is the product and must be allowed");
+        }
+    }
+
+    /// A tool added to the registry LATER is refused by default, not gained.
+    #[test]
+    fn an_unknown_future_tool_is_refused_by_default() {
+        let policy = phone_tool_policy();
+        assert!(
+            !policy.is_tool_allowed("ZZZ_FUTURE_TOOL_XYZ"),
+            "a name in neither list must be refused, not gained"
+        );
+    }
+
+    /// The allowed set is EXACTLY the five ruled names — no more, no fewer.
+    ///
+    /// Arity leg. Without it, adding a sixth name to `PHONE_TOOLS` passes every
+    /// membership assertion above: they all ask "is this allowed", none asks
+    /// "what else is".
+    #[test]
+    fn the_allowed_set_is_exactly_the_five_ruled_names() {
+        let policy = phone_tool_policy();
+        let mut got: Vec<&str> = policy.allowed_tools.iter().map(|s| s.as_str()).collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            ["edit_file", "list_dir", "read_file", "web_fetch", "write_file"],
+            "the five ruled names, sorted"
+        );
+        assert_eq!(policy.allowed_tools.len(), 5, "arity");
+        assert_eq!(policy.denied_tools.len(), 4, "denied arity");
+    }
 }
