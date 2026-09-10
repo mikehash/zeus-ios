@@ -80,12 +80,25 @@ enum CoreArming {
     /// moves.
     static let ollamaKeyPlaceholder = "ollama-local"
 
-    /// Providers whose key is a placeholder rather than a credential.
+    /// Whether this provider's key is a placeholder rather than a credential.
     ///
-    /// A SET, not an `if id == "ollama"`, so adding a second keyless provider
-    /// is one line here instead of a second branch that can disagree with this
-    /// one about what "keyless" means.
-    static let keylessProviders: Set<String> = ["ollama"]
+    /// DERIVED FROM THE CORE'S OWN VERDICT, never from a list of ids. The
+    /// predecessor was `keylessProviders: Set<String> = ["ollama"]` — a
+    /// hardcoded provider list sitting beside a `credential_shape` that
+    /// already answers this question, and the two could disagree the moment
+    /// the core learned a second keyless provider or stopped shipping the
+    /// first. `.key` is the ONLY shape that names a secret; `.url` collects an
+    /// endpoint and `.none` collects nothing, so neither has a key to send.
+    ///
+    /// `.unsupported` is deliberately NOT keyless: the app cannot collect for
+    /// it at all, and treating it as keyless would arm the core with a
+    /// placeholder for a provider whose requirements this build does not know.
+    static func usesKeyPlaceholder(_ shape: CredentialKind) -> Bool {
+        switch shape {
+        case .url, .none: return true
+        case .key, .unsupported: return false
+        }
+    }
 
     /// Why the core could not be armed, or `nil` when it was.
     ///
@@ -111,8 +124,13 @@ enum CoreArming {
         // OLLAMA_DEFAULT_URL — localhost, which on a phone is the phone. That
         // is a route that can never reach the operator's rig, and it fails as
         // a connection error naming the wrong cause. Refuse instead.
+        // ONE reading of the core's verdict, consumed by both the endpoint
+        // branch and the key branch below. Two lookups could not disagree
+        // today, but two SOURCES could — that is what the retired
+        // `keylessProviders` literal was.
+        let shape = ProviderCatalog.current.shape(for: id)
         let resolvedBaseURL: String?
-        if case .url = ProviderCatalog.current.shape(for: id) {
+        if case .url = shape {
             guard let recorded = baseURL, !recorded.isEmpty else {
                 return "NO ENDPOINT FOR \(ProviderCatalog.label(for: id)) — ENTER ONE IN ROUTES"
             }
@@ -121,7 +139,7 @@ enum CoreArming {
             resolvedBaseURL = baseURL
         }
         let key: String?
-        if keylessProviders.contains(id) {
+        if usesKeyPlaceholder(shape) {
             key = ollamaKeyPlaceholder
         } else {
             key = providerKey
@@ -150,7 +168,9 @@ enum CoreArming {
                            key: String?,
                            baseURL: String?) -> String? {
         guard let core else { return nil }
-        let probeKey = keylessProviders.contains(id) ? ollamaKeyPlaceholder : (key ?? "")
+        let probeKey = usesKeyPlaceholder(ProviderCatalog.current.shape(for: id))
+            ? ollamaKeyPlaceholder
+            : (key ?? "")
         guard let models = try? core.listModels(id: id, key: probeKey, baseUrl: baseURL) else {
             return nil
         }

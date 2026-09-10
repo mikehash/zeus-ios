@@ -152,6 +152,91 @@ final class ProviderArmingTests: XCTestCase {
                        "an empty key is refused by the core with an error naming the header, not the key")
     }
 
+    // MARK: - keylessness is derived, not listed
+
+    /// THE DISCRIMINATING ROW. A `.none`-shape provider whose id is NOT
+    /// "ollama" must send the placeholder — and the retired
+    /// `keylessProviders: Set<String> = ["ollama"]` answered this WRONG,
+    /// because keylessness was a membership test on an id rather than the
+    /// core's verdict on the provider. It would have demanded a key for a
+    /// provider that has none to give and refused to arm at all.
+    ///
+    /// A stub catalog owns the shapes so this is a leg about the DERIVATION,
+    /// not about which providers the linked core ships today.
+    func testANonOllamaKeylessProviderStillSendsThePlaceholder() {
+        let saved = ProviderCatalog.current
+        defer { ProviderCatalog.current = saved }
+        ProviderCatalog.current = StubCatalog(
+            rows: [ProviderRow(id: "ambient", label: "Ambient OAuth", shape: .none)])
+
+        let core = ArmingCore()
+        let reason = CoreArming.arm(commission: commissioned(provider: "ambient", model: "m1"),
+                                    core: core,
+                                    providerKey: nil,
+                                    baseURL: nil)
+
+        XCTAssertNil(reason, "a keyless provider needs no key: \(reason ?? "")")
+        XCTAssertEqual(core.setCalls.first?.key, CoreArming.ollamaKeyPlaceholder)
+        // VACUITY: the id must really be outside the retired literal, or this
+        // leg passes under the very predicate it was written to retire.
+        XCTAssertNotEqual("ambient", "ollama",
+                          "the fixture id must not be the one the old literal named")
+    }
+
+    /// The opposite arm, in the same suite: a `.key` provider is NOT keyless,
+    /// so a missing key refuses rather than silently arming the core with a
+    /// placeholder an authenticating provider would reject as a 401.
+    func testAKeyedProviderIsNotKeylessAndRefusesWithoutAKey() {
+        let saved = ProviderCatalog.current
+        defer { ProviderCatalog.current = saved }
+        ProviderCatalog.current = StubCatalog(
+            rows: [ProviderRow(id: "acme", label: "Acme AI", shape: .key)])
+
+        let core = ArmingCore()
+        let reason = CoreArming.arm(commission: commissioned(provider: "acme", model: "m1"),
+                                    core: core,
+                                    providerKey: nil,
+                                    baseURL: nil)
+
+        XCTAssertEqual(reason, "NO KEY FOR Acme AI — ENTER ONE IN ROUTES")
+        XCTAssertTrue(core.setCalls.isEmpty, "refused must mean NOT ARMED")
+    }
+
+    /// `.unsupported` is deliberately not keyless. Arming it with a
+    /// placeholder would send the core a credential for a provider whose
+    /// requirements this build does not know — the shape's whole meaning is
+    /// that the app cannot collect for it.
+    func testAnUnsupportedProviderIsNotTreatedAsKeyless() {
+        XCTAssertFalse(CoreArming.usesKeyPlaceholder(.unsupported(reason: "needs a service account")))
+        // POS control in the same invocation: the predicate does answer true
+        // for something, so the false above is a verdict and not a stuck no.
+        XCTAssertTrue(CoreArming.usesKeyPlaceholder(.none))
+        XCTAssertTrue(CoreArming.usesKeyPlaceholder(.url))
+        XCTAssertFalse(CoreArming.usesKeyPlaceholder(.key))
+    }
+
+    /// The literal is gone from CODE lines. Comments are excluded because the
+    /// doc comment on `usesKeyPlaceholder` NAMES the retired symbol to explain
+    /// what it replaced — a whole-file needle would hit my own explanation of
+    /// the deletion.
+    func testTheKeylessProviderListIsRetiredFromCodeLines() throws {
+        let body = try sourceFile("ProviderArming.swift")
+        let code = body.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                let t = line.trimmingCharacters(in: .whitespaces)
+                return (t.hasPrefix("///") || t.hasPrefix("//")) ? "" : String(line)
+            }
+            .joined(separator: "\n")
+
+        XCTAssertEqual(occurrences(of: "keylessProviders", in: code), 0,
+                       "the hardcoded provider list must not survive on code lines")
+        XCTAssertEqual(occurrences(of: "\"ollama\"", in: code), 0,
+                       "no provider id literal decides keylessness any more")
+        // POS control: the filter did not simply blank the file.
+        XCTAssertGreaterThan(occurrences(of: "usesKeyPlaceholder", in: code), 0,
+                             "VOID: the code-line filter removed everything, so both zeros above are about my needle")
+    }
+
     /// UNARMED ≠ UNREACHABLE — two distinct strings, an equality leg on each.
     /// A single "something went wrong" for both is how an operator restarts
     /// the app to fix a daemon that is not running.
