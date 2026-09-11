@@ -231,6 +231,111 @@ default in production; tests inject it through the same `LaunchArgs` seam.
 
 ---
 
+## The agent loop (C2) — what to type, and what to look for
+
+The phone no longer just streams a reply. `send` builds a real `Agent` and runs
+it, so the model can call tools, and what it does is visible in the transcript
+rather than hidden behind a pause.
+
+**THIS IS THE ONE THING ON THIS BRANCH NO TEST HAS PROVEN.** Every leg in the
+suite — 529 of them — measures *shape*: the policy object holds five names, the
+guard refuses a path, the transcript renders a row. **None of them has driven a
+live model through a real tool call**, because the only Swift route into the
+tool layer is a model choosing a tool, and a network call inside a unit suite is
+a flake wearing a test's name (see `WorkspaceRootTests`, which says so in its
+own header). The run verification is a HUMAN OBSERVATION ON THE PHONE. It is
+this section.
+
+### Arm a provider first
+
+ROUTES → pick a provider → paste a key → the row goes live. With no armed
+provider the loop cannot run and you will see the `describe()` sentence for
+whichever state you are in — `NO PROVIDER…` or, for Ollama with no host,
+`OLLAMA NEEDS A BASE URL — SET ONE IN ROUTES`.
+
+### What to type
+
+In SESSION, type something that **cannot be answered from the model's own
+weights** — that is what forces a tool call. A general question gets a general
+answer and proves nothing.
+
+```
+what files are in my workspace?
+```
+
+```
+read AGENTS.md and tell me the first line
+```
+
+```
+make a file called notes.txt containing the word kestrel
+```
+
+### What to look for
+
+**A tool marker.** A tool call renders as its own line, the tool's name
+uppercased in square brackets:
+
+```
+[LIST_DIR]
+```
+
+`[READ_FILE]`, `[WRITE_FILE]`, `[EDIT_FILE]`, `[WEB_FETCH]` are the other four.
+Five names are allowed and **nothing else is** — `shell`, `spawn`,
+`python_exec` and `message` are denied on the phone (`PHONE_DENIED`,
+`lib.rs:593`). The allow-list is the fail-closed half: a tool that is neither
+allowed nor named in the deny list is still refused. The marker exists because a tool call takes
+seconds and a silent pause reads as a hang.
+
+**The answer must USE the tool's result.** This is the arm worth watching. A
+marker followed by a generic answer means the loop called the tool and ignored
+what came back — which looks like success and is not. Ask for the first line of
+a file you know, and check the reply against the file.
+
+**Then check the write landed.** After the third prompt, MEMORY SEARCH on NODES
+for `kestrel` should find `notes.txt`. That closes the loop end to end: the
+model wrote a file, into the root the guard confines, into the index the search
+reads. One root, or that search is empty.
+
+### What a refusal looks like
+
+Ask for something outside the workspace:
+
+```
+read the file /etc/hosts
+```
+
+Expect the tool to be **called and refused** — the marker appears, and the
+model reports it could not read the file, citing a security policy. That is the
+workspace-root guard (`5ec2c557`), and it is the FIRST wall; the iOS sandbox is
+the second. Both walls matter because the simulator does not enforce the second
+one, and every frame we shoot is a simulator frame.
+
+### Where sessions appear
+
+Every turn now persists. SESSIONS lists them newest first — empty reads
+`NO SESSIONS YET`, which is the honest state, not a bug, until you have sent
+something. Tap a row for the transcript: user and assistant rows, and tool rows
+rendered as the same `[NAME]` marker.
+
+One known cosmetic gap, stated so you do not report it as a defect: a REPLAYED
+tool row reads `[TOOL]`, not `[READ_FILE]`. The stored message does not carry
+the tool's name — the live pump has it, the transcript record does not. Same
+shape, not the same word; a `tool_name` field on `TurnMessage` closes it in a
+later cut.
+
+### If it does nothing
+
+- **No marker, generic answer** — the model did not choose a tool. Re-ask with
+  a prompt that names a file. Small models often need the nudge.
+- **`NO SESSIONS YET` after sending** — the turn did not persist; the send
+  errored before the loop returned. Check the transcript for an error bubble.
+- **MEMORY SEARCH finds nothing after a write** — the index is a snapshot
+  refreshed on `remember` and on launch; relaunch and search again before
+  concluding the write failed.
+
+---
+
 ## What has and has not been proven
 
 Stated plainly, because the alternative is you budgeting an hour against a path
@@ -243,6 +348,13 @@ that has never completed.
 - The archive step is **reached** with valid-looking env.
 - Path 0 (simulator) — this is what the whole test suite and every screenshot
   on this branch run against.
+
+**Shape-verified but NOT run-verified — the agent loop (C2):** the policy, the
+path guard, the persistence wiring and the transcript rendering all have legs
+(529 tests, 0 failures; `cargo test --lib` 24/24 in the bridge). **No live
+model has executed a tool call in this app.** The section above is how a human
+proves it on a phone, and until someone does, "the loop works" is a claim about
+shape only.
 
 ### Before anything: are you in a GUI session?
 
