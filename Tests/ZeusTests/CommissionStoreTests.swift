@@ -266,8 +266,16 @@ final class ManagedDeferralTests: XCTestCase {
         // 0 forever. Widened to the call, not the exact argument list.
         XCTAssertTrue(src.contains("commission.recordRoutesChoice(providerID:"),
                       "the routes CTA must write the choice, not leave provider nil")
-        XCTAssertTrue(src.contains("CoreArming.firstModel("),
-                      "the model must come from the provider at the step, never from a literal")
+        // NEEDLE MOVED WITH THE CUT, AND THE OLD ONE WOULD HAVE FAILED LOUDLY
+        // — which is the whole point of anchoring on a symbol rather than on
+        // prose. `firstModel` was a one-shot probe on row tap; the screen now
+        // polls, so the symbol that must be present is the poll's entry point.
+        // The invariant is unchanged: the model comes from the provider, and
+        // no literal model name may appear in this file.
+        XCTAssertTrue(src.contains("core.listModels(id: row.id"),
+                      "the model list must come from the provider at the step, never from a literal")
+        XCTAssertTrue(src.contains("CoreArming.probeKey("),
+                      "the listing key must come from the one rule, not a second spelling")
     }
 
     /// THE FILE NAMES NO PROVIDER AT ALL, AND THE INVARIANT IS NOW ZERO.

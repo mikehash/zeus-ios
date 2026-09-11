@@ -168,12 +168,24 @@ enum CoreArming {
                            key: String?,
                            baseURL: String?) -> String? {
         guard let core else { return nil }
-        let probeKey = usesKeyPlaceholder(ProviderCatalog.current.shape(for: id))
-            ? ollamaKeyPlaceholder
-            : (key ?? "")
-        guard let models = try? core.listModels(id: id, key: probeKey, baseUrl: baseURL) else {
+        guard let models = try? core.listModels(id: id,
+                                                key: probeKey(for: id, typed: key),
+                                                baseUrl: baseURL) else {
             return nil
         }
         return models.first
+    }
+
+    /// The key a LISTING call should carry for this provider.
+    ///
+    /// Extracted from `firstModel` when the commissioning screen grew a
+    /// polling picker and became a second caller. Two call sites computing a
+    /// placeholder independently is the `keylessProviders` literal all over
+    /// again: one source of the rule, or the two spellings drift and only one
+    /// of them reaches the bridge's keyless arm.
+    static func probeKey(for id: String, typed: String?) -> String {
+        usesKeyPlaceholder(ProviderCatalog.current.shape(for: id))
+            ? ollamaKeyPlaceholder
+            : (typed ?? "")
     }
 }

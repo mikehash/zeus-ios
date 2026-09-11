@@ -482,16 +482,29 @@ struct CommissioningView: View {
     /// remain distinguishable in the stored record.
     @State private var providerPick: String? = nil
 
-    /// The model the operator TYPED. Required for every shape.
+    /// The model, TYPED or PICKED. Required for every shape.
     ///
-    /// There is no default literal and no guess. `list_models` is Ollama-only
-    /// by construction (`lib.rs:236` returns `Unsupported` for every other
-    /// prefix), so a picker that relied on `firstModel` would leave 21 of 26
-    /// providers unable ever to arm — `NO MODEL — <label> LISTED NONE` on
-    /// every install. The field is the collectable half; the KEY field beside
-    /// it is not collectable until the provider-scoped keychain lands, and the
-    /// screen shows those as two states rather than averaging them into one.
+    /// There is no default literal and no guess. The field is always present
+    /// and never replaced by the picker: `list_models` now delegates to
+    /// `zeus_llm::fetch_models`, but only 13 of the crate's arms have a live
+    /// catalog, and the bridge folds the other ids to `Unsupported`. A screen
+    /// that showed ONLY a list would leave those providers unarmable, which
+    /// is the same defect the Ollama-only era had in a different costume. The
+    /// list is an accelerator over the field, not a replacement for it.
     @State private var modelText: String = ""
+
+    /// The catalog poll for the selected provider.
+    ///
+    /// Lives in the view because it is per-screen UI state, but every rule
+    /// about it — which response wins, what an empty list means — is in
+    /// `ModelPoll`, where it is testable without a view target.
+    @State private var modelPoll = ModelPoll()
+
+    /// The debounce task for key entry. Cancelled on every keystroke, so a
+    /// paste that arrives one character at a time fires ONE request rather
+    /// than one per character — each of which would be a live HTTP call from
+    /// the operator's phone against a key that is not yet complete.
+    @State private var pollTask: Task<Void, Never>? = nil
 
     /// The key the operator is typing, held in the view and NEVER in the
     /// record. `Commission` rides in `UserDefaults` precisely because it
@@ -929,19 +942,14 @@ struct CommissioningView: View {
                             }
                             providerPick = row.id
                             commission.route = .byok
-                            // THE PROBE GETS THE SAME URL THE ARM WILL.
-                            // `list_models` is Ollama-only in v1, so this is
-                            // the one call that reaches a `.url` provider —
-                            // passing nil here sends it to the bridge's
-                            // localhost fallback, which on a phone is the
-                            // phone, and the row then reads
-                            // `Ollama LISTED NONE` for a rig answering fine.
-                            let typedURL = baseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
-                            modelText = CoreArming.firstModel(
-                                for: row.id,
-                                core: try? EmbeddedCore.shared.get(),
-                                key: nil,
-                                baseURL: typedURL.isEmpty ? nil : typedURL) ?? ""
+                            // The typed model does not survive a provider
+                            // switch: `gpt-4o` under Anthropic is a name no
+                            // provider serves, and the CTA would happily
+                            // write it.
+                            modelText = ""
+                            pollTask?.cancel()
+                            modelPoll.reset()
+                            startPoll(for: row)
                         }
                     }
                     }
@@ -968,6 +976,55 @@ struct CommissioningView: View {
                         )
                 )
                 .accessibilityLabel("Model for \(selected.label)")
+
+                // THE LIST IS AN ACCELERATOR OVER THE FIELD, NEVER A
+                // REPLACEMENT. It appears only in `.listed`, and tapping a row
+                // fills the same `modelText` the operator could have typed —
+                // so there is exactly ONE value the CTA reads, and "picked"
+                // and "typed" cannot drift into two sources.
+                if !modelPoll.offeredModels.isEmpty {
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(modelPoll.offeredModels, id: \.self) { name in
+                                Button {
+                                    modelText = name
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Text(name)
+                                            .font(Theme.mono(11))
+                                            .foregroundStyle(name == modelText
+                                                             ? Theme.accent
+                                                             : Theme.w(0.75))
+                                            .lineLimit(1)
+                                        Spacer(minLength: 0)
+                                        if name == modelText {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundStyle(Theme.accent)
+                                        }
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .frame(height: 34)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: Theme.barCorner)
+                                            .fill(Theme.w(name == modelText ? 0.06 : 0.02))
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Model \(name)")
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 140)
+                }
+
+                if let note = modelPoll.statusLine {
+                    Text(note)
+                        .font(Theme.mono(8.5))
+                        .tracking(1.0)
+                        .foregroundStyle(Theme.w(0.35))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 if case .key = selected.shape {
                     keyField(for: selected)
@@ -1090,6 +1147,12 @@ struct CommissioningView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled(true)
             .keyboardType(.URL)
+            // A `.url` provider's catalog is unreachable until the endpoint
+            // is typed — on a phone `localhost` is the phone, which is why
+            // the bridge refuses a nil base URL rather than defaulting.
+            .onChange(of: baseURLText) { _, _ in
+                schedulePoll(for: row)
+            }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
@@ -1110,6 +1173,82 @@ struct CommissioningView: View {
     /// `SecureField` rather than `TextField`: the value is a secret, and the
     /// difference is not cosmetic — an unmasked field is readable over a
     /// shoulder and is offered to the keyboard's learning cache.
+    // MARK: - Model catalog polling
+
+    /// Debounce window for key/endpoint entry, in nanoseconds.
+    ///
+    /// Named rather than inlined because it is a POLICY — how long the
+    /// operator may pause mid-paste before we spend a network call — and a
+    /// magic number inside a `Task.sleep` is a policy nobody can find.
+    private static let pollDebounce: UInt64 = 450_000_000
+
+    /// Cancel any pending poll and schedule a fresh one.
+    private func schedulePoll(for row: ProviderRow) {
+        pollTask?.cancel()
+        // The RESET is not cosmetic: it bumps the generation, so a request
+        // already in flight for the previous key text is stale on arrival
+        // rather than landing under the new key's name.
+        modelPoll.reset()
+        pollTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.pollDebounce)
+            if Task.isCancelled { return }
+            startPoll(for: row)
+        }
+    }
+
+    /// Ask the core for this provider's catalog, if it is askable at all.
+    ///
+    /// Returns without asking when the shape's precondition is unmet — a
+    /// `.key` provider with no key, a `.url` provider with no endpoint. That
+    /// is `.idle`, NOT `.unavailable`: "we have not asked" and "we asked and
+    /// could not get an answer" are different states, and rendering an empty
+    /// key field as `COULDN'T REACH` would blame the network for a field the
+    /// operator has simply not filled in yet.
+    private func startPoll(for row: ProviderRow) {
+        let key = keyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = baseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if case .key = row.shape, key.isEmpty {
+            modelPoll.reset()
+            return
+        }
+        if case .url = row.shape, url.isEmpty {
+            modelPoll.reset()
+            return
+        }
+        if case .unsupported = row.shape {
+            modelPoll.reset()
+            return
+        }
+        guard let core = try? EmbeddedCore.shared.get() else {
+            modelPoll.reset()
+            return
+        }
+        let token = modelPoll.begin()
+        let probeKey = CoreArming.probeKey(for: row.id, typed: key)
+        let baseURL = url.isEmpty ? nil : url
+        Task { @MainActor in
+            // `listModels` is a BLOCKING FFI call — it drives a Tokio runtime
+            // inside the bridge and returns when the HTTP round trip does.
+            // Running it on the main actor would freeze the screen for the
+            // length of the request, which is exactly the interval
+            // `FETCHING MODELS…` exists to make visible rather than to make
+            // felt.
+            let result: Result<[String], Error> = await Task.detached(priority: .userInitiated) {
+                do { return .success(try core.listModels(id: row.id, key: probeKey, baseUrl: baseURL)) }
+                catch { return .failure(error) }
+            }.value
+            modelPoll.accept(result, generation: token, label: row.label)
+            // A SINGLE-MODEL CATALOG FILLS THE FIELD; a multi-model one does
+            // not. Choosing for the operator when there is a choice is how a
+            // picker silently repoints a route — the defect `Route.swift:284`
+            // names one file over.
+            if case let .listed(models) = modelPoll.state,
+               models.count == 1, modelText.isEmpty {
+                modelText = models[0]
+            }
+        }
+    }
+
     private func keyField(for row: ProviderRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("API KEY")
@@ -1123,6 +1262,13 @@ struct CommissioningView: View {
             .foregroundStyle(Theme.text)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
+            // THE KEY IS WHAT MAKES THE CATALOG ASKABLE, so entering it is
+            // what triggers the poll. Debounced because a paste arrives as a
+            // sequence of changes and each one would otherwise be a live HTTP
+            // call from the phone against an incomplete key.
+            .onChange(of: keyText) { _, _ in
+                schedulePoll(for: row)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
