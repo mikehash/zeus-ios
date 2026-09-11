@@ -1497,12 +1497,16 @@ mod tests {
 
     #[test]
     fn live_catalog_arms_match_the_crate() {
-        let rev = env!("CARGO_PKG_NAME"); // placeholder; the pin is read below
-        let _ = rev;
-        let home = match std::env::var("HOME") {
-            Ok(h) => h,
-            Err(_) => return,
-        };
+        // HOME's absence is a FAILURE, not a skip. This leg is a drift
+        // detector; a detector that cannot fail on a box where it cannot look
+        // is not one, and the `return` that used to sit here made a fresh CI
+        // machine — exactly the box most likely to carry a moved pin — the
+        // one place the mirror was never checked.
+        let home = std::env::var("HOME").expect(
+            "HOME must be set to locate the zeus-llm checkout; without it this \
+             drift detector cannot run, and silently passing would report \
+             'the mirror matches' on a box that never opened the crate",
+        );
         // The pin, read from THIS crate's manifest rather than retyped: a
         // hardcoded sha here would be a third copy of the same fact.
         let manifest = include_str!("../Cargo.toml");
@@ -1534,10 +1538,19 @@ mod tests {
                 }
             }
         }
-        let Some(source) = source else {
-            eprintln!("SKIP live_catalog_arms_match_the_crate: no checkout for {short}");
-            return;
-        };
+        // Same reasoning as HOME: a missing checkout is a failure. `cargo test`
+        // has by definition resolved this exact pin to compile the crate under
+        // test, so the checkout's absence means the search is wrong, not that
+        // the source is unavailable — and a search that silently passes when
+        // it finds nothing is indistinguishable from one that finds agreement.
+        let source = source.unwrap_or_else(|| {
+            panic!(
+                "no zeus-llm checkout for pin {short} under {}: cargo resolved \
+                 this pin to build the crate, so it is on disk somewhere; this \
+                 leg cannot report agreement it never measured",
+                base.display()
+            )
+        });
 
         // A POSITIVE CONTROL on the parse itself. If the match-arm shape ever
         // changes, this derivation yields an empty set and the comparison
