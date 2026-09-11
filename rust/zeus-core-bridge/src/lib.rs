@@ -271,17 +271,37 @@ impl ZeusCore {
 
     /// The models `id` can serve, asked of the provider rather than hardcoded.
     ///
-    /// v1 answers for `ollama` only, via `OllamaClient::list_models`
-    /// (zeus-llm/ollama.rs:171), because it is the one provider whose catalogue
-    /// is a property of the operator's own machine — every other provider's
-    /// list is a published constant that belongs in a picker, not in a network
-    /// call. The rest return `Unsupported` with the prefix named, so a caller
-    /// gets a typed refusal instead of an empty `Vec` that reads exactly like
-    /// "this provider has no models".
+    /// v1 answered for `ollama` ONLY, and the doc here said every other
+    /// provider's list "is a published constant that belongs in a picker".
+    /// That was true of the substrate it was written against and is no longer:
+    /// `2d5775ee` moved the TUI's live fetcher into zeus-llm as
+    /// `model_catalog::fetch_models`, and the pin ALREADY LINKS IT — 13 live
+    /// arms (anthropic, openai, google, groq, openrouter, glm, mimo, kimi,
+    /// qwen, xai, sakana, glm-coding, ollama), `reqwest` already that crate's
+    /// dependency. So the refusal was a policy, not a limit, and the operator
+    /// asked for the policy to change.
     ///
-    /// `base_url` is honoured directly here (the Ollama client takes one at
-    /// construction, unlike `LlmClient`), so this call does NOT touch the
-    /// process environment.
+    /// THREE OUTCOMES, KEPT DISTINCT — the whole point of the surface:
+    ///   - unknown prefix          → `Core`, naming the id (nobody can look)
+    ///   - a live arm with no rows → `Ok(vec![])` (we looked, there is nothing)
+    ///   - transport/401/`_ =>`    → `Unsupported`, carrying the crate's own
+    ///     sentence (we could not look)
+    ///
+    /// The crate's fallthrough `_ => Ok(vec![])` at model_catalog.rs:522 is
+    /// folded to `Unsupported` HERE and nowhere else: for the 13 unlisted
+    /// prefixes it means "no standard models endpoint", which renders in a
+    /// picker exactly like "this provider has no models" — the confusion the
+    /// original doc named, arriving from the other direction. It is
+    /// discriminated by arm membership, not by the empty vec, because an arm
+    /// that legitimately returns zero rows must stay `Ok`.
+    ///
+    /// `base_url` remains an OLLAMA-ONLY input and the ollama arm does not
+    /// delegate. `fetch_models` reads base URLs from `std::env::var` (12
+    /// sites); a phone has no process environment the operator can set, so the
+    /// one URL that cannot be defaulted — his own machine's — would be
+    /// silently dropped by delegation. The cloud arms' env reads are
+    /// overrides whose defaults are the real public endpoints, so they are
+    /// correct unset. Parameterising them is a zeus-core cut, not this one.
     pub fn list_models(
         self: Arc<Self>,
         id: String,
@@ -290,7 +310,16 @@ impl ZeusCore {
     ) -> Result<Vec<String>, BridgeError> {
         let provider = resolve_provider(&id)?;
         if provider != Provider::Ollama {
-            return Err(BridgeError::Unsupported(id));
+            let models = self
+                .rt
+                .block_on(async { zeus_llm::fetch_models(&id, &key).await })
+                .map_err(|e| {
+                    // The crate's own sentence, not a summary of it: a 401
+                    // says which key was refused and by whom, and a rewrite
+                    // here would name the wrong subject.
+                    BridgeError::Unsupported(e)
+                })?;
+            return classify_catalog_result(&id, provider.name(), models);
         }
         // The literal is gone. `unwrap_or(OLLAMA_DEFAULT_URL)` turned an absent
         // URL into `localhost:11434`, and on a phone THAT LOOPBACK IS THE PHONE
@@ -581,6 +610,56 @@ impl ZeusCore {
 /// RETURNS, not what this crate DOES with it. Inside an `#[uniffi::export]`
 /// method taking `Arc<Self>`, the call site was unreachable without a live
 /// workspace. As a free function it is directly guarded below.
+/// Fold the crate's two identical-looking empties into two different answers.
+///
+/// Extracted from `list_models` for one reason, and it is a testability
+/// reason rather than a tidiness one: the fold's ONLY input that varies is an
+/// empty `Vec` from a live arm, and a live arm requires the network. Inlined,
+/// the branch was unreachable from any hermetic leg — a mutation deleting it
+/// left the suite fully green, which I measured rather than assumed. A free
+/// function takes the vector directly, so the decision is guardable without a
+/// socket while the call site keeps exactly one expression.
+fn classify_catalog_result(
+    id: &str,
+    name: &str,
+    models: Vec<String>,
+) -> Result<Vec<String>, BridgeError> {
+    if models.is_empty() && !PREFIXES_WITH_A_LIVE_CATALOG.contains(&name) {
+        // Not "the list is empty" — "this crate has no arm for you".
+        return Err(BridgeError::Unsupported(format!(
+            "{id} has no live model catalog — type a model name"
+        )));
+    }
+    Ok(models)
+}
+
+/// The prefixes `zeus_llm::fetch_models` has a LIVE ARM for, at the pinned sha.
+///
+/// This exists to discriminate the crate's two identical-looking `Ok(vec![])`
+/// returns: an arm that queried and got nothing, versus the `_ => Ok(vec![])`
+/// fallthrough at model_catalog.rs:522 that never queried at all. The vector
+/// cannot tell them apart; only membership can.
+///
+/// It is a DUPLICATE of a fact that lives in another crate, so it is pinned by
+/// a test (`live_catalog_arms_match_the_crate`) that reads the dependency's
+/// source at the checkout and fails when the two drift. A hand-maintained
+/// mirror with no reader is how a new provider becomes silently unlistable.
+const PREFIXES_WITH_A_LIVE_CATALOG: &[&str] = &[
+    "anthropic",
+    "openai",
+    "ollama",
+    "google",
+    "groq",
+    "openrouter",
+    "glm-coding",
+    "glm",
+    "mimo",
+    "kimi",
+    "qwen",
+    "xai",
+    "sakana",
+];
+
 fn resolve_provider(id: &str) -> Result<Provider, BridgeError> {
     Provider::from_prefix(id)
         .ok_or_else(|| BridgeError::Core(format!("unrecognized provider prefix: {id}")))
@@ -1416,37 +1495,210 @@ mod tests {
         restore_ollama_host(&previous);
     }
 
-    /// `list_models` refuses non-ollama prefixes with a TYPED error naming the
-    /// prefix, and it must not be an empty `Vec` — the two render identically
-    /// in a picker. No network: the refusal happens before any request, which
-    /// is why this leg is safe to run in CI while the ollama arm is not.
     #[test]
-    fn list_models_refuses_unsupported_providers_by_type() {
-        let dir = std::env::temp_dir().join(format!("zcb-list-{}", std::process::id()));
+    fn live_catalog_arms_match_the_crate() {
+        let rev = env!("CARGO_PKG_NAME"); // placeholder; the pin is read below
+        let _ = rev;
+        let home = match std::env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        // The pin, read from THIS crate's manifest rather than retyped: a
+        // hardcoded sha here would be a third copy of the same fact.
+        let manifest = include_str!("../Cargo.toml");
+        let pin = manifest
+            .lines()
+            .find_map(|l| {
+                let l = l.trim();
+                if l.starts_with("zeus-llm") {
+                    l.split("rev = \"").nth(1)?.split('"').next()
+                } else {
+                    None
+                }
+            })
+            .expect("zeus-llm's rev must be readable from the manifest");
+        assert_eq!(pin.len(), 40, "the manifest must pin a full 40-char rev");
+
+        let short = &pin[..7];
+        let base = std::path::Path::new(&home).join(".cargo/git/checkouts");
+        let mut source: Option<String> = None;
+        if let Ok(dirs) = std::fs::read_dir(&base) {
+            for d in dirs.flatten() {
+                let candidate = d
+                    .path()
+                    .join(short)
+                    .join("crates/zeus-llm/src/model_catalog.rs");
+                if let Ok(text) = std::fs::read_to_string(&candidate) {
+                    source = Some(text);
+                    break;
+                }
+            }
+        }
+        let Some(source) = source else {
+            eprintln!("SKIP live_catalog_arms_match_the_crate: no checkout for {short}");
+            return;
+        };
+
+        // A POSITIVE CONTROL on the parse itself. If the match-arm shape ever
+        // changes, this derivation yields an empty set and the comparison
+        // below would then be measuring nothing while looking rigorous.
+        // Derivation by ARM BODY, not by arm presence — the distinction the
+        // first run of this leg taught me. `model_catalog.rs:315` is
+        // `"minimax-coding" | "qwen-coding" => Ok(vec![])`: a named arm that
+        // is semantically the FALLTHROUGH, returning empty without querying.
+        // Counting it as live would have told the phone to expect a list from
+        // a provider the crate never asks about — the exact confusion this
+        // constant exists to prevent, arriving through the instrument meant
+        // to detect it. An or-pattern also hides a second prefix behind the
+        // first, so alternatives are split rather than read as one name.
+        let mut found: Vec<String> = Vec::new();
+        let mut in_match = false;
+        for line in source.lines() {
+            if line.contains("match provider.name()") {
+                in_match = true;
+                continue;
+            }
+            if !in_match {
+                continue;
+            }
+            let t = line.trim();
+            if t.starts_with("_ =>") {
+                break;
+            }
+            let Some((head, body)) = t.split_once("=>") else {
+                continue;
+            };
+            if !head.trim_start().starts_with('"') {
+                continue;
+            }
+            // An arm whose body IS the empty vector never reaches the network.
+            if body.replace(' ', "").starts_with("Ok(vec![])") {
+                continue;
+            }
+            for alt in head.split('|') {
+                if let Some(rest) = alt.trim().strip_prefix('"') {
+                    if let Some(name) = rest.split('"').next() {
+                        found.push(name.to_string());
+                    }
+                }
+            }
+        }
+        assert!(
+            found.len() > 5,
+            "the arm parse yielded {} names — the source shape changed and this \
+             leg is no longer measuring anything",
+            found.len()
+        );
+
+        // A NEGATIVE CONTROL on the body filter. If the filter silently stops
+        // firing, the assertion above still passes and the set merely grows —
+        // so the arm that MUST be excluded is named explicitly.
+        assert!(
+            !found.iter().any(|n| n == "minimax-coding"),
+            "an arm returning Ok(vec![]) without querying is not a live catalog"
+        );
+
+        let mut mine: Vec<String> = PREFIXES_WITH_A_LIVE_CATALOG
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        mine.sort();
+        found.sort();
+        assert_eq!(
+            found, mine,
+            "the mirror has drifted from the crate: a provider gained or lost a \
+             live catalog arm upstream and the phone still believes the old set"
+        );
+    }
+
+    /// The fold turns ONE empty vector into TWO different answers, and the
+    /// discriminator is arm membership rather than the vector.
+    ///
+    /// This leg exists because a mutation proved the branch unguarded: with
+    /// the fold deleted the whole suite stayed green, since every hermetic
+    /// path refuses before reaching it. An arm that genuinely has zero models
+    /// today must stay `Ok` — folding THAT to a refusal would tell the
+    /// operator his key is bad when the catalog is merely empty.
+    #[test]
+    fn an_empty_list_means_two_different_things() {
+        // Live arm, nothing returned: we looked, there is nothing. Ok.
+        match classify_catalog_result("anthropic", "anthropic", vec![]) {
+            Ok(v) => assert!(v.is_empty(), "a live arm's empty list stays an empty list"),
+            other => panic!("a live arm returning zero models must stay Ok, got {other:?}"),
+        }
+        // No arm: the crate never queried. A typed refusal, naming the id.
+        match classify_catalog_result("minimax-coding", "minimax-coding", vec![]) {
+            Err(BridgeError::Unsupported(msg)) => assert!(
+                msg.contains("minimax-coding"),
+                "the refusal must name the id the caller passed, got {msg}"
+            ),
+            other => panic!("an armless prefix must refuse, got {other:?}"),
+        }
+        // Non-empty is never touched, whatever the membership.
+        let rows = vec!["m1".to_string()];
+        assert_eq!(
+            classify_catalog_result("minimax-coding", "minimax-coding", rows.clone()).unwrap(),
+            rows,
+            "a populated list is returned regardless of the mirror"
+        );
+        // VACUITY: the two empty cases must not be the same answer.
+        assert_ne!(
+            format!("{:?}", classify_catalog_result("anthropic", "anthropic", vec![])),
+            format!("{:?}", classify_catalog_result("minimax-coding", "minimax-coding", vec![])),
+            "one empty vector must yield two distinguishable outcomes"
+        );
+    }
+
+    /// An unknown prefix, a keyless live arm, and the ollama path stay three
+    /// DIFFERENT answers.
+    ///
+    /// The old leg asserted `anthropic` is `Unsupported`; that was the policy
+    /// and the policy changed, so the leg is rewritten rather than deleted —
+    /// what must survive is that the three outcomes do not collapse into one.
+    /// No network: the unknown-prefix arm is refused before any request, and
+    /// ollama-without-a-URL is refused at the door.
+    #[test]
+    fn the_three_listing_outcomes_stay_distinct() {
+        // ENV_LOCK, and NOT for the environment. `ZeusCore::init` installs the
+        // process-global workspace root (`set_workspace_root`), so any two
+        // init-ing legs on cargo's thread pool race for it — and the loser is
+        // the SANDBOX leg, which then writes its probe file under another
+        // test's root and fails with a message about a missing file. Measured:
+        // 3 red in 6 identical runs before this line, 0 in 6 after. The mutex
+        // is the only serialisation available for a global that has no
+        // per-instance form, and the doc above it names OLLAMA_HOST because
+        // that was the first global to need it, not the only one.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("zcb-list3-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let core = ZeusCore::init(dir.to_string_lossy().to_string()).unwrap();
 
-        match core
-            .clone()
-            .list_models("anthropic".into(), "k".into(), None)
-        {
-            Err(BridgeError::Unsupported(p)) => assert_eq!(
-                p, "anthropic",
-                "the refusal must name the prefix the caller passed"
-            ),
-            other => panic!("expected a typed Unsupported refusal, got {other:?}"),
-        }
-
-        // An unknown prefix is a DIFFERENT failure and must not be absorbed
-        // into Unsupported — resolve_provider refuses it first.
+        // 1. Nobody can look: the prefix is not a provider at all.
         match core.clone().list_models("nosuchprovider".into(), "k".into(), None) {
             Err(BridgeError::Core(msg)) => assert!(
                 msg.contains("nosuchprovider"),
-                "an unknown prefix is a Core error naming it, not Unsupported"
+                "an unknown prefix is a Core error naming it"
             ),
             other => panic!("expected Core for an unknown prefix, got {other:?}"),
         }
+
+        // 2. Ollama does NOT delegate and keeps its own refusal: base_url is
+        //    the one input the environment cannot supply on a phone.
+        match core.clone().list_models("ollama".into(), String::new(), None) {
+            Err(BridgeError::NoBaseUrl) => {}
+            other => panic!("ollama without a URL must stay NoBaseUrl, got {other:?}"),
+        }
+
+        // 3. The two refusals are not the same refusal. Without this the two
+        //    arms above could both be `Core` and read as passing.
+        let unknown = core.clone().list_models("nosuchprovider".into(), "k".into(), None);
+        let ollama = core.clone().list_models("ollama".into(), String::new(), None);
+        assert_ne!(
+            format!("{unknown:?}"),
+            format!("{ollama:?}"),
+            "the two refusals must be distinguishable by the caller"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
