@@ -1595,4 +1595,98 @@ mod tests {
         assert_eq!(policy.allowed_tools.len(), 5, "arity");
         assert_eq!(policy.denied_tools.len(), 4, "denied arity");
     }
+
+    /// D: the workspace-root guard, measured through THIS crate's production
+    /// caller of `set_workspace_root` — not through a hand-set root.
+    ///
+    /// WHY IT LIVES IN RUST AND NOT ON THE SIMULATOR. The ruled shape was a
+    /// Swift leg asserting `read_file("../x")` is refused on the phone. It has
+    /// no surface to run on: `ZeusCore` exports ten things and none executes a
+    /// tool by name, so the only Swift route into `validate_tool_path` is a
+    /// LIVE MODEL choosing `read_file`. That makes the "escape leg" a network
+    /// call inside a unit suite — non-hermetic, red on a box with no key, and
+    /// a flake wearing a test's name. This leg takes the same measurement with
+    /// no model in the loop: `ZeusCore::init` is the production caller, and
+    /// `ToolRegistry::with_defaults()` is the same registry the agent builds.
+    ///
+    /// The assertions are on the guard's OWN message, not on `is_err`. Two
+    /// different rules in `validate_tool_path` refuse `../outside.txt`: the
+    /// pre-existing traversal rule ("Path traversal denied") and the root
+    /// confinement landed as `5ec2c557` ("outside workspace root"). An
+    /// `is_err()` assertion passes under either, so it cannot see the root
+    /// guard vanish — which is exactly what the mutation arm does.
+    #[test]
+    fn workspace_root_confines_the_phone_file_tools() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let dir = std::env::temp_dir().join(format!("zcb-d-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A real file OUTSIDE the root, one level up. Its existence is the
+        // point: a refusal for "no such file" would be the right verdict for
+        // the wrong reason, and indistinguishable from the guard working.
+        let outside = dir.parent().unwrap().join(format!(
+            "zcb-d-outside-{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&outside, "secret").unwrap();
+
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).expect("init");
+        let registry = zeus_agent::tools::ToolRegistry::with_defaults();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let needle = "outside ".to_owned() + "workspace root";
+
+        // NEG 1: a relative escape.
+        let rel = format!("../{}", outside.file_name().unwrap().to_string_lossy());
+        let err = rt
+            .block_on(registry.execute("read_file", serde_json::json!({ "path": rel })))
+            .expect_err("a relative escape must be refused");
+        assert!(
+            err.to_string().contains(&needle),
+            "must be refused BY THE ROOT GUARD, got: {err}"
+        );
+
+        // NEG 2: an absolute path outside. The traversal rule cannot fire here
+        // (no `..` to pop), so this arm isolates the confinement check.
+        let abs = outside.to_string_lossy().to_string();
+        let err = rt
+            .block_on(registry.execute("read_file", serde_json::json!({ "path": abs })))
+            .expect_err("an absolute path outside the root must be refused");
+        assert!(
+            err.to_string().contains(&needle),
+            "absolute outside, got: {err}"
+        );
+
+        // POS: a path INSIDE is served, and lands on disk under the canonical
+        // root. Without this arm a guard that refuses EVERYTHING passes both
+        // negatives — the failure mode that makes the phone's file tools inert
+        // while looking maximally secure.
+        rt.block_on(registry.execute(
+            "write_file",
+            serde_json::json!({ "path": "probefile.txt", "content": "inside" }),
+        ))
+        .expect("a path inside the root must be served");
+
+        let written = core.root.join("probefile.txt");
+        assert!(written.exists(), "the served write must be on disk at {written:?}");
+        assert!(
+            written.starts_with(&core.root),
+            "and under the canonical root"
+        );
+
+        // The round trip that proves loop and index share ONE root: a fact
+        // remembered through the core is found by the core's own search.
+        core.clone()
+            .remember("dromedaryquorum is the D leg's token".to_string())
+            .expect("remember");
+        assert!(
+            !core.clone().search("dromedaryquorum".to_string()).is_empty(),
+            "a remembered fact must be findable — one root, or this is empty"
+        );
+
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

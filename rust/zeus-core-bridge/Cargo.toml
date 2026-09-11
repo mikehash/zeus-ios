@@ -70,6 +70,14 @@ anyhow = "1"
 thiserror = "2"
 chrono = "0.4"
 
+# serde_json is a DEV-dependency only: the D leg calls `ToolRegistry::execute`,
+# whose args parameter is a `serde_json::Value`, and that is the ONLY reason
+# this crate needs the name. Measured: without it the leg is rc=101 E0433, and
+# no production path in src/lib.rs touches serde_json (0 hits). Keeping it out
+# of [dependencies] keeps the shipped staticlib honest about what it links.
+[dev-dependencies]
+serde_json = "1"
+
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }
 
