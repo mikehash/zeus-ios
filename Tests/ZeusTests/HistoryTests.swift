@@ -11,9 +11,11 @@ final class HistoryTests: XCTestCase {
     private func info(_ id: String, _ ts: String) -> SessionInfo {
         SessionInfo(id: id, updatedAtRfc3339: ts)
     }
-    private func msg(_ role: String, _ content: String) -> TurnMessage {
+    private func msg(_ role: String, _ content: String,
+                     toolName: String? = nil) -> TurnMessage {
         TurnMessage(role: role, content: content,
-                    timestampRfc3339: "2026-09-11T04:00:00Z")
+                    timestampRfc3339: "2026-09-11T04:00:00Z",
+                    toolName: toolName)
     }
 
     // MARK: - the list, both arms
@@ -89,6 +91,55 @@ final class HistoryTests: XCTestCase {
         XCTAssertEqual(rows[1].text, "[TOOL]")
         // Vacuity: the tool row must not be indistinguishable from a blank.
         XCTAssertFalse(rows[1].text.isEmpty)
+    }
+
+    /// The joined name renders in the LIVE pump's vocabulary.
+    ///
+    /// The bridge now recovers the tool's name by matching the persisted
+    /// `ToolResult.call_id` against the preceding assistant turn's
+    /// `ToolCall.id` — the tool row itself has no name field. Before this,
+    /// replay said `[TOOL]` where the live reply said `[READ_FILE]`: the same
+    /// event, two spellings, which an operator reads as two different things.
+    func testAJoinedToolNameRendersAsTheLiveMarker() {
+        let rows = History.rows(from: [
+            msg("user", "read my notes"),
+            msg("assistant", ""),
+            msg("tool", "", toolName: "read_file"),
+        ])
+        XCTAssertEqual(rows.last?.text, "[READ_FILE]",
+                       "a joined name must render in the live pump's shape")
+        // Vacuity: this must DIFFER from the unnamed fallback, or the leg is
+        // satisfied by a renderer that ignores the name entirely.
+        let unnamed = History.rows(from: [msg("tool", "")])
+        XCTAssertNotEqual(rows.last?.text, unnamed.last?.text,
+                          "named and unnamed rows MUST render differently")
+    }
+
+    /// `nil` toolName — the join found no match — keeps the generic marker.
+    ///
+    /// This is the degrade path, and it is the one that must never invent a
+    /// name: a wrong tool name reads as fact, a generic marker is visibly
+    /// generic. An empty-string name is treated as no name for the same
+    /// reason — `[]` is not a marker, it is a rendering bug.
+    func testAnUnjoinedToolRowKeepsTheGenericMarker() {
+        XCTAssertEqual(History.rows(from: [msg("tool", "", toolName: nil)]).last?.text,
+                       "[TOOL]")
+        XCTAssertEqual(History.rows(from: [msg("tool", "", toolName: "")]).last?.text,
+                       "[TOOL]", "an empty name is not a name")
+        XCTAssertEqual(History.rows(from: [msg("tool", "", toolName: "   ")]).last?.text,
+                       "[TOOL]", "a whitespace name is not a name")
+    }
+
+    /// The name WINS over content when both are present.
+    ///
+    /// A tool row's content is empty by construction, so this ordering is
+    /// invisible in practice — until some other writer fills it, at which
+    /// point content-first would shadow the authoritative joined name with
+    /// whatever text happened to be in the row.
+    func testTheJoinedNameTakesPrecedenceOverRowContent() {
+        let rows = History.rows(from: [msg("tool", "stale text", toolName: "list_dir")])
+        XCTAssertEqual(rows.last?.text, "[LIST_DIR]",
+                       "the joined name is authoritative; content is the fallback")
     }
 
     /// A named tool renders in the same vocabulary the live pump emits —

@@ -118,11 +118,16 @@ pub struct SearchHit {
 /// arrive. `on_token` may be called many times, then exactly one of
 /// `on_complete` / `on_error`.
 /// One message of a persisted session, flattened for Swift.
+///
+/// `tool_name` is `Some` only for `role == "tool"` rows whose name could be
+/// RECOVERED — it is not a field the persisted row carries. See `messages()`
+/// for why this is a join and not a read.
 #[derive(uniffi::Record)]
 pub struct TurnMessage {
     pub role: String,
     pub content: String,
     pub timestamp_rfc3339: String,
+    pub tool_name: Option<String>,
 }
 
 #[uniffi::export(callback_interface)]
@@ -395,33 +400,46 @@ impl ZeusCore {
     /// session's CONTENT, so "a session list that reopens a conversation" was
     /// unbuildable regardless of UI. `Session::export_markdown` exists and is
     /// the wrong shape — it is a document, and a transcript view needs rows.
+    ///
+    /// ── Why the tool name is a JOIN and not a field read ──
+    ///
+    /// The obvious prescription is "take the name from `tool_results[0]`".
+    /// MEASURED at the pin, that is not buildable: `ToolResult` is
+    /// `{ call_id, success, output }` — THERE IS NO NAME IN IT
+    /// (`zeus-core/src/lib.rs:9492`). The name lives on `ToolCall`
+    /// `{ id, name, arguments }` (`:9485`), and `agent_loop` persists the
+    /// tool row with `tool_calls: vec![]` explicitly emptied. So the row
+    /// `messages()` returns is NAME-FREE BY CONSTRUCTION, and a `tool_name`
+    /// sourced that way would be `None` on every row — the same defect as
+    /// the retired `SearchHit::line_number`: a field no producer can fill.
+    ///
+    /// The name survives one message EARLIER. Both persist sites add the
+    /// assistant turn with `with_tool_calls(response.tool_calls.clone())`
+    /// BEFORE the tool row (`:2599`→`:2906` and `:3099`→`:3116`), and
+    /// `ToolResult::call_id` refers to `ToolCall::id`. So: carry the nearest
+    /// preceding assistant message's calls, and match on the id.
+    ///
+    /// ── The ORDERING is the invariant, and it lives in a dependency ──
+    ///
+    /// "Nearest PRECEDING assistant" is correct only because `session.add`
+    /// is called in that order at two independent sites in `zeus-agent`.
+    /// Nothing in the type system enforces it: swap those two statements at
+    /// either site and this join silently returns `None` for every row while
+    /// everything still compiles. That is why the leg set includes a
+    /// TOOL-FIRST fixture — a re-pin that reorders the writes must be
+    /// DETECTED here, not discovered as a cosmetic regression on a phone.
+    ///
+    /// Unmatched degrades to `None`. It never guesses: attributing a result
+    /// to the wrong tool is worse than the generic marker, because the
+    /// generic marker is visibly generic and a wrong name reads as fact.
     pub fn messages(self: Arc<Self>, session_id: String) -> Result<Vec<TurnMessage>, BridgeError> {
         let dir = self.sessions_dir.clone();
         self.rt.block_on(async move {
             let session = Session::load(&dir, &session_id).await?;
-            Ok(session
-                .messages
-                .iter()
-                .filter(|m| {
-                    // System messages are the persona, not the conversation.
-                    // Rendering them would show the operator a prompt he did
-                    // not write, attributed to nobody.
-                    !matches!(m.role, zeus_core::Role::System)
-                })
-                .map(|m| TurnMessage {
-                    role: match m.role {
-                        zeus_core::Role::User => "user",
-                        zeus_core::Role::Assistant => "assistant",
-                        zeus_core::Role::Tool => "tool",
-                        zeus_core::Role::System => "system",
-                    }
-                    .to_string(),
-                    content: m.content.clone(),
-                    timestamp_rfc3339: m.timestamp.to_rfc3339(),
-                })
-                .collect())
+            Ok(flatten_messages(&session.messages))
         })
     }
+
 
     /// List known sessions, newest first.
     pub fn sessions(self: Arc<Self>) -> Result<Vec<SessionInfo>, BridgeError> {
@@ -923,6 +941,64 @@ pub fn list_providers() -> Vec<ProviderInfo> {
 #[uniffi::export]
 pub fn credential_shape(id: String) -> Result<CredentialShape, BridgeError> {
     Ok(fold_shape(resolve_provider(&id)?.credential_shape()))
+}
+
+/// The role/name flattening of `messages()`, separated so it is reachable
+/// from a `#[test]` without a session file on disk. `messages()` is the
+/// production caller; this carries the whole join.
+///
+/// It is a FREE function, not an associated one: uniffi refuses associated
+/// functions inside an exported impl block — MEASURED, `error: associated
+/// functions are not currently supported`. A private helper is not part of
+/// the FFI surface, but the macro cannot know that.
+fn flatten_messages(messages: &[zeus_core::Message]) -> Vec<TurnMessage> {
+    // The nearest preceding assistant turn's calls. Reset on a user turn:
+    // a new question means any unmatched calls from the previous turn are
+    // no longer candidates, so a stale name cannot leak across turns.
+    let mut pending_calls: Vec<zeus_core::ToolCall> = Vec::new();
+    let mut out: Vec<TurnMessage> = Vec::new();
+
+    for m in messages {
+        match m.role {
+            // System messages are the persona, not the conversation.
+            // Rendering them would show the operator a prompt he did
+            // not write, attributed to nobody.
+            zeus_core::Role::System => continue,
+            zeus_core::Role::Assistant => {
+                pending_calls = m.tool_calls.clone();
+            }
+            zeus_core::Role::User => {
+                pending_calls.clear();
+            }
+            zeus_core::Role::Tool => {}
+        }
+
+        let tool_name = if matches!(m.role, zeus_core::Role::Tool) {
+            m.tool_results.first().and_then(|r| {
+                pending_calls
+                    .iter()
+                    .find(|c| c.id == r.call_id)
+                    .map(|c| c.name.clone())
+            })
+        } else {
+            None
+        };
+
+        out.push(TurnMessage {
+            role: match m.role {
+                zeus_core::Role::User => "user",
+                zeus_core::Role::Assistant => "assistant",
+                zeus_core::Role::Tool => "tool",
+                zeus_core::Role::System => "system",
+            }
+            .to_string(),
+            content: m.content.clone(),
+            timestamp_rfc3339: m.timestamp.to_rfc3339(),
+            tool_name,
+        });
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -1688,5 +1764,143 @@ mod tests {
 
         let _ = std::fs::remove_file(&outside);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ========================================================================
+    // The tool-name join (replay `[READ_FILE]` vs live `[TOOL]`)
+    // ========================================================================
+
+    /// Build a `zeus_core::Message` for the join fixtures. The timestamp is
+    /// fixed so ordering here is STATEMENT order, which is the property under
+    /// test — a clock would let two rows tie and hide a reordering.
+    /// A persisted tool row, built through the CORE'S OWN constructor rather
+    /// than a struct literal. `Message::tool` sets `content: String::new()`
+    /// and `tool_calls: vec![]` itself (`zeus-core:9483`) — the exact shape
+    /// `agent_loop` writes. A literal here would let me write a tool row the
+    /// loop never produces and then pass a test about it. (`Message` has no
+    /// `Default`, MEASURED: `the trait bound Message: Default is not
+    /// satisfied` — which is how this fixture got corrected.)
+    fn tool_row(call_id: &str) -> zeus_core::Message {
+        zeus_core::Message::tool(call_id, true, "")
+    }
+
+    /// An assistant turn carrying calls, through `with_tool_calls` — the same
+    /// builder both persist sites use (`:2599`, `:3099`).
+    fn assistant_with(calls: Vec<zeus_core::ToolCall>) -> zeus_core::Message {
+        zeus_core::Message::assistant("").with_tool_calls(calls)
+    }
+
+    fn call(id: &str, name: &str) -> zeus_core::ToolCall {
+        zeus_core::ToolCall {
+            id: id.to_string(),
+            name: name.to_string(),
+            arguments: serde_json::json!({}),
+        }
+    }
+
+    /// LEG 1 — the ordinary case: assistant-then-tool recovers the name.
+    ///
+    /// This is the leg the whole cut exists for. Note the tool row's content
+    /// is EMPTY and its `tool_calls` is EMPTY, exactly as `agent_loop`
+    /// persists it — a fixture that filled either would be testing a message
+    /// the loop never writes.
+    #[test]
+    fn a_matched_tool_row_recovers_its_name() {
+        let rows = flatten_messages(&[
+            zeus_core::Message::user("list my files"),
+            assistant_with(vec![call("c1", "read_file")]),
+            tool_row("c1"),
+        ]);
+
+        assert_eq!(rows.len(), 3, "no row may be dropped by the join");
+        assert_eq!(rows[2].role, "tool");
+        assert_eq!(
+            rows[2].tool_name.as_deref(),
+            Some("read_file"),
+            "the name lives on the PRECEDING assistant turn and must be joined \
+             through call_id -> id"
+        );
+        // The non-tool rows must stay None: a join that stamped every row
+        // would satisfy the assertion above while being wrong everywhere else.
+        assert_eq!(rows[0].tool_name, None, "a user row has no tool name");
+        assert_eq!(rows[1].tool_name, None, "an assistant row has no tool name");
+    }
+
+    /// LEG 2 — no matching `call_id` degrades, and NEVER mis-attributes.
+    ///
+    /// The assistant turn here carries a call, so the join has a candidate
+    /// available; only the id fails to match. A join that took
+    /// `pending_calls[0]` positionally instead of matching would pass leg 1
+    /// and fail here — which is the only reason this leg carries a populated
+    /// assistant turn rather than an empty one.
+    #[test]
+    fn an_unmatched_tool_row_degrades_rather_than_guessing() {
+        let rows = flatten_messages(&[
+            assistant_with(vec![call("c1", "read_file")]),
+            tool_row("MISMATCH"),
+        ]);
+
+        assert_eq!(rows[1].role, "tool");
+        assert_eq!(
+            rows[1].tool_name, None,
+            "an unmatched call_id must degrade to the generic marker; a \
+             positional guess would name the wrong tool and read as fact"
+        );
+    }
+
+    /// LEG 3 — TOOL-FIRST ordering degrades.
+    ///
+    /// This is the durable half of the set and it looks redundant until you
+    /// know why it is here: "nearest PRECEDING assistant" is correct only
+    /// because `session.add` is called assistant-then-tool at two independent
+    /// sites in a PINNED DEPENDENCY (`:2599`->`:2906`, `:3099`->`:3116`).
+    /// Nothing enforces that. A re-pin that swaps those statements breaks the
+    /// join silently and compiles perfectly. This leg is the compiler for an
+    /// invariant that otherwise lives only in a comment.
+    #[test]
+    fn a_tool_row_before_its_assistant_turn_degrades() {
+        let rows = flatten_messages(&[
+            tool_row("c1"),
+            assistant_with(vec![call("c1", "read_file")]),
+        ]);
+
+        assert_eq!(rows[0].role, "tool");
+        assert_eq!(
+            rows[0].tool_name, None,
+            "a tool row written BEFORE its assistant turn must not be named \
+             from a LATER message — if this leg reds, the dependency changed \
+             its write order and the join needs re-deriving, not patching"
+        );
+        // Vacuity guard: leg 1 and leg 3 differ only in statement order, so
+        // assert they actually disagree. If both were None the set would be
+        // green while measuring nothing.
+        let ordered = flatten_messages(&[
+            assistant_with(vec![call("c1", "read_file")]),
+            tool_row("c1"),
+        ]);
+        assert_ne!(
+            ordered[1].tool_name, rows[0].tool_name,
+            "the two orderings MUST render differently or this leg is vacuous"
+        );
+    }
+
+    /// LEG 4 — a new user turn clears the candidates.
+    ///
+    /// Without the reset, an unmatched tool row in turn 2 could be named from
+    /// turn 1's calls. Same class as the positional guess in leg 2: a stale
+    /// name is a confident lie.
+    #[test]
+    fn a_user_turn_clears_the_pending_calls() {
+        let rows = flatten_messages(&[
+            assistant_with(vec![call("c1", "read_file")]),
+            zeus_core::Message::user("next question"),
+            tool_row("c1"),
+        ]);
+
+        assert_eq!(
+            rows[2].tool_name, None,
+            "a call from BEFORE the operator's new question must not name a \
+             row after it"
+        );
     }
 }

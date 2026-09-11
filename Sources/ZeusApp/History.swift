@@ -131,10 +131,18 @@ enum History {
     /// screen would be lying about the loop that is the entire point of C2.
     ///
     /// So a tool row renders the `[NAME]` marker shape the live pump already
-    /// emits (`lib.rs:694`, `format!("\n[{}]\n", name.to_uppercase())`) and,
-    /// with no name available from a persisted row, prints `[TOOL]`. The
-    /// operator sees the same vocabulary live and on replay. When the bridge
-    /// record grows a tool-name field, this is the one function that changes.
+    /// emits (`lib.rs:694`, `format!("\n[{}]\n", name.to_uppercase())`).
+    ///
+    /// The name now ARRIVES: `TurnMessage.toolName` is the bridge's join of
+    /// `ToolResult.call_id` against the preceding assistant turn's
+    /// `ToolCall.id` — the persisted row itself has no name field, so this is
+    /// recovered, not read. It is `nil` whenever the join found no match, and
+    /// the fallback is the generic `[TOOL]`, NEVER a guess: a wrong tool name
+    /// reads as fact, while a generic marker is visibly generic.
+    ///
+    /// Precedence is name-then-content. A tool row's content is empty by
+    /// construction, so the content branch survives only for rows some other
+    /// writer may have filled — it must not shadow the joined name.
     ///
     /// System messages never arrive — the bridge already filters them
     /// (`lib.rs:409`, "the persona, not the conversation") — so this maps the
@@ -155,8 +163,16 @@ enum History {
                 // NOT gated on emptiness — empty is the NORMAL shape here,
                 // per the walk above. Gating it would delete every tool row
                 // the loop has ever written.
-                out.append(Row(id: out.count, kind: .tool,
-                               text: text.isEmpty ? "[TOOL]" : "[\(text.uppercased())]"))
+                let marker: String
+                if let name = m.toolName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !name.isEmpty {
+                    marker = "[\(name.uppercased())]"
+                } else if !text.isEmpty {
+                    marker = "[\(text.uppercased())]"
+                } else {
+                    marker = "[TOOL]"
+                }
+                out.append(Row(id: out.count, kind: .tool, text: marker))
             default:
                 continue
             }
