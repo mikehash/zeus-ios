@@ -46,6 +46,79 @@ final class HistoryTests: XCTestCase {
         XCTAssertNotEqual(out.map(\.id), [older.id, newer.id])
     }
 
+    // MARK: - the four legs of the index-decorated comparator
+
+    /// LEG 1 — the remote path. Every key is `nil` (the gateway's
+    /// `GET /v1/sessions` emits `created` and no `updated`, so the conformer
+    /// has no honest key to send) and the `created` values are SHUFFLED, so a
+    /// comparator that quietly fell back to creation time would be caught too.
+    /// Ids are deliberately in REVERSE alphabetical order: under the arm this
+    /// replaces (`a.id < b.id`) the list would come back re-sorted, which is
+    /// the whole defect — server order is what the screen claims.
+    func testARemoteListWithNoKeysRendersInServerOrder() {
+        let server = [info("zeta",  ""),
+                      info("mid",   ""),
+                      info("alpha", "")]
+        let out = History.newestFirst(server)
+        XCTAssertEqual(out.map(\.id), ["zeta", "mid", "alpha"])
+        // Vacuity: server order and alphabetical order must be DIFFERENT
+        // orders here, or this leg would pass under the id tiebreak it exists
+        // to refuse.
+        XCTAssertNotEqual(server.map(\.id), server.map(\.id).sorted())
+    }
+
+    /// LEG 2 — the embedded path, stated as its own leg because it is a
+    /// BEHAVIOUR CHANGE and not an accident: two unparseable local rows used
+    /// to come back alphabetical and now come back in file order. Alphabetical
+    /// was the costume defect `History.swift`'s own note names, so this is an
+    /// improvement; naming it here keeps a future reader from "fixing" it back.
+    func testTwoUnparseableLocalRowsKeepInputOrder() {
+        let out = History.newestFirst([info("zzz-written-first", "garbage"),
+                                       info("aaa-written-second", "not-a-date")])
+        XCTAssertEqual(out.map(\.id), ["zzz-written-first", "aaa-written-second"])
+    }
+
+    /// LEG 3 — mixed. Parsed rows sort newest-first ABOVE; unparsed rows sink
+    /// below and hold input order among themselves. The unparsed pair is
+    /// interleaved with the parsed pair in the input precisely so that "sinks
+    /// below" and "keeps input order" are two separate facts this leg reads.
+    func testParsedRowsSortAboveUnparsedWhichKeepInputOrder() {
+        let out = History.newestFirst([info("old",       "2026-09-11T04:00:00Z"),
+                                       info("junk-first", "garbage"),
+                                       info("new",       "2026-09-11T06:00:00Z"),
+                                       info("junk-second", "")])
+        XCTAssertEqual(out.map(\.id), ["new", "old", "junk-first", "junk-second"])
+    }
+
+    /// LEG 4 — the ordering is a STRICT WEAK ORDERING, which the ruling's
+    /// literal wording ("any pair without two parsed keys orders by index")
+    /// is not. Counterexample it would have shipped: A(idx 0, old),
+    /// B(idx 1, nil), C(idx 2, new) — A<B by index, B<C by index, C<A by
+    /// date, a cycle, and `sorted(by:)` with a non-SWO predicate is
+    /// UNDEFINED BEHAVIOUR, not merely a wrong order. This leg asserts the
+    /// property directly on the shape that produced the cycle rather than
+    /// trusting that one sorted output looked right.
+    func testTheComparatorIsAStrictWeakOrdering() {
+        let cyclic = [info("A-old",  "2026-09-11T04:00:00Z"),
+                      info("B-nil",  "garbage"),
+                      info("C-new",  "2026-09-11T06:00:00Z")]
+        // The parsed pair ranks by time; the unparsed row sinks below BOTH,
+        // never between them — which is what having no cycle means here.
+        XCTAssertEqual(History.newestFirst(cyclic).map(\.id),
+                       ["C-new", "A-old", "B-nil"])
+        // And the property is order-independent: every input permutation of
+        // the same rows must yield the same answer. A non-SWO comparator does
+        // not guarantee that, and this is the assertion the index-in-every-arm
+        // form fails.
+        let permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2],
+                            [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+        for p in permutations {
+            XCTAssertEqual(History.newestFirst(p.map { cyclic[$0] }).map(\.id),
+                           ["C-new", "A-old", "B-nil"],
+                           "permutation \(p) disagreed")
+        }
+    }
+
     /// The fractional-seconds arm. `chrono::to_rfc3339()` emits nanoseconds;
     /// a default `ISO8601DateFormatter` refuses that string, and every row
     /// would have fallen to the id tiebreak while LOOKING sorted.

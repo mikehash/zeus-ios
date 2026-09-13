@@ -36,29 +36,56 @@ enum History {
         return n == 1 ? "1 SESSION" : "\(n) SESSIONS"
     }
 
-    /// Newest first.
+    /// Newest first, and INPUT ORDER for everything the key cannot rank.
     ///
     /// The core's `Session::list` yields `(id, updated_at)` and its doc says
     /// newest first — this re-sorts anyway, and the redundancy is deliberate:
     /// the order is a PROPERTY OF THIS SCREEN, and a core that changes its
     /// mind about ordering must not silently reorder the operator's history.
-    /// The sort key is the parsed date; ids sort lexically and a lexical sort
-    /// over ids is an ordering by NAME wearing the costume of an ordering by
-    /// time.
+    ///
+    /// ── Why the id tiebreak had to go, measured at `db19e4f0` ─────────────
+    ///
+    /// The arm this replaces was `case (nil, nil): return a.id < b.id` — a
+    /// LEXICAL SORT OVER IDS, which is verbatim the costume defect the note
+    /// below names: an ordering by NAME wearing the costume of an ordering by
+    /// time. It was harmless while it fired for a stray unparseable row among
+    /// parseable ones. The gateway conformer returns `nil` for EVERY row
+    /// (`GET /v1/sessions` emits `created` and no `updated`, so there is no
+    /// honest key to send), and an arm that is a rare tiebreak becomes the
+    /// PRIMARY SORT the moment every input reaches it. A fallback's behaviour
+    /// is a function of how many inputs reach it.
+    ///
+    /// Nor does declining to order preserve input order: `sorted(by:)` is
+    /// documented as NOT guaranteed stable, so a comparator returning `false`
+    /// for every pair still licenses any permutation. Input order has to be
+    /// SAID, which is what the decorated index says.
+    ///
+    /// ── Why the index is in the (nil, nil) arm only ───────────────────────
+    ///
+    /// "Any pair without two parsed keys orders by index" is NOT a strict weak
+    /// ordering and Swift's `sorted(by:)` has undefined behaviour when given
+    /// one. Measured counterexample — A(idx 0, old), B(idx 1, nil),
+    /// C(idx 2, new): A<B by index, B<C by index, C<A by date. A cycle. The
+    /// sink arms must stay: an unparsed row loses to every parsed row, and the
+    /// index decides only between two unparsed rows.
     static func newestFirst(_ sessions: [SessionInfo]) -> [SessionInfo] {
-        sessions.sorted { a, b in
-            let da = parse(a.updatedAtRfc3339)
-            let db = parse(b.updatedAtRfc3339)
-            switch (da, db) {
-            case let (x?, y?): return x > y
-            // An unparseable timestamp sinks rather than sorting as
-            // `.distantPast`-equal-to-everything: it keeps a stable place
-            // instead of jostling with its neighbours on every render.
-            case (nil, _?):    return false
-            case (_?, nil):    return true
-            case (nil, nil):   return a.id < b.id
+        sessions.enumerated()
+            .map { (index: $0.offset, key: parse($0.element.updatedAtRfc3339), row: $0.element) }
+            .sorted { a, b in
+                switch (a.key, b.key) {
+                case let (x?, y?): return x > y
+                // An unparseable timestamp sinks rather than sorting as
+                // `.distantPast`-equal-to-everything: it keeps a stable place
+                // instead of jostling with its neighbours on every render.
+                case (nil, _?):    return false
+                case (_?, nil):    return true
+                // Both unrankable: the order they ARRIVED in. Server order on
+                // the gateway path, file order on the embedded path — never a
+                // fabricated one.
+                case (nil, nil):   return a.index < b.index
+                }
             }
-        }
+            .map(\.row)
     }
 
     /// RFC3339 with fractional seconds tolerated.
