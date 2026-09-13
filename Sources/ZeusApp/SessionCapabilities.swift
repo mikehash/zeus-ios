@@ -63,7 +63,12 @@ protocol SessionCapabilities: Sendable {
     /// protocol was created to hold is the same one here: a string on disk and
     /// an armed backend are different facts, and the UI once showed READY on
     /// the first while sending on the second.
-    func hasProvider() -> Bool
+    ///
+    /// ASYNC THROWS: the gateway conformer would have to block a URLSession
+    /// call behind a semaphore to satisfy a synchronous form, and that
+    /// deadlocks the cooperative pool. The knock-on is the point — `resolve`
+    /// can no longer call it, so the record cannot promote itself to READY.
+    func hasProvider() async throws -> Bool
 
     /// Number of files in the memory index. `nil` is NOT the empty index.
     ///
@@ -150,7 +155,7 @@ struct EmbeddedCapabilities: SessionCapabilities, @unchecked Sendable {
     /// that inventing one is wrong.
     let core: ZeusCoreProtocol
 
-    func hasProvider() -> Bool { core.hasProvider() }
+    func hasProvider() async throws -> Bool { core.hasProvider() }
 
     /// Non-optional on the bridge, optional here. The widening is deliberate:
     /// the gateway conformer CAN fail to read a size (`/v1/memory/files` can

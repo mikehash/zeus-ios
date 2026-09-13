@@ -125,7 +125,10 @@ final class ForkStepTests: XCTestCase {
         XCTAssertNil(c.deployment)
         XCTAssertNil(c.gatewayURL)
         let r = GatewayConfig.resolve(from: [:], store: InMemoryCommissionStore(seed: c))
-        XCTAssertEqual(r.config, .local(.ready))
+        // `.checking`, not `.ready`: a legacy record still resolves LOCAL — which
+        // is this leg's subject — but the record cannot promote itself to a
+        // claim about the core. `withCoreReadiness` owns that arm now.
+        XCTAssertEqual(r.config, .local(.checking))
         XCTAssertEqual(r.source, .commission)
     }
 

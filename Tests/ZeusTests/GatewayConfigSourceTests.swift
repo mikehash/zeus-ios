@@ -283,12 +283,32 @@ final class GatewayConfigSourceTests: XCTestCase {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") }
         }
+        // THREE ASSIGNMENT SITES, EACH PINNED BY ITS FORM — the count alone
+        // would now admit a swap. The three are: the appearance read, the
+        // save-invalidation (which must precede its re-read), and the save's
+        // re-read itself.
         let adopts = code(rootView).filter { $0.contains("configSource.adopt(") }
-        XCTAssertEqual(adopts.count, 1, "exactly ONE assignment site: the re-resolve after SAVE")
-        XCTAssertTrue(adopts[0].contains("RootView.armedResolution(store: store, keys: keys)"),
-                      "the re-resolve must read the store this view was handed, not a fresh one, "
-                      + "and it must go through the ARMED helper: a bare `resolve` reverts the "
-                      + "`.local` readiness arm to `commission.provider == nil` on every SAVE")
+        XCTAssertEqual(adopts.count, 3,
+                       "assignment sites: appearance read, save invalidation, save re-read")
+
+        let armed = adopts.filter { $0.contains("RootView.armedResolution(store: store, keys: keys)") }
+        XCTAssertEqual(armed.count, 2,
+                       "the re-resolve must read the store this view was handed, not a fresh one, "
+                       + "and it must go through the ARMED helper: a bare `resolve` reverts the "
+                       + "`.local` readiness arm to `commission.provider == nil` on every SAVE")
+
+        // INVALIDATION BEFORE READY: the disarming adopt must appear EARLIER
+        // in the file than the save's re-read, or the badge can carry the old
+        // READY across the edit. Ordering is the property; a count cannot see
+        // it.
+        let all = code(rootView)
+        guard let invalidate = all.firstIndex(where: { $0.contains("configSource.adopt(RootView.resolve(store: store))") }),
+              let reread = all.lastIndex(where: { $0.contains("await RootView.armedResolution(store: store, keys: keys)") })
+        else {
+            return XCTFail("VOID: the save path no longer has both an invalidation and a re-read")
+        }
+        XCTAssertLessThan(invalidate, reread,
+                          "the save must disarm to CHECKING before it re-reads, not after")
         XCTAssertEqual(code(editor).filter { $0.contains("onSaved()") }.count, 1,
                        "the editor must call back exactly once, after the write")
         XCTAssertEqual(code(rootView).filter { $0.contains("onSaved:") }.count, 1,

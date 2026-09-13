@@ -111,7 +111,7 @@ struct GatewayCapabilities: SessionCapabilities {
 
     // MARK: - the six this commit does not carry
 
-    func hasProvider() -> Bool { false }
+    func hasProvider() async throws -> Bool { false }
     func indexSize() -> UInt32? { nil }
     func listModels(id: String, key: String, baseURL: String?) throws -> [String] {
         throw GatewayError.unimplemented(method: "listModels")

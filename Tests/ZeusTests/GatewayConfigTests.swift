@@ -303,9 +303,14 @@ final class GatewayResolutionTests: XCTestCase {
     /// THE PRODUCER THAT DID NOT EXIST. Before this commit no code path in the
     /// shipping app could return `.local`; it was reachable in tests and
     /// unreachable in the app. This leg is the whole point of the seam.
-    func testCommissionWithProviderResolvesLocalReady() {
+    /// RENAMED WITH THE RULING. A provider on the record resolves `.local`
+    /// and `.checking` — never `.ready`, which is now reachable only through a
+    /// completed core read. The record may say no and may not say yes.
+    func testCommissionWithProviderResolvesLocalChecking() {
         let r = GatewayConfig.resolve(from: [:], store: store(commissioned(provider: "anthropic")))
-        XCTAssertEqual(r.config, .local(.ready))
+        XCTAssertEqual(r.config, .local(.checking))
+        XCTAssertNotEqual(r.config, .local(.ready),
+                          "a string on disk is not an armed backend")
         XCTAssertEqual(r.source, .commission)
     }
 
@@ -488,7 +493,7 @@ final class GatewayResolutionTests: XCTestCase {
 
         XCTAssertNotEqual(fromSeeded.config, fromEmpty.config,
                           "vacuity guard: the two stores must resolve differently")
-        XCTAssertEqual(fromSeeded.config, .local(.ready),
+        XCTAssertEqual(fromSeeded.config, .local(.checking),
                        "the injected store's commission is the one that resolves")
         XCTAssertEqual(fromSeeded.source, .commission)
     }

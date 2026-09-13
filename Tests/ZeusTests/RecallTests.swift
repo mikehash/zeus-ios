@@ -325,4 +325,60 @@ final class RecallTests: XCTestCase {
         XCTAssertTrue(found.contains("6"),
                       "the denominator survives a HIT too, not just a zero: \(found)")
     }
+
+    // MARK: - READING, and the drop (S3b)
+
+    /// `READING` IS A FOURTH STRING. A search launched while the size read is
+    /// still in flight must not report the index empty: "not measured yet" and
+    /// "measured and holds nothing" are different facts, and folding them
+    /// tells the operator their memory is empty when it may be full.
+    func testAnInFlightReadIsNotAnEmptyIndex() {
+        let reading = Recall.findSummary(query: "zeus", hitCount: 0, indexSize: nil, reading: true)
+        let empty   = Recall.findSummary(query: "zeus", hitCount: 0, indexSize: 0)
+        let noCore  = Recall.findSummary(query: "zeus", hitCount: 0, indexSize: nil)
+
+        XCTAssertEqual(reading, "READING")
+        XCTAssertNotEqual(reading, empty,
+                          "a search during a read must not claim the index is empty")
+        XCTAssertNotEqual(reading, noCore,
+                          "a read in flight is not the absence of a core to read")
+        XCTAssertNotEqual(empty, noCore,
+                          "VACUITY: the two pre-existing strings must still differ, or this leg proves nothing about the third")
+    }
+
+    /// THE READ OUTRANKS THE COUNT. While a read is in flight every sentence
+    /// with a denominator in it quotes a number we do not have.
+    func testAReadInFlightOutranksAStaleCount() {
+        XCTAssertEqual(Recall.findSummary(query: nil, hitCount: 0, indexSize: 99, reading: true),
+                       "READING")
+        XCTAssertEqual(Recall.findSummary(query: "q", hitCount: 3, indexSize: 99, reading: true),
+                       "READING")
+        XCTAssertNotEqual(Recall.findSummary(query: "q", hitCount: 3, indexSize: 99, reading: false),
+                          "READING",
+                          "VACUITY: a settled read must NOT say READING, or the flag is ignored")
+    }
+
+    /// THE SAME FOURTH STRING IN THE ROW. Both readers of one reading, so the
+    /// row and the summary cannot disagree about whether the index is known.
+    func testTheRowSaysReadingRatherThanNoCore() {
+        XCTAssertEqual(NodesView.mnemosyneValue(indexSize: nil, reading: true), "READING")
+        XCTAssertNotEqual(NodesView.mnemosyneValue(indexSize: nil, reading: true),
+                          NodesView.mnemosyneValue(indexSize: nil),
+                          "an unread index must not render as NO CORE")
+        XCTAssertNotEqual(NodesView.mnemosyneValue(indexSize: nil, reading: true),
+                          NodesView.mnemosyneValue(indexSize: 0),
+                          "an unread index must not render as INDEX EMPTY")
+        XCTAssertEqual(NodesView.mnemosyneValue(indexSize: 6, reading: false), "6 FILES INDEXED")
+    }
+
+    /// THE DROP, ASSERTED AS A DROP. A superseded query's result is discarded
+    /// rather than written — not merely "the hits changed", which passes in
+    /// the world where the stale write wins the race.
+    func testASupersededSearchResultIsDropped() {
+        XCTAssertFalse(Recall.mayWriteResult(generation: 1, current: 2),
+                       "a result from a query the operator has already replaced must not be rendered")
+        XCTAssertFalse(Recall.mayWriteResult(generation: 1, current: 5))
+        XCTAssertTrue(Recall.mayWriteResult(generation: 2, current: 2),
+                      "VACUITY: the current generation MUST be writable, or the guard drops everything")
+    }
 }

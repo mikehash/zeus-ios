@@ -47,9 +47,30 @@ enum GatewayConfig: Equatable {
     /// Whether the embedded core has a route to a model yet.
     enum LocalReadiness: String, Equatable {
         /// A provider and key are set; a send will reach a model.
+        ///
+        /// REACHABLE ONLY THROUGH A COMPLETED CORE READ. `resolve` cannot
+        /// produce this arm: `hasProvider()` is `async throws` and `resolve`
+        /// is a pure synchronous function, so the record can no longer
+        /// promote itself to READY. That is the type change the LIMIT note in
+        /// `ProviderArming` asked for — the census leg that used to hold this
+        /// invariant up stays as a redundant second gate, not the only one.
         case ready
         /// The core is live and has no provider. The composer is disarmed.
+        ///
+        /// Stays derivable from the record: "the operator never picked a
+        /// provider" is a fact the commission genuinely holds, and it is
+        /// honest about its own subject. Only the POSITIVE direction needed
+        /// the core.
         case noProvider
+        /// The core has not been read yet on this appearance.
+        ///
+        /// NOT a nicer rendering of a race — it is the only value this type
+        /// can hold at construction. `RootView.init` assigns a `StateObject`
+        /// and is not an async context, so once the arm state comes from an
+        /// `await` there is no measured value to seed with. Rendering READY
+        /// here would be the original incident restored: a claim about the
+        /// core made before the core was asked.
+        case checking
     }
 
     /// Something was supplied and could not be turned into a usable endpoint.
@@ -249,11 +270,21 @@ enum GatewayConfig: Equatable {
                               source: .commission)
 
         case .local, .none:
-            // Readiness comes from the provider the routes step wrote. No
-            // provider is not a broken install; it is `.local(.noProvider)`,
+            // THE RECORD MAY SAY NO; IT MAY NOT SAY YES.
+            //
+            // `.noProvider` stays derivable here — "the operator never picked
+            // a provider" is a fact the commission genuinely holds, and it is
             // rendered before the first send instead of thrown at it.
+            //
+            // The positive direction is NOT a fact this function has. "A
+            // provider is configured" (a string on disk) is not "the core is
+            // armed" (an `Option` in a `Mutex`), and this function is pure
+            // over (environment, commission) by a ruling that has 15 call
+            // sites behind it. `.checking` is what a record-only read is
+            // entitled to say; `withCoreReadiness` promotes it to `.ready`
+            // once `hasProvider()` has actually answered.
             let readiness: LocalReadiness =
-                (commission.provider == nil) ? .noProvider : .ready
+                (commission.provider == nil) ? .noProvider : .checking
             return Resolution(config: .local(readiness), source: .commission)
         }
     }
@@ -266,6 +297,23 @@ enum GatewayConfig: Equatable {
     /// the `BridgeError::NoProvider` backstop — and two spellings of one state
     /// is how an operator ends up believing they are two states.
     static let noProviderMessage = "NO PROVIDER — SET ONE IN ROUTES"
+
+    /// The one sentence shown while the core has not been read yet.
+    ///
+    /// DISTINCT FROM `noProviderMessage` BY DESIGN, and the distinction is the
+    /// whole point of the state. `NO PROVIDER` is a claim ABOUT THE CORE — it
+    /// asserts the core was asked and said no. While the read is in flight we
+    /// have asked nothing, so saying it would be a wrong-subject claim of
+    /// exactly the kind this file was cut to remove. READY would be worse: it
+    /// asserts a capability we have not earned.
+    ///
+    /// It DISARMS. A send dispatched against an unmeasured core lands as
+    /// `BridgeError::NoProvider` in the transcript, which is the "learn about
+    /// it as a failed turn" failure the third state exists to prevent. The
+    /// send is REFUSED with this sentence, never queued — a queue would make
+    /// the refusal invisible and deliver the utterance at a moment the
+    /// operator did not choose.
+    static let checkingMessage = "CHECKING THE CORE — NOT ARMABLE YET"
 
     /// Why the composer must be disarmed, or `nil` if it should be armed.
     ///
@@ -282,6 +330,7 @@ enum GatewayConfig: Equatable {
     var disarmReason: String? {
         switch self {
         case .local(.noProvider):     return Self.noProviderMessage
+        case .local(.checking):       return Self.checkingMessage
         case .local(.ready):          return nil
         case .absent:                 return nil
         case .malformed:              return nil
@@ -297,6 +346,8 @@ enum GatewayConfig: Equatable {
             return "local core (in-process)"
         case .local(.noProvider):
             return "local core (in-process, no provider)"
+        case .local(.checking):
+            return "local core (in-process, reading)"
         case let .malformed(raw, reason):
             return "\(Self.urlKey)=\"\(raw)\" rejected: \(reason.rawValue)"
         case let .resolved(endpoint):

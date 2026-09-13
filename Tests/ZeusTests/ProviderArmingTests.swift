@@ -49,7 +49,13 @@ final class ProviderArmingTests: XCTestCase {
     }
 
     private struct FixedArming: ProviderArming {
-        let isArmed: Bool
+        let armed: Bool
+        var thrower: Bool = false
+        init(isArmed: Bool, thrower: Bool = false) { self.armed = isArmed; self.thrower = thrower }
+        func isArmed() async throws -> Bool {
+            if thrower { throw NSError(domain: "test", code: 7) }
+            return armed
+        }
     }
 
     private func commissioned(provider: String?, model: String?) -> Commission {
@@ -70,22 +76,22 @@ final class ProviderArmingTests: XCTestCase {
 
     /// THE LEG THE PRE-CUT CODE FAILS. Commission names a provider; the core
     /// is unarmed. Readiness must be `.noProvider`.
-    func testAnUnarmedCoreIsNotReadyEvenWithAProvider() {
+    func testAnUnarmedCoreIsNotReadyEvenWithAProvider() async {
         let base = localResolution(commissioned(provider: "anthropic", model: "claude"))
-        XCTAssertEqual(base.config, .local(.ready),
-                       "PRECONDITION: the commission-only resolver still answers ready — if this changed, the leg below is measuring something else")
+        XCTAssertEqual(base.config, .local(.checking),
+                       "PRECONDITION: the commission-only resolver answers CHECKING, never READY — the record may say no and may not say yes")
 
-        let measured = base.withCoreReadiness(FixedArming(isArmed: false))
+        let measured = await base.withCoreReadiness(FixedArming(isArmed: false))
         XCTAssertEqual(measured.config, .local(.noProvider),
                        "a core with no provider must not render READY, however many provider strings sit on disk")
     }
 
     /// The other arm. Both are asserted, and asserted to DIFFER, because a
     /// hardcoded readiness passes whichever single arm a test names.
-    func testAnArmedCoreIsReady() {
+    func testAnArmedCoreIsReady() async {
         let base = localResolution(commissioned(provider: "anthropic", model: "claude"))
-        let armed = base.withCoreReadiness(FixedArming(isArmed: true))
-        let unarmed = base.withCoreReadiness(FixedArming(isArmed: false))
+        let armed = await base.withCoreReadiness(FixedArming(isArmed: true))
+        let unarmed = await base.withCoreReadiness(FixedArming(isArmed: false))
 
         XCTAssertEqual(armed.config, .local(.ready))
         XCTAssertNotEqual(armed.config, unarmed.config,
@@ -93,7 +99,7 @@ final class ProviderArmingTests: XCTestCase {
     }
 
     /// Remote arms are NOT the local core's subject and must pass through.
-    func testRemoteResolutionsAreUntouchedByCoreReadiness() {
+    func testRemoteResolutionsAreUntouchedByCoreReadiness() async {
         var c = commissioned(provider: "anthropic", model: "claude")
         c.deployment = .remote
         c.gatewayURL = "https://gw.example.com"
@@ -101,8 +107,150 @@ final class ProviderArmingTests: XCTestCase {
         guard case .resolved = base.config else {
             return XCTFail("VOID: fixture did not produce a resolved remote config — got \(base.config)")
         }
-        XCTAssertEqual(base.withCoreReadiness(FixedArming(isArmed: false)).config, base.config,
+        let passed = await base.withCoreReadiness(FixedArming(isArmed: false))
+        XCTAssertEqual(passed.config, base.config,
                        "a remote gateway's readiness is not this process's core to answer")
+    }
+
+
+    // MARK: - The type change (S3b)
+
+    /// `.ready` IS UNREACHABLE FROM THE RECORD. The strongest form of the
+    /// LIMIT this file's docstring named: the census leg used to be the only
+    /// thing keeping `resolve` from promoting a string on disk to READY; now
+    /// the signature is.
+    func testTheRecordAloneCanNeverProduceReady() {
+        for provider in ["anthropic", "openai", "ollama"] {
+            let base = localResolution(commissioned(provider: provider, model: "m"))
+            XCTAssertEqual(base.config, .local(.checking),
+                           "resolve promoted a record to a claim about the core for \(provider)")
+            XCTAssertNotEqual(base.config, .local(.ready))
+        }
+        // ...and the negative direction is still the record's to answer.
+        XCTAssertEqual(localResolution(commissioned(provider: nil, model: nil)).config,
+                       .local(.noProvider),
+                       "\"the operator never picked a provider\" is a record fact and stays derivable")
+    }
+
+    /// `.checking` DISARMS, WITH ITS OWN SENTENCE. Three distinct strings, and
+    /// asserted to differ: a send on an unmeasured core would land as
+    /// `NoProvider` in the transcript, and saying NO PROVIDER while we have
+    /// asked nothing is the wrong-subject claim this whole file exists for.
+    func testCheckingDisarmsWithASentenceThatIsNotNoProvider() {
+        let checking = GatewayConfig.local(.checking).disarmReason
+        let noProvider = GatewayConfig.local(.noProvider).disarmReason
+        XCTAssertNotNil(checking, "an unmeasured core must not arm the composer")
+        XCTAssertNotEqual(checking, noProvider,
+                          "CHECKING must not borrow NO PROVIDER's words — one is a claim about the core, the other is the absence of one")
+        XCTAssertNil(GatewayConfig.local(.ready).disarmReason)
+        XCTAssertEqual(checking, GatewayConfig.checkingMessage)
+        XCTAssertNotEqual(GatewayConfig.local(.checking).summary,
+                          GatewayConfig.local(.noProvider).summary,
+                          "the summary must not collapse the two either")
+    }
+
+    /// A THROW IS NOT A NO. "The core refused to answer" and "the core has no
+    /// provider" are different facts; folding the first into the second
+    /// invents a measurement.
+    func testACoreThatThrowsStaysCheckingRatherThanClaimingNoProvider() async {
+        let base = localResolution(commissioned(provider: "anthropic", model: "claude"))
+        let measured = await base.withCoreReadiness(FixedArming(isArmed: false, thrower: true))
+        XCTAssertEqual(measured.config, .local(.checking),
+                       "a failed read must not be rendered as a measured absence")
+        XCTAssertNotEqual(measured.config, .local(.noProvider))
+    }
+
+    /// THE EIGHT SILENT SITES, PINNED. `LocalReadiness` is not `CaseIterable`
+    /// and `case .local:` binds the payload without inspecting it, so adding
+    /// `.checking` reded exactly TWO switches and the compiler named none of
+    /// the rest. These eight ask "is the core local", not "is it ready", and
+    /// that is deliberate — asserted here so the NEXT case is reviewed rather
+    /// than passed through.
+    func testTheNonDestructuringLocalSitesAreDeliberate() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/ZeusApp")
+        let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.hasSuffix(".swift") }
+        var nonDestructuring = 0, destructuring = 0, negative = 0
+        for f in files {
+            for line in try String(contentsOf: root.appendingPathComponent(f), encoding: .utf8)
+                            .split(separator: "\n", omittingEmptySubsequences: false) {
+                let l = String(line)
+                guard l.contains("case .local") || l.contains("case .local =") else { continue }
+                if l.contains("case .local(") { destructuring += 1 } else { nonDestructuring += 1 }
+                if l.contains("case .zzzlocal") { negative += 1 }
+            }
+        }
+        XCTAssertEqual(negative, 0, "VOID: the counter matched a pattern that does not exist")
+        XCTAssertGreaterThan(destructuring, 0, "VOID: no destructuring sites found — the scan did not reach the sources")
+        XCTAssertEqual(nonDestructuring, 8,
+                       "the count of `.local` matches that do NOT inspect readiness moved. The compiler will not name them: `LocalReadiness` is not CaseIterable and `case .local:` binds without inspecting. Read each one and decide whether it means \"is the core local\" (leave it) or \"is it ready\" (destructure it), then move this number.")
+    }
+
+    /// THE SPLIT, AT THE PRODUCTION SYMBOL. The leg below proves the ORDER is
+    /// load-bearing; this one proves the order is still there in
+    /// `armedResolution` — which the behavioural leg cannot see, because
+    /// `armedResolution` reaches `EmbeddedCapabilities.shared()` and takes no
+    /// injected core, so a test can only compose its own copy of the act.
+    ///
+    /// A copy asserts a property of the copy. That is the S3a lesson repeated
+    /// one file over, and this is the guard it earned: the arm, the resolve
+    /// and the compose must sit in ONE act in the shipped function. Wrap the
+    /// arm in a `Task {` and the compose reads a core armed a beat later —
+    /// exactly the defect the comment at the call site names.
+    func testArmAndComposeAreOneActInTheShippedHelper() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/ZeusApp")
+        let lines = try String(contentsOf: root.appendingPathComponent("RootView.swift"), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+
+        guard let start = lines.firstIndex(where: { $0.contains("static func armedResolution") }),
+              let end = lines[start...].firstIndex(where: { $0.contains("return await RootView.resolve(store: store)") })
+        else {
+            return XCTFail("VOID: armedResolution or its composing return is no longer findable")
+        }
+        let bodyLines = Array(lines[start...end])
+
+        // POS control: the instrument reaches the body it claims to read.
+        XCTAssertTrue(bodyLines.contains { $0.contains("CoreArming.arm(") },
+                      "VOID: the arm call is not inside the slice being scanned")
+        // NEG control: the needle is not matching everything.
+        XCTAssertFalse(bodyLines.contains { $0.contains("ZzzNoSuchCall(") })
+
+        let detached = bodyLines.filter {
+            !$0.hasPrefix("//") && !$0.hasPrefix("///")
+                && ($0.contains("Task {") || $0.contains("Task.detached"))
+        }
+        XCTAssertTrue(detached.isEmpty,
+                      "arm → resolve → compose must stay ONE act; a detached task here lets the "
+                      + "compose read a core armed a beat later. Found: \(detached)")
+    }
+
+    /// STALE-CACHE. The arm and the read are ONE act: a resolution composed
+    /// before `arm` ran renders the pre-arm answer. Split
+    /// arm → resolve → compose into two tasks and this reds.
+    func testAResolutionComposedBeforeArmingIsNotReady() async {
+        let core = ArmingCore()
+        let commission = commissioned(provider: "anthropic", model: "claude-x")
+        let base = localResolution(commission)
+
+        // Compose FIRST (the split-task order): the core has not been armed.
+        let early = await base.withCoreReadiness(EmbeddedCoreArming(core: EmbeddedCapabilities(core: core)))
+        XCTAssertEqual(early.config, .local(.noProvider),
+                       "a read taken before the arm must not render READY")
+
+        // Now the single-act order: arm, THEN compose.
+        CoreArming.arm(commission: commission,
+                       core: EmbeddedCapabilities(core: core),
+                       providerKey: "sk-real",
+                       baseURL: nil)
+        let late = await base.withCoreReadiness(EmbeddedCoreArming(core: EmbeddedCapabilities(core: core)))
+        XCTAssertEqual(late.config, .local(.ready))
+        XCTAssertNotEqual(early.config, late.config,
+                          "VACUITY: the two orders must differ, or this leg cannot detect the split")
     }
 
     // MARK: - Arming
@@ -400,9 +548,24 @@ final class ProviderArmingTests: XCTestCase {
 
         // The bare resolver may appear ONLY inside the helper — one call, and
         // it is the one the helper composes onto.
+        // THREE SITES, EACH NAMED — not a raised number.
+        //
+        // A bare count bump would permanently weaken this instrument: it would
+        // admit a fourth site anywhere. The two new ones are the SEED (`init`
+        // is not an async context, so the measured arm cannot be constructed
+        // there) and the INVALIDATION (a save drops the badge to `.checking`
+        // before the re-read). Both are the pure resolver used AS the
+        // `.checking` producer, which is the opposite of dropping the core's
+        // answer — and both are followed by a composing read.
         let bare = lines.filter { $0.contains("RootView.resolve(store: store)") }
-        XCTAssertEqual(bare.count, 1,
+        XCTAssertEqual(bare.count, 3,
                        "a bare `RootView.resolve` outside the helper drops the core's readiness answer; found \(bare.count)")
+        XCTAssertEqual(lines.filter { $0.contains("let resolution = RootView.resolve(store: store)") }.count, 1,
+                       "the init seed must be exactly one site")
+        XCTAssertEqual(lines.filter { $0.contains("configSource.adopt(RootView.resolve(store: store))") }.count, 1,
+                       "the save-invalidation must be exactly one site")
+        XCTAssertEqual(lines.filter { $0.contains("return await RootView.resolve(store: store)") }.count, 1,
+                       "the helper's own composing resolve must be exactly one site")
 
         // And composition happens exactly once, in that same helper.
         XCTAssertEqual(occurrences(of: ".withCoreReadiness(", in: root), 1,
