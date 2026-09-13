@@ -198,3 +198,58 @@ extension EmbeddedCapabilities {
         return EmbeddedCapabilities(core: core)
     }
 }
+
+// MARK: - the resolver
+
+/// Route a config to the capability handle that can serve it.
+///
+/// The analogue of `makeTransport` (`Session.swift:164`) for the NON-prose
+/// seam, and it exists because that analogue was MISSING: at `2473e3b`,
+/// `GatewayCapabilities` had ZERO production construction sites. It decoded,
+/// it joined, it was covered by ten legs, and nothing could reach it. The
+/// first-order gate — does the type exist and conform — passed; the
+/// second-order gate — is it constructible from a production site — had never
+/// been asked. That gap is what this function closes.
+///
+/// ── Why this returns Optional and `makeTransport` does not ────────────────
+///
+/// `makeTransport` can always produce SOMETHING: `UnconfiguredTransport` and
+/// `MisconfiguredTransport` are conformers that carry a sentence instead of a
+/// wire. This seam has no such conformer, and deliberately: every caller
+/// already handles `nil` as `NO CORE`, because `EmbeddedCapabilities.shared()`
+/// has always been Optional. Inventing a `MisconfiguredCapabilities` that
+/// answers `sessions()` with `[]` would render "we could not ask" as "there
+/// are no sessions" — the same class the `""`-under-`updatedAtRfc3339`
+/// sentinel was rejected for.
+///
+/// ── Why only `.resolved` goes remote ──────────────────────────────────────
+///
+/// The switch is exhaustive with no `default`, same discipline as
+/// `makeTransport`: a fifth `GatewayConfig` case cannot be added without this
+/// failing to compile.
+///
+/// `.local` is the embedded core by definition. `.absent` and `.malformed`
+/// have no endpoint to talk to — there is no URL, so there is nothing a
+/// gateway conformer could be constructed AROUND — and they fall back to the
+/// embedded core, which is exactly what those states meant before this
+/// function existed.
+///
+/// ── What this does NOT do ─────────────────────────────────────────────────
+///
+/// It does not probe. Same note `makeTransport` carries: reachability is a
+/// property of a request, not of a config, and a probe here would put a
+/// network call on the app's launch path.
+///
+/// And it is wired at ONE of the five `EmbeddedCapabilities.shared()` sites —
+/// `RootView:342`, the history sheet. See
+/// `GatewayCapabilitiesTests.testTheConformerImplementsExactlyTwoMethods`
+/// for why the other four must not move yet.
+func makeCapabilities(for config: GatewayConfig,
+                      credentials: CredentialProviding) -> SessionCapabilities? {
+    switch config {
+    case let .resolved(endpoint):
+        return GatewayCapabilities(endpoint: endpoint, credentials: credentials)
+    case .absent, .malformed, .local:
+        return EmbeddedCapabilities.shared()
+    }
+}

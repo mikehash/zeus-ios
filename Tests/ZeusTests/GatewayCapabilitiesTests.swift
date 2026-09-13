@@ -246,4 +246,152 @@ final class GatewayCapabilitiesTests: XCTestCase {
         XCTAssertTrue(sentences[3].contains("remember"),
                       "an app limit must name the method, not blame the gateway")
     }
+
+    // MARK: - S3a' — the resolver, and the census that bounds it
+
+    private func source(_ name: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // ZeusTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo
+        return try String(contentsOf: root.appendingPathComponent("Sources/ZeusApp/\(name)"),
+                          encoding: .utf8)
+    }
+
+    /// Comment lines stripped — a census that counts prose is a census of
+    /// intentions. `CredentialTests` carries the incident this copy exists for.
+    private func codeLines(_ src: String) -> [String] {
+        src.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+    }
+
+    private func endpoint(_ s: String) -> GatewayConfig.Endpoint {
+        GatewayConfig.Endpoint(url: URL(string: s)!, token: "t")
+    }
+
+    /// A `.resolved` config gets the GATEWAY conformer; everything else gets
+    /// the embedded one.
+    ///
+    /// This is the leg S4's mutation was written for and had no symbol to
+    /// mutate: at `2473e3b` there was no routing function, so "resolve
+    /// always-embedded" could not be expressed. It can now.
+    ///
+    /// The three non-resolved arms assert `is GatewayCapabilities == false`
+    /// rather than asserting the embedded type, because
+    /// `EmbeddedCapabilities.shared()` is legitimately `nil` in a test process
+    /// with no bridge — and a leg that requires a live core would be measuring
+    /// the test host, not the routing.
+    func testOnlyAResolvedConfigRoutesToTheGateway() {
+        let creds = StubCredentialProvider()
+        let remote = makeCapabilities(for: .resolved(endpoint("http://10.0.0.5:8080")),
+                                      credentials: creds)
+        XCTAssertTrue(remote is GatewayCapabilities,
+                      "a commissioned remote gateway still read the LOCAL jsonl")
+
+        for config in [GatewayConfig.absent,
+                       .malformed(raw: "nope", reason: .notAURL),
+                       .local(.ready)] {
+            XCTAssertFalse(makeCapabilities(for: config, credentials: creds) is GatewayCapabilities,
+                           "\(config) has no endpoint — there is nothing to construct a gateway around")
+        }
+    }
+
+    /// The endpoint SURVIVES the resolver.
+    ///
+    /// Vacuity: the two URLs differ, so a resolver that ignored its argument
+    /// and built a default host would red here rather than agreeing by
+    /// accident — the `baseUrl:`-to-`nil` shape from S2, one seam over.
+    func testTheResolvedEndpointReachesTheConformer() throws {
+        let creds = StubCredentialProvider()
+        let a = makeCapabilities(for: .resolved(endpoint("http://10.0.0.5:8080")), credentials: creds)
+        let b = makeCapabilities(for: .resolved(endpoint("http://10.0.0.9:9090")), credentials: creds)
+        let ga = try XCTUnwrap(a as? GatewayCapabilities)
+        let gb = try XCTUnwrap(b as? GatewayCapabilities)
+        XCTAssertEqual(ga.endpoint.url.absoluteString, "http://10.0.0.5:8080")
+        XCTAssertNotEqual(ga.endpoint.url, gb.endpoint.url,
+                          "both arrived at the same host — the argument is being ignored")
+    }
+
+    /// THE CENSUS. `GatewayCapabilities` implements exactly `{sessions,
+    /// messages}` today, and that set is what bounds the migration.
+    ///
+    /// ── Why this guard exists ──────────────────────────────────────────
+    ///
+    /// Five production sites held `EmbeddedCapabilities.shared()`; exactly ONE
+    /// (`RootView:342`, the history sheet) calls the pair this conformer
+    /// implements. The other four call methods that are STUBS here, and each
+    /// stub's fallback is an INVENTION the moment a production site reads it:
+    ///
+    ///   `indexSize -> nil`   renders `NO CORE` — unimplemented wearing the
+    ///                        costume of no-core, the class the
+    ///                        `""`-under-`updatedAtRfc3339` sentinel was
+    ///                        rejected for.
+    ///   `search -> []`       renders "we did not ask" as an ANSWER.
+    ///   `remember`/`indexSize` throwing `NOT AVAILABLE ON A REMOTE GATEWAY`
+    ///                        DENIES capabilities the gateway HAS —
+    ///                        `POST /v1/memory/remember` (`routes.rs:237`),
+    ///                        index size from `GET /v1/memory/files`. That
+    ///                        sentence is reserved to G8/G10.
+    ///
+    /// So the guard pins the implemented SET, not a count of sites: the day S5
+    /// implements `remember` over REST, this leg REDS and names the site that
+    /// may now migrate. A count would have permitted a swap — implement one,
+    /// stub another — with the total unmoved, the same fault
+    /// `check_separator_debt.sh` was rewritten to fix.
+    ///
+    /// It reads SOURCE rather than calling the methods because a stub and an
+    /// implementation are indistinguishable at the type level: both satisfy
+    /// the protocol, and `indexSize() -> nil` is a legal answer.
+    func testTheConformerImplementsExactlyTwoMethods() throws {
+        let code = codeLines(try source("GatewayCapabilities.swift")).joined(separator: "\n")
+
+        // POS control: the two implemented methods are reachable by this
+        // instrument at all.
+        XCTAssertTrue(code.contains("func sessions() async throws -> [SessionRow] {"))
+        XCTAssertTrue(code.contains("func messages(sessionID: String) async throws -> [TurnMessage] {"))
+
+        // NEG control: the needle is not matching everything.
+        XCTAssertFalse(code.contains("func zzzNoSuchMethod"))
+
+        let stubs = ["hasProvider", "indexSize", "listModels", "remember", "search", "setProvider"]
+        for name in stubs {
+            let isStubbed = code.contains("throw GatewayError.unimplemented(method: \"\(name)\")")
+                || code.contains("func \(name)() -> Bool { false }")
+                || code.contains("func \(name)() -> UInt32? { nil }")
+                || code.contains("func \(name)(query: String) -> [SearchHit] { [] }")
+            XCTAssertTrue(isStubbed,
+                          "`\(name)` is no longer a stub. Its production site must now " +
+                          "migrate to `makeCapabilities`: hasProvider/setProvider -> " +
+                          "RootView:224, indexSize/search -> RootView:499, remember -> " +
+                          "RootView:545, listModels -> Commissioning:1222.")
+        }
+    }
+
+    /// FOUR sites stay embedded, and the number is pinned so a silent
+    /// migration reds.
+    ///
+    /// Paired with the census above this is a two-sided guard: that one says
+    /// which methods MAY be routed, this one says how many sites still are
+    /// NOT. Moving a site without implementing its method reds here; the
+    /// failure message says which pairing to check.
+    func testExactlyFourSitesStillHoldTheEmbeddedHandleDirectly() throws {
+        let names = ["RootView.swift", "Commissioning.swift"]
+        var total = 0
+        for n in names {
+            total += codeLines(try source(n))
+                .filter { $0.contains("EmbeddedCapabilities.shared()") }.count
+        }
+        XCTAssertEqual(total, 4,
+                       "the un-migrated set moved. A site may only route through " +
+                       "`makeCapabilities` once `GatewayCapabilities` IMPLEMENTS the " +
+                       "methods that site calls — see the census leg above.")
+
+        // And the ONE that did migrate is the history sheet, by name.
+        let root = codeLines(try source("RootView.swift")).joined(separator: "\n")
+        XCTAssertTrue(root.contains("HistorySheet(core: makeCapabilities("),
+                      "the history sheet is the only screen reading sessions()/messages(); " +
+                      "if it is not routed, a remote gateway shows LOCAL history")
+    }
 }

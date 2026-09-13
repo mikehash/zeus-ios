@@ -339,7 +339,15 @@ struct RootView: View {
             // C — history, over the tabs but UNDER the gateway editor: a
             // lookup does not outrank a decision.
             if history {
-                HistorySheet(core: EmbeddedCapabilities.shared(),
+                // The ONE site routed through `makeCapabilities`. The history
+                // sheet is the only screen that calls the pair
+                // `GatewayCapabilities` implements (`sessions()`/`messages(_:)`),
+                // so it is the only site where routing remote is an answer
+                // rather than an invention. Before this, a commissioned remote
+                // gateway put prose on the wire and the history sheet on the
+                // LOCAL jsonl — two backends on one screen, with nothing said.
+                HistorySheet(core: makeCapabilities(for: configSource.config,
+                                                    credentials: credentials),
                              isPresented: $history)
                     .transition(.move(edge: .bottom))
                     .zIndex(75)
