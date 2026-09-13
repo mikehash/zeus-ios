@@ -81,14 +81,39 @@ protocol SessionCapabilities: Sendable {
     /// picker back in the state `65998af` fixed.
     func listModels(id: String, key: String, baseURL: String?) throws -> [String]
 
-    /// The session list, most recent first.
-    func sessions() throws -> [SessionInfo]
+    /// The session list, in whatever order the backend produced it.
+    ///
+    /// ── Why THESE TWO are `async` and the other six are not ──────────────
+    ///
+    /// A `URLSession` conformer cannot satisfy a synchronous signature without
+    /// a semaphore, and a semaphore on the cooperative pool deadlocks — that is
+    /// a shape, not a taste. So the methods the gateway conformer implements
+    /// must be `async`. Only these two are, and only because their ONLY
+    /// production callers are already inside `Task.detached`
+    /// (`HistoryView:177`, `:190`), which makes `await` free at both sites.
+    ///
+    /// The other six are read from `var body` and from `RootView.init`, where
+    /// `await` is not available and the migration is a CACHING change, not a
+    /// signature change — a stored reading plus a refresh task plus a third
+    /// state so a cached value cannot render READY. That is S3b, with its own
+    /// staleness legs, because a red in a commit carrying both could not say
+    /// whether the transport or the caching broke it.
+    ///
+    /// Returns `[SessionRow]`, not the bridge's `[SessionInfo]`: the sort key
+    /// is a fact the gateway does not have, and `SessionInfo.updatedAtRfc3339`
+    /// is a generated non-Optional `String` with no `nil` to return. See
+    /// `SessionRow`.
+    func sessions() async throws -> [SessionRow]
 
     /// One session's transcript.
     ///
     /// `TurnMessage.toolName` is populated by the `call_id → id` join added in
     /// `4244aea`; a conformer that leaves it `nil` regresses replay to `[TOOL]`.
-    func messages(sessionID: String) throws -> [TurnMessage]
+    /// The embedded path does that join in Rust; the gateway path must do the
+    /// same join in its DECODER, because `TurnMessage` has no field that can
+    /// carry a call id and therefore no way to do it afterwards. Two
+    /// implementations of one join is the stated cost of remote replay.
+    func messages(sessionID: String) async throws -> [TurnMessage]
 
     /// Write a fact to memory.
     func remember(fact: String) throws
@@ -138,9 +163,15 @@ struct EmbeddedCapabilities: SessionCapabilities, @unchecked Sendable {
         try core.listModels(id: id, key: key, baseUrl: baseURL)
     }
 
-    func sessions() throws -> [SessionInfo] { try core.sessions() }
+    /// `async` by signature, synchronous in fact: the bridge call reads a
+    /// directory and returns. No `Task` is introduced here — the callers are
+    /// already off the main thread and wrapping this in one would add a hop
+    /// whose only purpose is to look like the gateway conformer.
+    func sessions() async throws -> [SessionRow] {
+        try core.sessions().map(SessionRow.init)
+    }
 
-    func messages(sessionID: String) throws -> [TurnMessage] {
+    func messages(sessionID: String) async throws -> [TurnMessage] {
         try core.messages(sessionId: sessionID)
     }
 

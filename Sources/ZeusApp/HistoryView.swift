@@ -29,7 +29,7 @@ struct HistorySheet: View {
     /// over `core.sessions()`: a `var body` can be evaluated many times per
     /// frame, and an FFI call that reads a directory of `.jsonl` files does
     /// not belong on that path.
-    @State private var sessions: [SessionInfo]?
+    @State private var sessions: [SessionRow]?
     @State private var openID: String?
     @State private var rows: [History.Row]?
     @State private var failure: String?
@@ -87,7 +87,12 @@ struct HistorySheet: View {
     private var summaryLine: String {
         if let failure { return failure }
         if openID != nil { return History.transcriptSummary(rowCount: rows?.count) }
-        return History.listSummary(sessionCount: sessions?.count)
+        // SERVER ORDER is stated ONCE, here, because it is a fact about the
+        // LIST rather than about any row: the backend sent no rankable key for
+        // any of them. A per-row marker would repeat it n times and read as a
+        // parse failure of a key that was never sent.
+        return History.listSummary(sessionCount: sessions?.count,
+                                   serverOrder: History.isServerOrder(sessions ?? []))
     }
 
     // MARK: - the list
@@ -105,7 +110,7 @@ struct HistorySheet: View {
                                 .tracking(1.0)
                                 .foregroundStyle(Theme.text)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            Text(History.ago(s.updatedAtRfc3339))
+                            Text(History.ago(s.sortKey))
                                 .font(Theme.mono(8.5))
                                 .foregroundStyle(Theme.r(0.5))
                         }
@@ -175,7 +180,7 @@ struct HistorySheet: View {
         }
         Task.detached(priority: .userInitiated) {
             do {
-                let got = try core.sessions()
+                let got = try await core.sessions()
                 await MainActor.run { sessions = got; failure = nil }
             } catch {
                 await MainActor.run { sessions = nil; failure = "HISTORY UNREADABLE — \(error)" }
@@ -189,7 +194,7 @@ struct HistorySheet: View {
         guard let core else { return }
         Task.detached(priority: .userInitiated) {
             do {
-                let got = try core.messages(sessionID: id)
+                let got = try await core.messages(sessionID: id)
                 let mapped = History.rows(from: got)
                 await MainActor.run { rows = mapped; failure = nil }
             } catch {

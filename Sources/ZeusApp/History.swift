@@ -30,10 +30,32 @@ enum History {
     /// `[]` is a core that answered and has nothing, which on this surface is
     /// the ordinary state of a fresh install, not a fault. Folding them gives
     /// a broken core the same screen as a new phone.
-    static func listSummary(sessionCount: Int?) -> String {
+    static func listSummary(sessionCount: Int?, serverOrder: Bool = false) -> String {
         guard let n = sessionCount else { return "NO CORE" }
         if n == 0 { return "NO SESSIONS YET" }
-        return n == 1 ? "1 SESSION" : "\(n) SESSIONS"
+        let count = n == 1 ? "1 SESSION" : "\(n) SESSIONS"
+        // `Theme.joined`, not an interpolated `·`: the separator is a layout
+        // decision (it is the thing that strands at a line end on a 390pt
+        // frame), and `check_separator_debt.sh` pins every hand-rolled site
+        // precisely so a new one cannot be added without this choice being
+        // made deliberately. It was made here.
+        return serverOrder ? Theme.joined([count, "SERVER ORDER"]) : count
+    }
+
+    /// Whether this list is in the order the BACKEND sent it rather than an
+    /// order this screen computed.
+    ///
+    /// True only when there is something to order and NOTHING can rank it —
+    /// which is precisely the gateway's shape, where every `sortKey` is `nil`
+    /// because `GET /v1/sessions` emits no `updated`. A mixed list is NOT
+    /// server order: the rankable rows really are sorted newest-first above
+    /// the sinks, so claiming server order there would be a false statement
+    /// about rows the screen did order.
+    ///
+    /// An empty list is not server order either — there is no order to make a
+    /// claim about, and `NO SESSIONS YET` already says the only true thing.
+    static func isServerOrder(_ rows: [SessionRow]) -> Bool {
+        !rows.isEmpty && rows.allSatisfy { $0.sortKey == nil }
     }
 
     /// Newest first, and INPUT ORDER for everything the key cannot rank.
@@ -68,9 +90,17 @@ enum History {
     /// C(idx 2, new): A<B by index, B<C by index, C<A by date. A cycle. The
     /// sink arms must stay: an unparsed row loses to every parsed row, and the
     /// index decides only between two unparsed rows.
-    static func newestFirst(_ sessions: [SessionInfo]) -> [SessionInfo] {
+    ///
+    /// ── Why the parameter is a `SessionRow` and not a `SessionInfo` ───────
+    ///
+    /// The key is now `String?` and the `nil` arrives from a conformer that
+    /// HAS NO KEY TO SEND, not from a key that failed to parse. Those two
+    /// facts reach the same arm and that is correct — neither can be ranked —
+    /// but only one of them can be expressed by a UniFFI `String`. See
+    /// `SessionRow.sortKey`.
+    static func newestFirst(_ sessions: [SessionRow]) -> [SessionRow] {
         sessions.enumerated()
-            .map { (index: $0.offset, key: parse($0.element.updatedAtRfc3339), row: $0.element) }
+            .map { (index: $0.offset, key: $0.element.sortKey.flatMap(parse), row: $0.element) }
             .sorted { a, b in
                 switch (a.key, b.key) {
                 case let (x?, y?): return x > y
@@ -111,7 +141,15 @@ enum History {
     /// question the operator is asking of a history list. Unparseable returns
     /// the raw string rather than a fabricated "JUST NOW" — the one thing
     /// worse than an ugly timestamp is a confident wrong one.
-    static func ago(_ rfc3339: String, now: Date = Date()) -> String {
+    /// ── `nil`: the trailing slot renders EMPTY ───────────────────────────
+    ///
+    /// A backend that cannot say when a session was last written gets no
+    /// per-row string here. Not `UNKNOWN` — that reads as a parse failure of a
+    /// key that was never sent, and it would repeat on every row a fact that is
+    /// true of the whole LIST. The list header carries `SERVER ORDER` once, at
+    /// the level where the fact is true.
+    static func ago(_ rfc3339: String?, now: Date = Date()) -> String {
+        guard let rfc3339 else { return "" }
         guard let then = parse(rfc3339) else { return rfc3339 }
         let s = Int(now.timeIntervalSince(then))
         if s < 0    { return "JUST NOW" }   // clock skew, not the future

@@ -106,8 +106,16 @@ final class CredentialTests: XCTestCase {
         let headerSites = files.flatMap { f in
             f.code.filter { $0.contains(#"forHTTPHeaderField: "Authorization""#) }.map { _ in f.name }
         }
-        XCTAssertEqual(headerSites.count, 4,
+        // Five since S3a added `GatewayCapabilities`. The count is raised only
+        // because the SET is pinned beside it — a bare count would have been
+        // weakened by this edit, whereas naming the files means a SIXTH site
+        // still reds, and so does the disappearance of any of these five.
+        XCTAssertEqual(Set(headerSites),
+                       ["Approvals.swift", "GatewayCapabilities.swift",
+                        "GatewayEditor.swift", "HTTPTransport.swift", "Route.swift"],
                        "VOID or drift: header sites = \(headerSites)")
+        XCTAssertEqual(headerSites.count, 5,
+                       "one file with two header sites is still drift: \(headerSites)")
 
         var offenders: [String] = []
         for f in files where f.code.contains(where: { $0.contains(#"Bearer \("#) }) {

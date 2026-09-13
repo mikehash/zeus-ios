@@ -8,8 +8,15 @@ import XCTest
 /// export" render identically under a one-arm test.
 final class HistoryTests: XCTestCase {
 
-    private func info(_ id: String, _ ts: String) -> SessionInfo {
-        SessionInfo(id: id, updatedAtRfc3339: ts)
+    /// Re-targeted from `SessionInfo` to `SessionRow` in the S3a commit. The
+    /// factory keeps its `String` argument so the twelve existing legs read
+    /// unchanged; `row(_:nil)` below is the new shape only the gateway path
+    /// can produce.
+    private func info(_ id: String, _ ts: String) -> SessionRow {
+        SessionRow(id: id, sortKey: ts)
+    }
+    private func unranked(_ id: String) -> SessionRow {
+        SessionRow(id: id, sortKey: nil)
     }
     private func msg(_ role: String, _ content: String,
                      toolName: String? = nil) -> TurnMessage {
@@ -285,5 +292,76 @@ final class HistoryTests: XCTestCase {
                       "sessions() has no production caller — the export is still dark")
         XCTAssertTrue(codeLines.contains { $0.contains(messagesNeedle) },
                       "messages(sessionId:) has no production caller — the export is still dark")
+    }
+
+    // MARK: - S3a: the Optional sort key
+
+    /// THE KEY IS ABSENT, NOT UNPARSEABLE — and the distinction is the whole
+    /// reason `SessionRow` exists.
+    ///
+    /// A gateway row carries `nil`, which no `SessionInfo` could hold: its
+    /// `updatedAtRfc3339` is a UniFFI-generated non-Optional `String`. The
+    /// rejected alternative was `""`, and the vacuity assertion below is what
+    /// refuses it: an empty string renders through `ago` as itself, so a
+    /// sentinel and an absence would have produced DIFFERENT screens while
+    /// passing the same sort legs.
+    func testAnAbsentSortKeyRendersNothingAndIsNotTheEmptyString() {
+        XCTAssertEqual(History.ago(nil), "")
+        // `""` renders the same and SORTS the same — it parses to nil, so the
+        // comparator cannot tell a sentinel from an absence either. That is
+        // exactly why the sentinel had to be refused AT THE CONFORMER
+        // (`GatewayCapabilitiesTests.testTheGatewayListHasNoSortKeyAtAll`)
+        // rather than here: no leg downstream of the row type can see it.
+        XCTAssertEqual(History.ago(""), "")
+        XCTAssertNil(SessionRow(id: "x", sortKey: nil).sortKey)
+        XCTAssertNotNil(SessionRow(id: "x", sortKey: "").sortKey,
+                        "the TYPE distinguishes them even though the sort cannot")
+        XCTAssertEqual(History.ago("garbage"), "garbage",
+                       "an unparseable key still shows what the backend SENT")
+        XCTAssertNotEqual(History.ago(nil), History.ago("2026-09-11T04:00:00Z"))
+    }
+
+    /// SERVER ORDER is a claim about the LIST, and it is only true when
+    /// nothing in it can be ranked.
+    ///
+    /// Three arms, because the tempting one-arm version ("any nil ⇒ server
+    /// order") would print SERVER ORDER over a list this screen really did
+    /// sort — a false statement about the rankable rows sitting above the
+    /// sinks.
+    func testServerOrderIsClaimedOnlyWhenNothingCanBeRanked() {
+        XCTAssertTrue(History.isServerOrder([unranked("a"), unranked("b")]))
+        XCTAssertFalse(History.isServerOrder([unranked("a"),
+                                              info("b", "2026-09-11T04:00:00Z")]),
+                       "a mixed list IS partly ordered by this screen")
+        XCTAssertFalse(History.isServerOrder([]),
+                       "an empty list has no order to make a claim about")
+        // Composed through `Theme.joined`, NOT re-typed here. The separator is
+        // `\u{00A0}·\u{00A0}` — the NBSPs are load-bearing (they stop the dot
+        // stranding at a line end) and invisible, so a hand-typed literal in
+        // this leg would red on a difference no reader can see in the failure
+        // message. Asserting the composition also means a change to the
+        // separator cannot break this leg for a reason unrelated to it.
+        XCTAssertEqual(History.listSummary(sessionCount: 2, serverOrder: true),
+                       Theme.joined(["2 SESSIONS", "SERVER ORDER"]))
+        XCTAssertTrue(History.listSummary(sessionCount: 2, serverOrder: true)
+                        .hasSuffix("SERVER ORDER"))
+        XCTAssertEqual(History.listSummary(sessionCount: 2), "2 SESSIONS")
+        XCTAssertNotEqual(History.listSummary(sessionCount: 2, serverOrder: true),
+                          History.listSummary(sessionCount: 2))
+    }
+
+    /// A full gateway list keeps INPUT ORDER — the `(nil, nil)` index arm,
+    /// now reached by every pair rather than by a stray one.
+    ///
+    /// Ids are deliberately reverse-alphabetical so that server order and the
+    /// old id tiebreak DIFFER on this input; without that the leg would pass
+    /// under the very comparator it exists to refuse.
+    func testAGatewayListWithNoKeysAtAllKeepsServerOrder() {
+        let server = [unranked("zzz-first"), unranked("mmm-second"), unranked("aaa-third")]
+        XCTAssertEqual(History.newestFirst(server).map(\.id),
+                       ["zzz-first", "mmm-second", "aaa-third"])
+        XCTAssertNotEqual(History.newestFirst(server).map(\.id),
+                          server.map(\.id).sorted(),
+                          "input order and alphabetical order must DIFFER here")
     }
 }

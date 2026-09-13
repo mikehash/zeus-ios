@@ -98,12 +98,12 @@ final class SessionCapabilitiesTests: XCTestCase {
     /// `messages(sessionId:)` → `messages(sessionID:)` is the second label
     /// change in the migration, and unlike the base URL it has no `nil` to
     /// hide behind — but a forwarder passing a constant would still compile.
-    func testTheSessionIDSurvivesTheSeam() throws {
+    func testTheSessionIDSurvivesTheSeam() async throws {
         let core = RecordingCore()
         let caps = EmbeddedCapabilities(core: core)
 
-        _ = try caps.messages(sessionID: "session-a")
-        _ = try caps.messages(sessionID: "session-b")
+        _ = try await caps.messages(sessionID: "session-a")
+        _ = try await caps.messages(sessionID: "session-b")
 
         XCTAssertEqual(core.messageCalls, ["session-a", "session-b"])
     }
@@ -135,7 +135,7 @@ final class SessionCapabilitiesTests: XCTestCase {
     /// errors name their cause. A forwarder that caught and rewrapped would
     /// discard the one string that says why — the defect that comment names,
     /// re-introduced one layer up.
-    func testTheCoresOwnErrorReachesTheCaller() {
+    func testTheCoresOwnErrorReachesTheCaller() async throws {
         struct Named: Error, CustomStringConvertible { var description: String { "NO WORKSPACE AT /tmp/x" } }
         final class Throwing: ZeusCoreProtocol {
             func messages(sessionId: String) throws -> [TurnMessage] { throw Named() }
@@ -149,7 +149,10 @@ final class SessionCapabilitiesTests: XCTestCase {
             func send(sessionId: String, text: String, sink: TokenSink) throws {}
         }
         let caps = EmbeddedCapabilities(core: Throwing())
-        XCTAssertThrowsError(try caps.messages(sessionID: "s")) { error in
+        do {
+            _ = try await caps.messages(sessionID: "s")
+            XCTFail("the throw did not reach the caller")
+        } catch {
             XCTAssertEqual("\(error)", "NO WORKSPACE AT /tmp/x",
                            "the seam rewrapped the core's error and the cause " +
                            "was lost")
@@ -199,5 +202,29 @@ final class SessionCapabilitiesTests: XCTestCase {
         XCTAssertTrue(conformer.contains(": ZeusCoreProtocol"),
                       "POS control failed — the needle matches nothing, so " +
                       "the zero above is meaningless")
+    }
+
+    // MARK: - S3a: the embedded mapping into the app-owned row
+
+    /// THE EMBEDDED CONFORMER MUST NOT LOSE THE KEY IT HAS.
+    ///
+    /// The seam now returns `[SessionRow]` with an Optional key, and the
+    /// gateway conformer returns `nil` for every row. A mapping that dropped
+    /// the embedded key would compile, would satisfy the type, and would turn
+    /// the LOCAL history into server order — reading as "the list is fine" on
+    /// the one path that has a real answer.
+    func testTheEmbeddedConformerCarriesTheKeyIntoTheRow() async throws {
+        let core = RecordingCore()
+        core.infos = [SessionInfo(id: "s1", updatedAtRfc3339: "2026-09-11T04:00:00Z"),
+                      SessionInfo(id: "s2", updatedAtRfc3339: "2026-09-11T05:00:00Z")]
+        let rows = try await EmbeddedCapabilities(core: core).sessions()
+
+        XCTAssertEqual(rows.map(\.id), ["s1", "s2"])
+        XCTAssertEqual(rows.compactMap(\.sortKey),
+                       ["2026-09-11T04:00:00Z", "2026-09-11T05:00:00Z"])
+        // The vacuity assertion, and the whole point: the embedded path must
+        // NOT look like the gateway path.
+        XCTAssertFalse(History.isServerOrder(rows),
+                       "an embedded list has real keys and this screen sorts it")
     }
 }
