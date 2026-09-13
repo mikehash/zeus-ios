@@ -358,7 +358,7 @@ final class GatewayCapabilitiesTests: XCTestCase {
         let stubs = ["hasProvider", "indexSize", "listModels", "remember", "search", "setProvider"]
         for name in stubs {
             let isStubbed = code.contains("throw GatewayError.unimplemented(method: \"\(name)\")")
-                || code.contains("func \(name)() -> Bool { false }")
+                || code.contains("func \(name)() async throws -> Bool { false }")
                 || code.contains("func \(name)() -> UInt32? { nil }")
                 || code.contains("func \(name)(query: String) -> [SearchHit] { [] }")
             XCTAssertTrue(isStubbed,

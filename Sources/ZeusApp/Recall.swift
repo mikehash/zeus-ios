@@ -112,6 +112,22 @@ enum Recall {
     /// tokenises the query, so `""` scores nothing and returns `[]` — which
     /// renders identically to "searched and found nothing". A field the user
     /// has not filled in is not a search that failed.
+    /// Whether a search result that has just landed may be WRITTEN.
+    ///
+    /// A pure function for the reason every derivation in this tree is one: a
+    /// SwiftUI body is not observable in-process, so a guard living only
+    /// inside `runFind` could be asserted on nothing but a test's own copy of
+    /// it — and a copy proves a property of the copy. This is the production
+    /// symbol both the view and the leg call.
+    ///
+    /// Asserts the DROP. A superseded query's answer must be discarded, not
+    /// rendered: the operator's newest question is the only one whose result
+    /// belongs on screen, and a test that checked only "the hits changed"
+    /// passes in the world where the stale write wins.
+    static func mayWriteResult(generation: Int, current: Int) -> Bool {
+        generation == current
+    }
+
     static func queryToRun(from raw: String) -> String? {
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
@@ -126,9 +142,19 @@ enum Recall {
     /// populated one are different facts: the first says the core indexed
     /// nothing, the second says your term is not in the five files it has.
     /// Folded together, a broken scan is indistinguishable from a bad query.
+    /// `reading` is a FOURTH string, distinct from `INDEX EMPTY`.
+    ///
+    /// A search launched while the size read is still in flight must not
+    /// report the index empty: "we have not measured it" and "we measured it
+    /// and it holds nothing" are different facts, and folding them tells the
+    /// operator their memory is empty when it may be full. It outranks the
+    /// `query` branch for the same reason — the count in every one of those
+    /// sentences is a number we do not have yet.
     static func findSummary(query: String?,
                             hitCount: Int,
-                            indexSize: UInt32?) -> String {
+                            indexSize: UInt32?,
+                            reading: Bool = false) -> String {
+        if reading { return "READING" }
         guard let indexSize else { return "NO CORE" }
         guard query != nil else {
             return indexSize == 0

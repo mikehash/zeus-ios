@@ -92,6 +92,21 @@ struct NodesView: View {
     /// property would re-run the core on every render of this pane.
     @State private var findHits: [SearchHit] = []
 
+    /// The index size AS READ ON THIS APPEARANCE, never a value carried in
+    /// from a previous one. `inFlight` is what `READING` renders from: a
+    /// stored `nil` cannot distinguish "no core" from "no answer yet", so the
+    /// flag carries the distinction the Optional cannot.
+    @State private var indexReading: (value: UInt32?, inFlight: Bool) = (nil, true)
+
+    /// The generation of the search whose result may be written.
+    ///
+    /// Asserts the DROP, not the absence of change: a query superseded before
+    /// its result lands must not overwrite the newer one, and a test that only
+    /// checked "the hits changed" passes when the stale write wins a race.
+    @State private var findGeneration: Int = 0
+
+    @State private var findInFlight: Bool = false
+
     let onToast: (String) -> Void
 
     /// Opens the gateway editor for the arm this console was built from.
@@ -139,6 +154,10 @@ struct NodesView: View {
             }
             .padding(.bottom, 86)                          // :743 tab-bar gutter
         }
+        // THE READ ON THIS APPEARANCE. The row shows `READING` until it lands
+        // — never a size carried in from a previous appearance, which could
+        // report a stale count for an index that has since been rebuilt.
+        .task { await readIndexSize() }
         // :754-812 — the sheet layer, drawn OVER the scroll view rather than
         // inside it. Inside, the panel would scroll away with the content.
         .overlay {
@@ -197,7 +216,7 @@ struct NodesView: View {
 
     /// `N FILES INDEXED` / `INDEX EMPTY` / `NO CORE`.
     private var mnemosyneValue: String {
-        Self.mnemosyneValue(indexSize: core?.indexSize())
+        Self.mnemosyneValue(indexSize: indexReading.value, reading: indexReading.inFlight)
     }
 
     /// Pure over the core's answer, so both the row and the toast are the same
@@ -207,7 +226,13 @@ struct NodesView: View {
     /// that answered zero" are different facts, and the whole subject of this
     /// row is that an index with nothing in it must be distinguishable from a
     /// probe that never ran.
-    static func mnemosyneValue(indexSize: UInt32?) -> String {
+    /// `READING` is a FOURTH string, and it is distinct from both of the
+    /// others for the same reason they are distinct from each other: "not
+    /// asked yet" is neither "no core to ask" nor "a core that answered
+    /// zero". It outranks the `nil` fold because during a read the `nil`
+    /// means only that no answer has landed.
+    static func mnemosyneValue(indexSize: UInt32?, reading: Bool = false) -> String {
+        if reading { return "READING" }
         guard let n = indexSize else { return "NO CORE" }
         return n == 0 ? "INDEX EMPTY" : "\(n) FILES INDEXED"
     }
@@ -309,7 +334,9 @@ struct NodesView: View {
                 // when there is no core to ask.
                 NodeRow(icon: "cylinder.split.1x2", label: "Mnemosyne",
                         value: mnemosyneValue) {
-                    onToast(Self.mnemosyneToast(indexSize: core?.indexSize()))
+                    onToast(indexReading.inFlight
+                            ? "READING"
+                            : Self.mnemosyneToast(indexSize: indexReading.value))
                 }
                 // No selection yet renders the gateway's own word for its
                 // state, not an invented default.
@@ -471,14 +498,33 @@ struct NodesView: View {
             return
         }
         guard let core else { return }
+        findGeneration += 1
+        let generation = findGeneration
         findRan = q
-        findHits = core.search(query: q)
+        findInFlight = true
+        Task {
+            let hits = core.search(query: q)
+            // THE DROP. A result from a superseded query is discarded, not
+            // rendered — the operator's newest question is the only one whose
+            // answer belongs on screen.
+            guard Recall.mayWriteResult(generation: generation, current: findGeneration) else { return }
+            findHits = hits
+            findInFlight = false
+        }
+    }
+
+    /// The index read for THIS appearance.
+    private func readIndexSize() async {
+        indexReading = (nil, true)
+        let n = core?.indexSize()
+        indexReading = (n, false)
     }
 
     private var findSummary: String {
         Recall.findSummary(query: findRan,
                            hitCount: findHits.count,
-                           indexSize: core?.indexSize())
+                           indexSize: indexReading.value,
+                           reading: indexReading.inFlight || findInFlight)
     }
 
     // MARK: - :735-741  enroll

@@ -32,7 +32,13 @@ import Foundation
 protocol ProviderArming {
     /// Whether THIS core can send: the `Option` `send` reads, not the record
     /// the operator wrote. Never "did the operator pick a provider".
-    var isArmed: Bool { get }
+    ///
+    /// ASYNC BECAUSE THE MEASUREMENT IS, and the signature is the guard. A
+    /// synchronous form let `resolve` answer this question from the
+    /// commission; making it `async throws` removes that option from the type
+    /// system rather than from a reviewer's memory, which is the difference
+    /// between an invariant and a comment.
+    func isArmed() async throws -> Bool
 }
 
 /// The production conformer: the one embedded core the app links.
@@ -43,7 +49,10 @@ struct EmbeddedCoreArming: ProviderArming {
     /// and it is not the same failure as "no provider" — `makeTransport`
     /// already renders the init error verbatim, so this reports only the arm
     /// state and leaves the naming to the transport.
-    var isArmed: Bool { core?.hasProvider() ?? false }
+    func isArmed() async throws -> Bool {
+        guard let core else { return false }
+        return try await core.hasProvider()
+    }
 }
 
 extension GatewayConfig.Resolution {
@@ -52,10 +61,17 @@ extension GatewayConfig.Resolution {
     /// `.resolved` / `.absent` / `.malformed` pass through untouched: those
     /// arms describe a REMOTE gateway, where provider selection happens on the
     /// far side and this process's core is not the subject.
-    func withCoreReadiness(_ arming: ProviderArming) -> GatewayConfig.Resolution {
+    /// THE ONLY PRODUCER OF `.ready`. `resolve` can no longer reach it.
+    ///
+    /// A throw is NOT folded to `.noProvider`: "the core refused to answer" is
+    /// not "the core has no provider", and the second is a claim we would be
+    /// inventing. It stays `.checking`, which says only what we know.
+    func withCoreReadiness(_ arming: ProviderArming) async -> GatewayConfig.Resolution {
         guard case .local = config else { return self }
+        let armed: Bool
+        do { armed = try await arming.isArmed() } catch { return self }
         return GatewayConfig.Resolution(
-            config: .local(arming.isArmed ? .ready : .noProvider),
+            config: .local(armed ? .ready : .noProvider),
             source: source
         )
     }

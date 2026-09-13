@@ -220,7 +220,7 @@ struct RootView: View {
     /// built here would be a second store and the operator's key would be in
     /// the other one.
     static func armedResolution(store: CommissionStoring,
-                                keys: ProviderKeyStoring) -> GatewayConfig.Resolution {
+                                keys: ProviderKeyStoring) async -> GatewayConfig.Resolution {
         let core = EmbeddedCapabilities.shared()
         let seeded = LaunchArgs.seededProvider
         var commissionForArming = store.load()
@@ -243,7 +243,14 @@ struct RootView: View {
                        core: core,
                        providerKey: key,
                        baseURL: seeded?.baseURL ?? commissionForArming?.providerBaseURL)
-        return RootView.resolve(store: store)
+        // ONE ACT: arm → resolve → compose. `CoreArming.arm` above, the
+        // resolve, and this compose stay inside a single task for the reason
+        // the comment at the arm states — `resolve` cannot measure the core,
+        // so arming after the resolve would render an unmeasured arm on a core
+        // armed one line later. Splitting this into two tasks lets them
+        // interleave and reproduces exactly that defect; the stale-cache leg
+        // is what reds when someone does.
+        return await RootView.resolve(store: store)
             .withCoreReadiness(EmbeddedCoreArming(core: core))
     }
 
@@ -271,7 +278,18 @@ struct RootView: View {
         // from here through `CoreArming.arm`, outside any `#if DEBUG`. The
         // DEBUG seam seeds the COMMISSION this call reads — it does not arm
         // the core itself, so the path a person launches is the path measured.
-        let resolution = RootView.armedResolution(store: store, keys: keys)
+        // THE PURE RESOLVE IS THE SEED — not a hardcoded `.checking`, which
+        // would render a commissioned REMOTE gateway as a local core until the
+        // task landed. `resolve` is synchronous and answers the arms it can
+        // (`.resolved` / `.absent` / `.malformed` are all facts about the
+        // config, not the core); its `.local` arm now yields `.checking`
+        // because the record may say no and may not say yes.
+        //
+        // `init` assigns a `StateObject` and is not an async context, so the
+        // MEASURED arm cannot be constructed here at all. It arrives from the
+        // `.task` below, which runs the whole arm → resolve → compose act and
+        // `adopt`s the result.
+        let resolution = RootView.resolve(store: store)
         self.store = store
         self.push = push
         self.keys = keys
@@ -360,7 +378,23 @@ struct RootView: View {
                                    store: store,
                                    isPresented: $gatewayEditor,
                                    credentials: credentials,
-                                   onSaved: { configSource.adopt(RootView.armedResolution(store: store, keys: keys)) },
+                                   onSaved: {
+                                       // INVALIDATE BEFORE RE-READING. The
+                                       // badge drops to `.checking` the
+                                       // instant a save lands, so the window
+                                       // between the edit and the new reading
+                                       // cannot render READY from the old one.
+                                       // The PURE resolve is the invalidation:
+                                       // it re-reads the record (so a saved
+                                       // remote URL lands immediately) and its
+                                       // `.local` arm is `.checking` by
+                                       // construction. A hardcoded
+                                       // `.local(.checking)` would render a
+                                       // just-saved remote gateway as a local
+                                       // core for the width of the read.
+                                       configSource.adopt(RootView.resolve(store: store))
+                                       Task { configSource.adopt(await RootView.armedResolution(store: store, keys: keys)) }
+                                   },
                                    onToast: showToast)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(80)
@@ -387,6 +421,11 @@ struct RootView: View {
         // `start()` is idempotent by design: `.task` re-fires on view identity
         // changes, and two poll loops would halve the effective interval with
         // nothing in the UI to show it.
+        // THE READ ON THIS APPEARANCE. `.checking` is what the seed holds, and
+        // it disarms; this is what promotes it. Re-firing on view identity is
+        // wanted here rather than tolerated: the badge must not carry a
+        // reading taken before a `Routes` edit into the screen after it.
+        .task { configSource.adopt(await RootView.armedResolution(store: store, keys: keys)) }
         .task { link.start() }
         .task { await approvals.load() }
         // Background behaviour. Three phases, and only `.active` and
