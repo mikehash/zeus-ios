@@ -1219,7 +1219,7 @@ struct CommissioningView: View {
             modelPoll.reset()
             return
         }
-        guard let core = try? EmbeddedCore.shared.get() else {
+        guard let core = EmbeddedCapabilities.shared() else {
             modelPoll.reset()
             return
         }
@@ -1234,7 +1234,7 @@ struct CommissioningView: View {
             // `FETCHING MODELS…` exists to make visible rather than to make
             // felt.
             let result: Result<[String], Error> = await Task.detached(priority: .userInitiated) {
-                do { return .success(try core.listModels(id: row.id, key: probeKey, baseUrl: baseURL)) }
+                do { return .success(try core.listModels(id: row.id, key: probeKey, baseURL: baseURL)) }
                 catch { return .failure(error) }
             }.value
             modelPoll.accept(result, generation: token, label: row.label)

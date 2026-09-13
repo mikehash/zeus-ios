@@ -37,7 +37,7 @@ protocol ProviderArming {
 
 /// The production conformer: the one embedded core the app links.
 struct EmbeddedCoreArming: ProviderArming {
-    let core: ZeusCoreProtocol?
+    let core: SessionCapabilities?
 
     /// `nil` core = the bridge failed to initialise at all. That is not armed,
     /// and it is not the same failure as "no provider" — `makeTransport`
@@ -107,7 +107,7 @@ enum CoreArming {
     /// different states and a single false renders them identically.
     @discardableResult
     static func arm(commission: Commission?,
-                    core: ZeusCoreProtocol?,
+                    core: SessionCapabilities?,
                     providerKey: String?,
                     baseURL: String?) -> String? {
         guard let core else { return "the embedded core failed to initialise" }
@@ -148,7 +148,7 @@ enum CoreArming {
             return "NO KEY FOR \(ProviderCatalog.label(for: id)) — ENTER ONE IN ROUTES"
         }
         do {
-            try core.setProvider(id: id, model: model, key: key, baseUrl: resolvedBaseURL)
+            try core.setProvider(id: id, model: model, key: key, baseURL: resolvedBaseURL)
             return nil
         } catch {
             return "\(ProviderCatalog.label(for: id)) REFUSED: \(error)"
@@ -164,13 +164,13 @@ enum CoreArming {
     /// every other prefix), so a keyed provider legitimately yields nil and
     /// the arm above names that state instead of guessing a model.
     static func firstModel(for id: String,
-                           core: ZeusCoreProtocol?,
+                           core: SessionCapabilities?,
                            key: String?,
                            baseURL: String?) -> String? {
         guard let core else { return nil }
         guard let models = try? core.listModels(id: id,
                                                 key: probeKey(for: id, typed: key),
-                                                baseUrl: baseURL) else {
+                                                baseURL: baseURL) else {
             return nil
         }
         return models.first

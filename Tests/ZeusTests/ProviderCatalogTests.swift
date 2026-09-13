@@ -70,15 +70,15 @@ final class ProviderCatalogTests: XCTestCase {
         // 2. NO MODEL arm
         var noModel = c
         noModel.model = nil
-        let m = CoreArming.arm(commission: noModel, core: CatalogCore(), providerKey: "k", baseURL: nil)
+        let m = CoreArming.arm(commission: noModel, core: EmbeddedCapabilities(core: CatalogCore()), providerKey: "k", baseURL: nil)
         XCTAssertEqual(m, "NO MODEL — Xiaomi MiMo LISTED NONE", String(describing: m))
 
         // 3. NO KEY arm
-        let k = CoreArming.arm(commission: c, core: CatalogCore(), providerKey: nil, baseURL: nil)
+        let k = CoreArming.arm(commission: c, core: EmbeddedCapabilities(core: CatalogCore()), providerKey: nil, baseURL: nil)
         XCTAssertEqual(k, "NO KEY FOR Xiaomi MiMo — ENTER ONE IN ROUTES", String(describing: k))
 
         // 4. REFUSED arm
-        let r = CoreArming.arm(commission: c, core: CatalogCore(refuse: true), providerKey: "k", baseURL: nil)
+        let r = CoreArming.arm(commission: c, core: EmbeddedCapabilities(core: CatalogCore(refuse: true)), providerKey: "k", baseURL: nil)
         XCTAssertTrue(r?.hasPrefix("Xiaomi MiMo REFUSED") == true, String(describing: r))
         XCTAssertFalse(r?.contains("XIAOMIMIMO") == true, String(describing: r))
     }
@@ -118,7 +118,7 @@ final class ProviderCatalogTests: XCTestCase {
         var c = Commission()
         c.recordRoutesChoice(providerID: "anthropic", model: "claude-sonnet-4-6", baseURL: nil)
 
-        let reason = CoreArming.arm(commission: c, core: CatalogCore(), providerKey: nil, baseURL: nil)
+        let reason = CoreArming.arm(commission: c, core: EmbeddedCapabilities(core: CatalogCore()), providerKey: nil, baseURL: nil)
         XCTAssertEqual(reason, "NO KEY FOR Anthropic — ENTER ONE IN ROUTES", String(describing: reason))
         XCTAssertFalse(reason?.contains("NO MODEL") == true,
                        "the typed model must be what carries it past the model gate")
@@ -137,7 +137,7 @@ final class ProviderCatalogTests: XCTestCase {
         c.recordRoutesChoice(providerID: "ollama", model: "llama3.2:latest", baseURL: nil)
 
         let core = CatalogCore()
-        let reason = CoreArming.arm(commission: c, core: core,
+        let reason = CoreArming.arm(commission: c, core: EmbeddedCapabilities(core: core),
                                     providerKey: nil, baseURL: "http://localhost:11434")
         XCTAssertNil(reason, String(describing: reason))
         XCTAssertEqual(core.setCalls.first?.model, "llama3.2:latest")
@@ -155,8 +155,8 @@ final class ProviderCatalogTests: XCTestCase {
         var keyed = Commission(); keyed.recordRoutesChoice(providerID: "anthropic", model: "m", baseURL: nil)
         var keyless = Commission(); keyless.recordRoutesChoice(providerID: "ollama", model: "m", baseURL: nil)
 
-        let a = CoreArming.arm(commission: keyed, core: CatalogCore(), providerKey: nil, baseURL: nil)
-        let b = CoreArming.arm(commission: keyless, core: CatalogCore(), providerKey: nil, baseURL: nil)
+        let a = CoreArming.arm(commission: keyed, core: EmbeddedCapabilities(core: CatalogCore()), providerKey: nil, baseURL: nil)
+        let b = CoreArming.arm(commission: keyless, core: EmbeddedCapabilities(core: CatalogCore()), providerKey: nil, baseURL: nil)
         XCTAssertNotEqual(a, b, "keyed-without-key and keyless must not collapse to one outcome")
     }
 

@@ -21,7 +21,7 @@ struct HistorySheet: View {
     /// `Result`, and a core that failed to initialise is exactly the state
     /// where an invented empty list would be most wrong — `nil` renders
     /// `NO CORE`, which is what happened.
-    var core: ZeusCoreProtocol?
+    var core: SessionCapabilities?
 
     @Binding var isPresented: Bool
 
@@ -189,7 +189,7 @@ struct HistorySheet: View {
         guard let core else { return }
         Task.detached(priority: .userInitiated) {
             do {
-                let got = try core.messages(sessionId: id)
+                let got = try core.messages(sessionID: id)
                 let mapped = History.rows(from: got)
                 await MainActor.run { rows = mapped; failure = nil }
             } catch {

@@ -122,7 +122,7 @@ struct NodesView: View {
     /// `Result`, and a core that failed to initialise is exactly the state
     /// where an invented `LIVE-LINK` would be most wrong. `nil` renders
     /// `NO CORE`, which is what happened.
-    var core: ZeusCoreProtocol?
+    var core: SessionCapabilities?
 
     var body: some View {
         ScrollView {

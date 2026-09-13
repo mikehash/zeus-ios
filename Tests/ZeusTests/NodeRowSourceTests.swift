@@ -249,7 +249,7 @@ final class NodeRowSourceTests: XCTestCase {
         XCTAssertFalse(code.contains("EmbeddedCore.shared"),
                        "the pane resolved its own core — it must arrive as a " +
                        "parameter from RootView, which owns the one handle")
-        XCTAssertTrue(code.contains("var core: ZeusCoreProtocol?"),
+        XCTAssertTrue(code.contains("var core: SessionCapabilities?"),
                       "POS: the parameter is gone, so the absences above are " +
                       "satisfied by a view that reads no core at all")
     }

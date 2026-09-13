@@ -221,7 +221,7 @@ struct RootView: View {
     /// the other one.
     static func armedResolution(store: CommissionStoring,
                                 keys: ProviderKeyStoring) -> GatewayConfig.Resolution {
-        let core = try? EmbeddedCore.shared.get()
+        let core = EmbeddedCapabilities.shared()
         let seeded = LaunchArgs.seededProvider
         var commissionForArming = store.load()
         if let seeded {
@@ -339,7 +339,7 @@ struct RootView: View {
             // C — history, over the tabs but UNDER the gateway editor: a
             // lookup does not outrank a decision.
             if history {
-                HistorySheet(core: try? EmbeddedCore.shared.get(),
+                HistorySheet(core: EmbeddedCapabilities.shared(),
                              isPresented: $history)
                     .transition(.move(edge: .bottom))
                     .zIndex(75)
@@ -496,7 +496,7 @@ struct RootView: View {
                           gatewayEditor = true
                       },
                       resolution: configSource.resolution,
-                      core: try? EmbeddedCore.shared.get())
+                      core: EmbeddedCapabilities.shared())
         }
     }
 }
@@ -542,7 +542,7 @@ extension RootView {
             showToast(Recall.rememberToast(.empty))
             return
         }
-        guard let core = try? EmbeddedCore.shared.get() else {
+        guard let core = EmbeddedCapabilities.shared() else {
             showToast(Recall.rememberToast(.noCore))
             return
         }

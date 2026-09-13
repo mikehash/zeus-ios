@@ -110,7 +110,7 @@ final class ProviderArmingTests: XCTestCase {
     func testArmPassesTheCommissionProviderAndModelToTheCore() {
         let core = ArmingCore()
         let reason = CoreArming.arm(commission: commissioned(provider: "anthropic", model: "claude-x"),
-                                    core: core,
+                                    core: EmbeddedCapabilities(core: core),
                                     providerKey: "sk-real",
                                     baseURL: nil)
         XCTAssertNil(reason, "arming with a provider, a model and a key must succeed")
@@ -127,7 +127,7 @@ final class ProviderArmingTests: XCTestCase {
     func testTheOllamaBaseURLReachesTheCore() {
         let core = ArmingCore()
         let reason = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
-                                    core: core,
+                                    core: EmbeddedCapabilities(core: core),
                                     providerKey: nil,
                                     baseURL: "http://127.0.0.1:11434")
         XCTAssertNil(reason)
@@ -140,7 +140,7 @@ final class ProviderArmingTests: XCTestCase {
     func testTheKeylessProviderSendsThePlaceholderNotAnEmptyKey() {
         let core = ArmingCore()
         _ = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
-                           core: core,
+                           core: EmbeddedCapabilities(core: core),
                            providerKey: nil,
                            // Ollama is a `.url` provider and the arm now
                            // refuses one with no endpoint, so this leg supplies
@@ -172,7 +172,7 @@ final class ProviderArmingTests: XCTestCase {
 
         let core = ArmingCore()
         let reason = CoreArming.arm(commission: commissioned(provider: "ambient", model: "m1"),
-                                    core: core,
+                                    core: EmbeddedCapabilities(core: core),
                                     providerKey: nil,
                                     baseURL: nil)
 
@@ -195,7 +195,7 @@ final class ProviderArmingTests: XCTestCase {
 
         let core = ArmingCore()
         let reason = CoreArming.arm(commission: commissioned(provider: "acme", model: "m1"),
-                                    core: core,
+                                    core: EmbeddedCapabilities(core: core),
                                     providerKey: nil,
                                     baseURL: nil)
 
@@ -243,7 +243,7 @@ final class ProviderArmingTests: XCTestCase {
     /// the app to fix a daemon that is not running.
     func testUnarmedAndUnreachableAreDifferentStrings() {
         let noProvider = CoreArming.arm(commission: commissioned(provider: nil, model: nil),
-                                        core: ArmingCore(),
+                                        core: EmbeddedCapabilities(core: ArmingCore()),
                                         providerKey: nil,
                                         baseURL: nil)
         XCTAssertEqual(noProvider, GatewayConfig.noProviderMessage)
@@ -251,7 +251,7 @@ final class ProviderArmingTests: XCTestCase {
         let refusing = ArmingCore()
         refusing.setThrows = true
         let refused = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
-                                     core: refusing,
+                                     core: EmbeddedCapabilities(core: refusing),
                                      providerKey: nil,
                                      baseURL: "http://127.0.0.1:11434")
         XCTAssertNotNil(refused)
@@ -269,7 +269,7 @@ final class ProviderArmingTests: XCTestCase {
     func testAURLProviderWithNoEndpointIsRefusedAndNeverArmed() {
         let core = ArmingCore()
         let reason = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
-                                    core: core,
+                                    core: EmbeddedCapabilities(core: core),
                                     providerKey: nil,
                                     baseURL: nil)
         XCTAssertEqual(reason, "NO ENDPOINT FOR Ollama — ENTER ONE IN ROUTES")
@@ -281,7 +281,7 @@ final class ProviderArmingTests: XCTestCase {
         // endpoint arms, and it arms WITH THAT ENDPOINT. Without this the leg
         // above is a statement about `arm` refusing everything.
         let armed = CoreArming.arm(commission: commissioned(provider: "ollama", model: "llama3.2"),
-                                   core: core,
+                                   core: EmbeddedCapabilities(core: core),
                                    providerKey: nil,
                                    baseURL: "http://10.0.0.2:11434")
         XCTAssertNil(armed, "POS: with an endpoint it arms")
@@ -292,7 +292,7 @@ final class ProviderArmingTests: XCTestCase {
     func testAMissingModelIsNamedNotGuessed() {
         let core = ArmingCore()
         let reason = CoreArming.arm(commission: commissioned(provider: "anthropic", model: nil),
-                                    core: core,
+                                    core: EmbeddedCapabilities(core: core),
                                     providerKey: "sk-real",
                                     baseURL: nil)
         XCTAssertEqual(reason, "NO MODEL — Anthropic LISTED NONE")
@@ -303,7 +303,7 @@ final class ProviderArmingTests: XCTestCase {
     func testAKeyedProviderWithoutAKeyIsNamed() {
         let core = ArmingCore()
         let reason = CoreArming.arm(commission: commissioned(provider: "anthropic", model: "claude"),
-                                    core: core,
+                                    core: EmbeddedCapabilities(core: core),
                                     providerKey: nil,
                                     baseURL: nil)
         XCTAssertEqual(reason, "NO KEY FOR Anthropic — ENTER ONE IN ROUTES")
@@ -315,7 +315,7 @@ final class ProviderArmingTests: XCTestCase {
     func testFirstModelReturnsTheProvidersFirstEntry() {
         let core = ArmingCore()
         core.models = ["llama3.2:latest", "qwen3.8:27b-mlx"]
-        XCTAssertEqual(CoreArming.firstModel(for: "ollama", core: core, key: nil, baseURL: nil),
+        XCTAssertEqual(CoreArming.firstModel(for: "ollama", core: EmbeddedCapabilities(core: core), key: nil, baseURL: nil),
                        "llama3.2:latest")
     }
 
@@ -324,7 +324,7 @@ final class ProviderArmingTests: XCTestCase {
     func testAProviderThatCannotListYieldsNil() {
         let core = ArmingCore()
         core.listThrows = true
-        XCTAssertNil(CoreArming.firstModel(for: "anthropic", core: core, key: "sk", baseURL: nil))
+        XCTAssertNil(CoreArming.firstModel(for: "anthropic", core: EmbeddedCapabilities(core: core), key: "sk", baseURL: nil))
     }
 
     func testRecordRoutesChoiceStoresTheProvidersModel() {
