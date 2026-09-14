@@ -381,4 +381,96 @@ final class RecallTests: XCTestCase {
         XCTAssertTrue(Recall.mayWriteResult(generation: 2, current: 2),
                       "VACUITY: the current generation MUST be writable, or the guard drops everything")
     }
+
+    /// ONE DEFINITION, ONE PRODUCTION CALLER. A predicate leg is only a leg on
+    /// the SHIPPED guard if the symbol the test calls is the symbol the view
+    /// calls. Two definitions — a helper and a near-copy inlined in the view —
+    /// and the green above proves a property of the copy while the view still
+    /// writes stale. So: exactly one `static func mayWriteResult` in Sources,
+    /// and exactly one call of it, in `NodesView`.
+    func testTheGuardHasOneDefinitionAndTheViewCallsIt() throws {
+        let recall = try codeLinesJoined("Recall.swift")
+        let nodes  = try codeLinesJoined("NodesView.swift")
+
+        // STRIPPER CONTROLS. If the reader or the comment-filter ate the file,
+        // every count below is zero and the assertions become unfalsifiable.
+        XCTAssertGreaterThan(recall.count, 40, "VOID: stripper ate Recall.swift")
+        XCTAssertGreaterThan(nodes.count, 100, "VOID: stripper ate NodesView.swift")
+
+        let defs = recall.filter { $0.contains("static func mayWriteResult(") }
+        XCTAssertEqual(defs.count, 1,
+                       "mayWriteResult must have exactly ONE definition — a second lets the leg pass against a copy")
+
+        let defsElsewhere = nodes.filter { $0.contains("func mayWriteResult(") }
+        XCTAssertEqual(defsElsewhere.count, 0,
+                       "the view must not define its own mayWriteResult — it must call Recall's")
+
+        let callers = nodes.filter { $0.contains("Recall.mayWriteResult(") }
+        XCTAssertEqual(callers.count, 1,
+                       "exactly one production call site, in runFind — the drop happens in one place or not at all")
+
+        // POS CONTROL: a symbol known present in the same stripped text, so a
+        // zero above is a statement about mayWriteResult and not about the reader.
+        XCTAssertGreaterThan(nodes.filter { $0.contains("core.search(query:") }.count, 0,
+                             "VOID: the counter matches nothing at all in NodesView")
+        // NEG CONTROL: a symbol known absent, so the counter is not matching everything.
+        XCTAssertEqual(nodes.filter { $0.contains("Recall.zzzNoSuchGuard(") }.count, 0)
+    }
+
+    /// THE WRITE IS GUARDED, NOT MERELY THE PREDICATE CORRECT. A true
+    /// `mayWriteResult == false` is worth nothing if `runFind` writes
+    /// `findHits` before consulting it — predicate-true-but-write-anyway is
+    /// precisely the fault the guard exists to kill, and no value-level
+    /// assertion on the predicate can see it. `runFind` is a private method on
+    /// a `View`: it has no importable surface, so the ORDER inside the shipped
+    /// function is readable only from source.
+    func testRunFindConsultsTheGuardBeforeItWritesTheHits() throws {
+        let lines = try codeLinesJoined("NodesView.swift")
+        guard let start = lines.firstIndex(where: { $0.contains("private func runFind()") }),
+              let end = lines[start...].firstIndex(where: { $0.contains("private func readIndexSize()") })
+        else {
+            return XCTFail("VOID: could not slice runFind — anchors moved, this census measured nothing")
+        }
+        let slice = Array(lines[start..<end])
+
+        // SLICE CONTROL: the write we are ordering against must be INSIDE the
+        // slice, or "guard precedes write" is vacuously true over an empty set.
+        guard let guardAt = slice.firstIndex(where: { $0.contains("Recall.mayWriteResult(") }) else {
+            return XCTFail("VOID: the guard is not inside runFind — the drop is not where the write is")
+        }
+        guard let writeAt = slice.firstIndex(where: { $0.contains("findHits = hits") }) else {
+            return XCTFail("VOID: the hits write is not inside the slice being scanned")
+        }
+
+        XCTAssertLessThan(guardAt, writeAt,
+                          "the guard must be consulted BEFORE findHits is written — a stale result must be dropped, not rendered then corrected")
+
+        // And the guard must REFUSE, not branch into a different write: the
+        // only statement it may guard is an early return.
+        XCTAssertTrue(slice[guardAt].contains("else { return }"),
+                      "a failed guard must drop the result — anything else renders a superseded answer")
+
+        // Every write of findHits inside the Task is downstream of the guard.
+        let writesAfterGuard = slice.enumerated().filter { $0.element.contains("findHits = hits") }
+        XCTAssertEqual(writesAfterGuard.count, 1,
+                       "exactly one hits write in runFind — a second could sit above the guard unnoticed")
+    }
+
+    /// Source lines of a file in Sources/ZeusApp, comments stripped. FAILS
+    /// naming VOID when absent — never a skip.
+    private func codeLinesJoined(_ name: String) throws -> [String] {
+        let here = URL(fileURLWithPath: #filePath)
+        let root = here.deletingLastPathComponent()   // ZeusTests
+            .deletingLastPathComponent()              // Tests
+            .deletingLastPathComponent()              // repo
+        let url = root.appendingPathComponent("Sources/ZeusApp/\(name)")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw NSError(domain: "VOID", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey:
+                                        "VOID: no source at \(url.path) — this census measured nothing"])
+        }
+        return text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") }
+    }
 }
