@@ -75,7 +75,15 @@ protocol SessionCapabilities: Sendable {
     /// `NodesView.mnemosyneValue:206` folds absence to `NO CORE` and zero to
     /// `INDEX EMPTY` and the whole subject of that row is that the two must
     /// stay distinguishable — so this returns `UInt32?` rather than defaulting.
-    func indexSize() -> UInt32?
+    ///
+    /// ASYNC THROWS, for the reason `hasProvider` is: the gateway reads it
+    /// from `GET /v1/memory/files` over `URLSession`, and a conformer that
+    /// could not run that read has to THROW — `nil` here renders `NO CORE`
+    /// (`NodesView.mnemosyneValue:236`), which is a LOCALITY claim, and a
+    /// remote gateway that failed to answer has a core. Unimplemented wearing
+    /// the costume of no-core is the class the `""`-under-`updatedAtRfc3339`
+    /// sentinel was rejected for.
+    func indexSize() async throws -> UInt32?
 
     /// The provider's catalogue, or a throw naming why it could not be read.
     ///
@@ -121,15 +129,30 @@ protocol SessionCapabilities: Sendable {
     func messages(sessionID: String) async throws -> [TurnMessage]
 
     /// Write a fact to memory.
-    func remember(fact: String) throws
+    ///
+    /// ASYNC, for the same shape reason as its two neighbours: the gateway
+    /// writes it with `POST /v1/memory/remember` over `URLSession`, and a
+    /// semaphore on the cooperative pool deadlocks. The embedded arm was
+    /// already off the main thread (`EmbeddedCore.queue`), so the conversion
+    /// costs the caller an `await` and nothing else.
+    func remember(fact: String) async throws
 
     /// Query the memory index.
     ///
     /// Returns `[]` for a query that ran and found nothing. A conformer that
-    /// cannot run the query at all must THROW — `Recall.findSummary:478` reads
-    /// an empty array as "asked and got nothing", which is a lie if nobody
-    /// asked.
-    func search(query: String) -> [SearchHit]
+    /// cannot run the query at all must THROW — `Recall.findSummary` reads an
+    /// empty array as "asked and got nothing", which is a lie if nobody asked.
+    ///
+    /// THE SIGNATURE NOW MATCHES THE SENTENCE ABOVE IT. This doc mandated a
+    /// throw while sitting over a non-throwing `-> [SearchHit]`, and
+    /// `GatewayCapabilities` returned exactly the `[]` the comment forbids.
+    /// It was unreachable only because the census guard held the search site
+    /// on the embedded conformer; this commit migrates that site, so the lie
+    /// would have gone live here.
+    ///
+    /// `[RecallHit]`, not `[SearchHit]`: the gateway's memory arm has no
+    /// `path`, and the FFI type's is non-optional. See `RecallHit`.
+    func search(query: String) async throws -> [RecallHit]
 
     /// Arm the backend with a provider.
     func setProvider(id: String, model: String, key: String, baseURL: String?) throws
@@ -162,7 +185,7 @@ struct EmbeddedCapabilities: SessionCapabilities, @unchecked Sendable {
     /// 404 or refuse), and a protocol that could not express that would force
     /// it to return a fabricated zero into the row that exists to distinguish
     /// zero from unknown.
-    func indexSize() -> UInt32? { core.indexSize() }
+    func indexSize() async throws -> UInt32? { core.indexSize() }
 
     func listModels(id: String, key: String, baseURL: String?) throws -> [String] {
         try core.listModels(id: id, key: key, baseUrl: baseURL)
@@ -180,9 +203,15 @@ struct EmbeddedCapabilities: SessionCapabilities, @unchecked Sendable {
         try core.messages(sessionId: sessionID)
     }
 
-    func remember(fact: String) throws { try core.remember(fact: fact) }
+    func remember(fact: String) async throws { try core.remember(fact: fact) }
 
-    func search(query: String) -> [SearchHit] { core.search(query: query) }
+    /// FFI hits are ALWAYS `.file`: the embedded core searches `FileIndex`
+    /// (`bridge lib.rs:556`, built by `scan_workspace`), which has no record
+    /// arm at all. The mapping is `RecallHit.init(file:)`, a production symbol
+    /// a leg can call — not a closure re-typed inside a test.
+    func search(query: String) async throws -> [RecallHit] {
+        core.search(query: query).map(RecallHit.init(file:))
+    }
 
     func setProvider(id: String, model: String, key: String, baseURL: String?) throws {
         try core.setProvider(id: id, model: model, key: key, baseUrl: baseURL)

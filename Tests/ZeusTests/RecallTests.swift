@@ -97,8 +97,8 @@ final class RecallTests: XCTestCase {
     /// scan is indistinguishable from a bad query — which is precisely what
     /// `index_size`'s own doc calls itself a probe against.
     func testZeroHitsMeansSomethingDifferentOverAnEmptyIndex() {
-        let overEmpty = Recall.findSummary(query: "soul", hitCount: 0, indexSize: 0)
-        let overFull  = Recall.findSummary(query: "soul", hitCount: 0, indexSize: 5)
+        let overEmpty = Recall.findSummary(query: "soul", fileHits: 0, indexSize: 0)
+        let overFull  = Recall.findSummary(query: "soul", fileHits: 0, indexSize: 5)
         XCTAssertNotEqual(overEmpty, overFull,
                           "a broken scan must not read the same as a bad query")
         XCTAssertTrue(overFull.contains("5"),
@@ -108,17 +108,17 @@ final class RecallTests: XCTestCase {
     /// `nil` index is NOT folded into empty — "no core to ask" and "a core
     /// that answered zero" are different, the same rule `mnemosyneValue` runs.
     func testNoCoreIsNotAnEmptyIndex() {
-        XCTAssertNotEqual(Recall.findSummary(query: nil, hitCount: 0, indexSize: nil),
-                          Recall.findSummary(query: nil, hitCount: 0, indexSize: 0))
+        XCTAssertNotEqual(Recall.findSummary(query: nil, fileHits: 0, indexSize: nil),
+                          Recall.findSummary(query: nil, fileHits: 0, indexSize: 0))
     }
 
     /// Not-yet-asked vs asked-and-empty, over the SAME index size. Without
     /// this, the summary could read `INDEX EMPTY` forever and pass every
     /// other leg.
     func testAskedAndUnaskedReadDifferentlyOverTheSameIndex() {
-        let unasked = Recall.findSummary(query: nil,     hitCount: 0, indexSize: 5)
-        let asked   = Recall.findSummary(query: "zzz",   hitCount: 0, indexSize: 5)
-        let hit     = Recall.findSummary(query: "soul",  hitCount: 1, indexSize: 5)
+        let unasked = Recall.findSummary(query: nil,     fileHits: 0, indexSize: 5)
+        let asked   = Recall.findSummary(query: "zzz",   fileHits: 0, indexSize: 5)
+        let hit     = Recall.findSummary(query: "soul",  fileHits: 1, indexSize: 5)
         XCTAssertEqual(Set([unasked, asked, hit]).count, 3,
                        "three states, three strings: \(unasked) / \(asked) / \(hit)")
     }
@@ -314,9 +314,9 @@ final class RecallTests: XCTestCase {
     /// readings the operator can get after typing a fact they just saved:
     /// found it, index has files but not that, index is empty.
     func testARememberedFactReadsAsFoundNotAsABadQuery() {
-        let found   = Recall.findSummary(query: "zebraquorum", hitCount: 1, indexSize: 6)
-        let missing = Recall.findSummary(query: "zebraquorum", hitCount: 0, indexSize: 6)
-        let noIndex = Recall.findSummary(query: "zebraquorum", hitCount: 0, indexSize: 0)
+        let found   = Recall.findSummary(query: "zebraquorum", fileHits: 1, indexSize: 6)
+        let missing = Recall.findSummary(query: "zebraquorum", fileHits: 0, indexSize: 6)
+        let noIndex = Recall.findSummary(query: "zebraquorum", fileHits: 0, indexSize: 0)
 
         XCTAssertNotEqual(found, missing,
                           "a found fact and a missing one must not read alike")
@@ -333,9 +333,9 @@ final class RecallTests: XCTestCase {
     /// "measured and holds nothing" are different facts, and folding them
     /// tells the operator their memory is empty when it may be full.
     func testAnInFlightReadIsNotAnEmptyIndex() {
-        let reading = Recall.findSummary(query: "zeus", hitCount: 0, indexSize: nil, reading: true)
-        let empty   = Recall.findSummary(query: "zeus", hitCount: 0, indexSize: 0)
-        let noCore  = Recall.findSummary(query: "zeus", hitCount: 0, indexSize: nil)
+        let reading = Recall.findSummary(query: "zeus", fileHits: 0, indexSize: nil, reading: true)
+        let empty   = Recall.findSummary(query: "zeus", fileHits: 0, indexSize: 0)
+        let noCore  = Recall.findSummary(query: "zeus", fileHits: 0, indexSize: nil)
 
         XCTAssertEqual(reading, "READING")
         XCTAssertNotEqual(reading, empty,
@@ -349,11 +349,11 @@ final class RecallTests: XCTestCase {
     /// THE READ OUTRANKS THE COUNT. While a read is in flight every sentence
     /// with a denominator in it quotes a number we do not have.
     func testAReadInFlightOutranksAStaleCount() {
-        XCTAssertEqual(Recall.findSummary(query: nil, hitCount: 0, indexSize: 99, reading: true),
+        XCTAssertEqual(Recall.findSummary(query: nil, fileHits: 0, indexSize: 99, reading: true),
                        "READING")
-        XCTAssertEqual(Recall.findSummary(query: "q", hitCount: 3, indexSize: 99, reading: true),
+        XCTAssertEqual(Recall.findSummary(query: "q", fileHits: 3, indexSize: 99, reading: true),
                        "READING")
-        XCTAssertNotEqual(Recall.findSummary(query: "q", hitCount: 3, indexSize: 99, reading: false),
+        XCTAssertNotEqual(Recall.findSummary(query: "q", fileHits: 3, indexSize: 99, reading: false),
                           "READING",
                           "VACUITY: a settled read must NOT say READING, or the flag is ignored")
     }
@@ -473,4 +473,216 @@ final class RecallTests: XCTestCase {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.hasPrefix("//") }
     }
+    // MARK: - S5: locality, aperture, and the render branch
+
+    /// THE FIFTH OUTCOME IS A DISTINCT SENTENCE.
+    ///
+    /// `.written` says `THIS DEVICE`. Reusing it for a write that went over
+    /// `POST /v1/memory/remember` tells the operator their fact is on a phone
+    /// that does not have it — and the fact is recoverable only from the box
+    /// the sentence denied.
+    func testARemoteWriteDoesNotClaimThisDevice() {
+        let local  = Recall.rememberToast(.written)
+        let remote = Recall.rememberToast(.writtenRemote)
+        XCTAssertNotEqual(local, remote,
+                          "the two write outcomes render identically — the locality " +
+                          "claim survives the gateway")
+        XCTAssertTrue(local.contains("THIS DEVICE"))
+        XCTAssertFalse(remote.contains("THIS DEVICE"),
+                       "a remote write claims the local device")
+        XCTAssertTrue(remote.contains("GATEWAY"))
+    }
+
+    /// AND THE NO-CORE SENTENCE IS LOCAL-ONLY.
+    ///
+    /// `NO CORE ON THIS DEVICE` is false in the other direction: a gateway
+    /// that refused HAS a core, elsewhere. Neither remote string may carry it.
+    func testTheNoCoreSentenceNeverReachesTheGatewayArm() {
+        let noCore = Recall.rememberToast(.noCore)
+        XCTAssertTrue(noCore.contains("NO CORE ON THIS DEVICE"),
+                      "the local no-core sentence changed — this leg's subject moved")
+        for outcome in [Recall.RememberOutcome.writtenRemote] {
+            XCTAssertFalse(Recall.rememberToast(outcome).contains("NO CORE"),
+                           "a gateway outcome renders NO CORE — the costume defect")
+            XCTAssertFalse(Recall.rememberToast(outcome).contains("THIS DEVICE"))
+        }
+    }
+
+    /// THE WRITE OUTCOME IS SELECTED BY THE CONFIG ARM.
+    ///
+    /// Source-structural: `remember` is private on a `View` and reaches the
+    /// Keychain, so no behavioural leg can watch the selection. The subject is
+    /// that the choice is a `switch` on the config — NOT a nil-core probe,
+    /// which would be a second measurement able to disagree with the first.
+    func testTheWriteOutcomeIsChosenByTheArmAndNotAProbe() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/ZeusApp")
+        let src = try String(contentsOf: root.appendingPathComponent("RootView.swift"),
+                             encoding: .utf8)
+        let lines = src.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        guard let start = lines.firstIndex(where: { $0.contains("private func remember(_ message: Message)") }) else {
+            return XCTFail("VOID: the `remember` anchor moved — this leg measured nothing")
+        }
+        guard let end = lines[start...].firstIndex(where: { $0.contains("private func showToast(") }) else {
+            return XCTFail("VOID: the closing anchor moved — the slice is unbounded")
+        }
+        let slice = lines[start..<end].joined(separator: "\n")
+
+        XCTAssertTrue(slice.contains("case .resolved:"),
+                      "the outcome is not switched on the config arm")
+        XCTAssertTrue(slice.contains("success = .writtenRemote"),
+                      "the `.resolved` arm does not select the remote sentence")
+        XCTAssertTrue(slice.contains("makeCapabilities(for: config"),
+                      "the write does not route through the resolver — it is still " +
+                      "hardwired to the embedded conformer")
+        // POS control: the slice contains something known present.
+        XCTAssertTrue(slice.contains("Recall.rememberToast"))
+        // NEG control: the needle is not matching everything.
+        XCTAssertFalse(slice.contains("zzzNoSuchOutcome"))
+    }
+
+    /// A FILES COUNT NAMES ITS APERTURE.
+    ///
+    /// The two measurements are genuinely different — `scan_workspace`
+    /// (MAX_DEPTH 6, dotfiles skipped) vs `collect_files` (neither) — so the
+    /// same workspace yields two legitimate numbers, and the larger one shown
+    /// bare against a gateway is a number published without the aperture that
+    /// produced it.
+    func testAGatewayFileCountSaysSo() {
+        let local  = Recall.findSummary(query: nil, fileHits: 0, indexSize: 9)
+        let remote = Recall.findSummary(query: nil, fileHits: 0, indexSize: 9,
+                                        aperture: .gateway)
+        XCTAssertNotEqual(local, remote,
+                          "two different measurements render as the same sentence")
+        XCTAssertTrue(remote.contains("GATEWAY"))
+        XCTAssertFalse(local.contains("GATEWAY"))
+    }
+
+    /// A MEMORY HIT IS NOT COUNTED AS A FILE.
+    ///
+    /// `indexSize` is a FILES count on both arms, so a record inside that
+    /// numerator is the costume one layer up from the row: `3 OF 9 FILES`
+    /// when only one of the three was a file.
+    func testMemoryHitsAreNotCountedInTheFilesDenominator() {
+        let filesOnly = Recall.findSummary(query: "q", fileHits: 2, indexSize: 9)
+        XCTAssertTrue(filesOnly.contains("2 OF 9 FILES"))
+        XCTAssertFalse(filesOnly.contains("MEMOR"),
+                       "a memory clause appeared with no memory hits")
+
+        let mixed = Recall.findSummary(query: "q", fileHits: 2, indexSize: 9, memoryHits: 3)
+        XCTAssertTrue(mixed.contains("2 OF 9 FILES"),
+                      "the file numerator absorbed the records")
+        XCTAssertTrue(mixed.contains("3 MEMORIES"))
+
+        // A record-only result is NOT "no match": something was found, it was
+        // simply not a file.
+        let recordsOnly = Recall.findSummary(query: "q", fileHits: 0, indexSize: 9, memoryHits: 1)
+        XCTAssertFalse(recordsOnly.contains("NO MATCH"),
+                       "a hit was reported as no match because it was not a file")
+        XCTAssertTrue(recordsOnly.contains("1 MEMORY"))
+
+        // And genuinely nothing stays NO MATCH.
+        XCTAssertTrue(Recall.findSummary(query: "q", fileHits: 0, indexSize: 9)
+                        .contains("NO MATCH IN 9 FILES"))
+    }
+
+    /// A `.memory` HIT CANNOT REACH `dirLabel`.
+    ///
+    /// Not a NEG on absence — a BRANCH. `dirLabel`'s `nil` means "at the
+    /// workspace root" (its own doc comment says so), so a pathless record
+    /// routed through it does not render blank, it renders `WORKSPACE ROOT`:
+    /// a claim about where the record lives on disk. The `switch` on `kind`
+    /// makes that structurally unreachable.
+    func testAMemoryHitNeverRendersAFileLocation() {
+        let record = RecallHit(kind: .memory(id: "m-1",
+                                             memoryType: "Semantic",
+                                             content: "gate before land"),
+                               score: 0.4)
+        let toast = NodesView.hitToast(record)
+        XCTAssertFalse(toast.contains("WORKSPACE ROOT"),
+                       "a record with no path was told it lives at the workspace root")
+        XCTAssertTrue(toast.contains("SEMANTIC"))
+        XCTAssertTrue(toast.contains("gate before land"))
+
+        // POS control: a FILE hit at the root DOES get that sentence, so the
+        // NEG above is witnessing the branch and not the string's absence.
+        let rootFile = RecallHit(kind: .file(path: "README.md", snippet: nil), score: 0.9)
+        XCTAssertTrue(NodesView.hitToast(rootFile).contains("WORKSPACE ROOT"))
+        let nested = RecallHit(kind: .file(path: "docs/SOUL.md", snippet: nil), score: 0.9)
+        XCTAssertTrue(NodesView.hitToast(nested).contains("docs"))
+    }
+
+    /// THE ROW'S THREE FILE-SHAPED SLOTS ARE OFF THE KIND.
+    ///
+    /// `icon` was the hardcoded literal `"doc"` — a glyph asserting "file"
+    /// before a single string is read, which is the costume defect in the form
+    /// a reader meets FIRST. `label` was `SearchHit.name`, a field the memory
+    /// arm does not have. Only `score` was ever shared.
+    func testTheRowSlotsAreChosenByKind() {
+        let file = RecallHit(kind: .file(path: "docs/SOUL.md", snippet: "x"), score: 0.5)
+        let record = RecallHit(kind: .memory(id: "m", memoryType: "Episodic", content: "c"),
+                               score: 0.5)
+        XCTAssertNotEqual(file.icon, record.icon,
+                          "both kinds render the same glyph — the icon is still a literal")
+        XCTAssertEqual(file.icon, "doc")
+        XCTAssertEqual(file.label, "SOUL.md", "the file label is not the leaf name")
+        XCTAssertEqual(record.label, "Episodic",
+                       "a record has no `name`; its type is the only honest label")
+        XCTAssertEqual(Recall.scoreLabel(file.score), Recall.scoreLabel(record.score),
+                       "score is the ONE kind-agnostic slot and it diverged")
+        XCTAssertTrue(file.isFile)
+        XCTAssertFalse(record.isFile)
+    }
+
+    /// AND THE RENDER SITE ACTUALLY CONSUMES THE KIND-DERIVED SLOTS.
+    ///
+    /// THE GAP THIS CLOSES, MEASURED: `testTheRowSlotsAreChosenByKind` asserts
+    /// that `RecallHit.icon` DIFFERS by kind — and it stayed green under a
+    /// mutation that restored the literal `icon: "doc"` at the `NodeRow` call.
+    /// A correct property on a type says nothing about the view reading it;
+    /// the first-order leg measures the shape, this one measures the reach.
+    /// `NodeRow` is a SwiftUI view with no observable output in-process, so
+    /// the only instrument that can see the call is a source one.
+    func testTheRowReadsTheKindDerivedSlotsAndNotLiterals() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/ZeusApp")
+        let src = try String(contentsOf: root.appendingPathComponent("NodesView.swift"),
+                             encoding: .utf8)
+        let lines = src.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        guard let start = lines.firstIndex(where: { $0.contains("ForEach(Array(findHits.enumerated())") }) else {
+            return XCTFail("VOID: the hit-row anchor moved — this leg measured nothing")
+        }
+        guard let end = lines[start...].firstIndex(where: { $0.contains(".padding(.top, 8)") }) else {
+            return XCTFail("VOID: the closing anchor moved — the slice is unbounded")
+        }
+        let slice = lines[start..<end].joined(separator: "\n")
+
+        XCTAssertTrue(slice.contains("icon: pair.element.icon"),
+                      "the glyph is a literal again — every hit asserts FILE in a " +
+                      "picture before a single string is read")
+        XCTAssertTrue(slice.contains("label: pair.element.label"),
+                      "the label slot is not kind-derived")
+        XCTAssertTrue(slice.contains("Self.hitToast(pair.element)"),
+                      "the toast is not routed through the kind switch")
+        XCTAssertFalse(slice.contains("Recall.dirLabel("),
+                       "`dirLabel` is called at the row — a record can reach it")
+        // POS control: the slice contains something known present.
+        XCTAssertTrue(slice.contains("Recall.scoreLabel("))
+        // NEG control.
+        XCTAssertFalse(slice.contains("zzzNoSuchSlot"))
+    }
+
+    /// THE APERTURE IS SELECTED BY THE ARM, like the write sentence.
+    func testTheApertureFollowsTheConfigArm() throws {
+        let url = try XCTUnwrap(URL(string: "http://10.0.0.5:8080"))
+        let ep = GatewayConfig.Endpoint(url: url, token: "t")
+        XCTAssertEqual(NodesView.aperture(for: .resolved(ep)), .gateway)
+        XCTAssertEqual(NodesView.aperture(for: .local(.ready)), .embedded)
+        XCTAssertEqual(NodesView.aperture(for: .absent), .embedded)
+    }
+
 }

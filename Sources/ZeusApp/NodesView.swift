@@ -90,13 +90,18 @@ struct NodesView: View {
 
     /// HELD, not recomputed. `search` is a blocking FFI call; a computed
     /// property would re-run the core on every render of this pane.
-    @State private var findHits: [SearchHit] = []
+    @State private var findHits: [RecallHit] = []
 
     /// The index size AS READ ON THIS APPEARANCE, never a value carried in
     /// from a previous one. `inFlight` is what `READING` renders from: a
     /// stored `nil` cannot distinguish "no core" from "no answer yet", so the
     /// flag carries the distinction the Optional cannot.
     @State private var indexReading: (value: UInt32?, inFlight: Bool) = (nil, true)
+
+    /// Why the index read failed, when it failed. Held separately from
+    /// `indexReading.value` because a `nil` value already means `NO CORE`, and
+    /// a gateway that raised is not a device without a core.
+    @State private var indexError: String? = nil
 
     /// The generation of the search whose result may be written.
     ///
@@ -453,16 +458,22 @@ struct NodesView: View {
             if !findHits.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(Array(findHits.enumerated()), id: \.offset) { pair in
-                        NodeRow(icon: "doc",
-                                label: pair.element.name,
+                        // PER-KIND. Three of this row's four slots were
+                        // file-shaped: `icon` was the literal `"doc"`, `label`
+                        // was `SearchHit.name` (a field the memory arm does
+                        // not have), and the toast routed `path` through
+                        // `dirLabel`. Only `value` survives kind-agnostic,
+                        // because `score` is the one field on both wire arms.
+                        //
+                        // The switch is what makes the memory arm STRUCTURALLY
+                        // incapable of reaching the doc glyph, the name slot,
+                        // or `dirLabel` — a branch witnessed, which is stronger
+                        // than a NEG asserting absence.
+                        NodeRow(icon: pair.element.icon,
+                                label: pair.element.label,
                                 value: Recall.scoreLabel(pair.element.score),
                                 last: pair.offset == findHits.count - 1) {
-                            // The path is what the row cannot show and the
-                            // operator cannot otherwise get: `name` is already
-                            // rendered, so the tap reports the DIRECTORY.
-                            onToast(Recall.dirLabel(for: pair.element.path)
-                                        .map { "\(pair.element.name) — \($0)" }
-                                        ?? "\(pair.element.name) — WORKSPACE ROOT")
+                            onToast(Self.hitToast(pair.element))
                         }
                     }
                 }
@@ -503,12 +514,38 @@ struct NodesView: View {
         findRan = q
         findInFlight = true
         Task {
-            let hits = core.search(query: q)
+            // THE THROW IS LOAD-BEARING. A conformer that could not run the
+            // query must not answer `[]` — that renders "we could not ask" as
+            // "we asked and got nothing". The catch leaves `findHits` alone
+            // and clears the in-flight flag, so the summary falls back to the
+            // index sentence rather than reporting an empty result set.
+            // The outcome is CARRIED to the one drop site, never acted on at
+            // the point it lands. A second `mayWriteResult` call on the error
+            // path would be a second drop site — and `RecallTests`'
+            // definition-uniqueness leg reds on exactly that, correctly: a
+            // guard that exists in two places is a guard that can be edited in
+            // one of them.
+            let outcome: Result<[RecallHit], Error>
+            do {
+                outcome = .success(try await core.search(query: q))
+            } catch {
+                outcome = .failure(error)
+            }
             // THE DROP. A result from a superseded query is discarded, not
             // rendered — the operator's newest question is the only one whose
-            // answer belongs on screen.
+            // answer belongs on screen. A FAILED search is dropped on the same
+            // test: a stale error message is as wrong as a stale result set.
             guard Recall.mayWriteResult(generation: generation, current: findGeneration) else { return }
-            findHits = hits
+            switch outcome {
+            case let .success(hits):
+                findHits = hits
+            case let .failure(error):
+                // `findHits` is LEFT ALONE, not cleared: a search that could
+                // not run has not replaced the previous answer, and the
+                // summary falls back to the index sentence rather than
+                // reporting an empty result set.
+                onToast("SEARCH FAILED — \(error)")
+            }
             findInFlight = false
         }
     }
@@ -516,15 +553,58 @@ struct NodesView: View {
     /// The index read for THIS appearance.
     private func readIndexSize() async {
         indexReading = (nil, true)
-        let n = core?.indexSize()
+        // `try?` folds a THROW into `nil`, which renders `NO CORE` — the
+        // locality costume this commit exists to refuse. A gateway that could
+        // not be read is reported as such; the row keeps `READING` off and
+        // the toast carries the reason.
+        let n: UInt32?
+        do {
+            n = try await core?.indexSize()
+        } catch {
+            indexReading = (nil, false)
+            indexError = "\(error)"
+            return
+        }
+        indexError = nil
         indexReading = (n, false)
+    }
+
+    /// What a tapped hit reports.
+    ///
+    /// `dirLabel` is reachable ONLY from the `.file` arm. Its `nil` means "at
+    /// the workspace root" — a FILE fact, stated in its own doc comment
+    /// (`Recall.swift:181`) — and a pathless Mnemosyne record routed through
+    /// it would not render blank, it would render a claim about where it lives
+    /// on disk. `WORKSPACE ROOT` stays a file label.
+    static func hitToast(_ hit: RecallHit) -> String {
+        switch hit.kind {
+        case let .file(path, _):
+            let name = hit.label
+            return Recall.dirLabel(for: path).map { "\(name) — \($0)" }
+                ?? "\(name) — WORKSPACE ROOT"
+        case let .memory(_, memoryType, content):
+            // The record's OWN fields. No path, no directory, no root.
+            return Theme.joined([memoryType.uppercased(), content])
+        }
     }
 
     private var findSummary: String {
         Recall.findSummary(query: findRan,
-                           hitCount: findHits.count,
+                           fileHits: findHits.filter(\.isFile).count,
                            indexSize: indexReading.value,
-                           reading: indexReading.inFlight || findInFlight)
+                           reading: indexReading.inFlight || findInFlight,
+                           memoryHits: findHits.filter { !$0.isFile }.count,
+                           aperture: Self.aperture(for: resolution.config))
+    }
+
+    /// WHICH measurement the FILES count came from — off the config arm, the
+    /// same way the write-outcome string is chosen. Not a probe: the app
+    /// already decided which backend it is asking.
+    static func aperture(for config: GatewayConfig) -> Recall.Aperture {
+        switch config {
+        case .resolved:                     return .gateway
+        case .absent, .malformed, .local:   return .embedded
+        }
     }
 
     // MARK: - :735-741  enroll

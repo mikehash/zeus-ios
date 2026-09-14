@@ -118,15 +118,18 @@ final class SessionCapabilitiesTests: XCTestCase {
     /// a reading. `NodesView.mnemosyneValue:206` renders `nil` as `NO CORE`
     /// and zero as `INDEX EMPTY`, and an embedded core reporting `NO CORE`
     /// would be a lie about the one fact that row exists to carry.
-    func testAnEmbeddedZeroIsAReadingAndNotAnAbsence() {
+    func testAnEmbeddedZeroIsAReadingAndNotAnAbsence() async throws {
         let core = RecordingCore()
         core.size = 0
-        XCTAssertEqual(EmbeddedCapabilities(core: core).indexSize(), 0,
+        let cap = EmbeddedCapabilities(core: core)
+        let zero = try await cap.indexSize()
+        XCTAssertEqual(zero, 0,
                        "an embedded core that answered zero must not surface " +
                        "as nil — NO CORE and INDEX EMPTY are different facts")
 
         core.size = 7
-        XCTAssertEqual(EmbeddedCapabilities(core: core).indexSize(), 7)
+        let seven = try await EmbeddedCapabilities(core: core).indexSize()
+        XCTAssertEqual(seven, 7)
     }
 
     /// A THROW CARRIES THE CORE'S OWN SENTENCE THROUGH THE SEAM.

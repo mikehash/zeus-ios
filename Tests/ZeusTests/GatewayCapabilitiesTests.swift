@@ -53,6 +53,145 @@ final class GatewayCapabilitiesTests: XCTestCase {
     ]}
     """
 
+    // MARK: - S5 fixtures: the two arms of POST /v1/memory/search
+
+    /// The HYBRID arm, verbatim in structure from `memory_handlers.rs:512-527`.
+    /// NO `path` on any entry — that is the whole point of the fixture.
+    private static let hybridSearch = """
+    {"results":[
+      {"id":"m-1","session_id":"s-9","content":"the operator prefers phased pushes",
+       "score":0.81,"memory_type":"Semantic","importance":0.9},
+      {"id":"m-2","session_id":"s-9","content":"gate before land",
+       "score":0.42,"memory_type":"Episodic","importance":0.5}
+    ],"search_method":"hybrid"}
+    """
+
+    /// The FILE arm, from `memory_handlers.rs:601`.
+    private static let fileSearch = """
+    {"results":[
+      {"path":"docs/SOUL.md","snippet":"substrate-walk","score":0.77},
+      {"path":"README.md","snippet":"zeus","score":0.31}
+    ],"search_method":"file"}
+    """
+
+    /// A MIXED payload. Not a shape the gateway emits today — it picks one arm
+    /// per request — but the decoder must not be written in a way that makes a
+    /// mixed set impossible, because "which arm" is a server-side availability
+    /// question that can change under the app.
+    private static let mixedSearch = """
+    {"results":[
+      {"path":"docs/SOUL.md","snippet":"substrate-walk","score":0.77},
+      {"id":"m-1","session_id":"s-9","content":"gate before land",
+       "score":0.42,"memory_type":"Semantic","importance":0.5}
+    ],"search_method":"hybrid"}
+    """
+
+    private func decodeSearch(_ json: String) throws -> GatewayCapabilities.SearchPayload {
+        try JSONDecoder().decode(GatewayCapabilities.SearchPayload.self,
+                                 from: Data(json.utf8))
+    }
+
+    /// BOTH ARMS ARE CONSUMED.
+    ///
+    /// The mutation this exists for: a decoder that maps only the file arm
+    /// compiles, passes every file-arm leg, and silently renders ZERO rows
+    /// against a Mnemosyne-backed gateway — fewer hits than the gateway
+    /// returned, with nothing on screen saying so. A count alone catches it;
+    /// the kinds are asserted too so a decoder that mapped records into the
+    /// file arm cannot pass by arithmetic.
+    func testBothSearchArmsAreConsumed() throws {
+        let hybrid = GatewayCapabilities.hits(from: try decodeSearch(Self.hybridSearch))
+        XCTAssertEqual(hybrid.count, 2,
+                       "a Mnemosyne payload lost rows — the memory arm is not mapped")
+        XCTAssertTrue(hybrid.allSatisfy { !$0.isFile })
+
+        let files = GatewayCapabilities.hits(from: try decodeSearch(Self.fileSearch))
+        XCTAssertEqual(files.count, 2)
+        XCTAssertTrue(files.allSatisfy(\.isFile))
+
+        let mixed = GatewayCapabilities.hits(from: try decodeSearch(Self.mixedSearch))
+        XCTAssertEqual(mixed.count, 2)
+        XCTAssertEqual(mixed.filter(\.isFile).count, 1,
+                       "a mixed set collapsed to one kind — the branch is not per-entry")
+    }
+
+    /// A MNEMOSYNE RECORD NEVER YIELDS A PATH.
+    ///
+    /// The NEG that makes the seam type worth its cost: `SearchHit.path` is a
+    /// non-optional generated `String`, so any decoder written against the FFI
+    /// type must INVENT one here — `""`, or the id, or the content's first
+    /// line. All three render as a location the record does not have.
+    func testAMemoryRecordNeverCarriesAPath() throws {
+        let hits = GatewayCapabilities.hits(from: try decodeSearch(Self.hybridSearch))
+        for hit in hits {
+            switch hit.kind {
+            case .file:
+                XCTFail("a pathless record was mapped into the FILE arm")
+            case let .memory(id, memoryType, content):
+                XCTAssertFalse(id.isEmpty)
+                XCTAssertFalse(memoryType.isEmpty)
+                XCTAssertFalse(content.isEmpty)
+            }
+        }
+        // POS control: the same instrument DOES produce `.file` on the other
+        // payload, so the assertion above is not vacuously true.
+        let files = GatewayCapabilities.hits(from: try decodeSearch(Self.fileSearch))
+        XCTAssertEqual(files.first?.kind, .file(path: "docs/SOUL.md", snippet: "substrate-walk"))
+    }
+
+    /// `search_method` IS NOT THE BRANCH.
+    ///
+    /// The mixed fixture says `"hybrid"` and carries a file entry. A decoder
+    /// routing on the method string would map that entry as a record — an
+    /// entry WITH a path rendered under a label it does not have. The
+    /// structured fields decide; the method string is corroboration.
+    func testTheMethodStringDoesNotDecideTheKind() throws {
+        let payload = try decodeSearch(Self.mixedSearch)
+        XCTAssertEqual(payload.search_method, "hybrid",
+                       "the fixture no longer states the method the branch must IGNORE")
+        let hits = GatewayCapabilities.hits(from: payload)
+        XCTAssertTrue(hits.contains { $0.isFile },
+                      "a file entry under a `hybrid` method was routed by the string")
+    }
+
+    /// AN UNIDENTIFIABLE ENTRY IS DROPPED, NOT BLANKED.
+    ///
+    /// Neither shape present: no `path`, no `id`/`content` pair. Rendering it
+    /// would produce a row with an empty label and a score — a hit the
+    /// operator cannot act on, presented as one they can.
+    func testAnEntryMatchingNeitherArmIsDropped() throws {
+        let json = """
+        {"results":[
+          {"score":0.5},
+          {"path":"a.md","snippet":null,"score":0.9}
+        ],"search_method":"file"}
+        """
+        let hits = GatewayCapabilities.hits(from: try decodeSearch(json))
+        XCTAssertEqual(hits.count, 1, "an unidentifiable entry was rendered as a row")
+        XCTAssertTrue(hits[0].isFile)
+    }
+
+    /// THE GATEWAY THROWS RATHER THAN ANSWERING EMPTY.
+    ///
+    /// Source-structural, and it has to be: `search` reaches `URLSession`, so
+    /// a behavioural leg would need a live socket. The subject is the SHAPE of
+    /// the failure path — `[]` and `nil` are forbidden RETURNS on a conformer
+    /// that could not run, because `Recall.findSummary` reads an empty array
+    /// as "asked and got nothing".
+    func testTheGatewayNeverAnswersEmptyWhenItCannotRun() throws {
+        let code = codeLines(try source("GatewayCapabilities.swift")).joined(separator: "\n")
+        XCTAssertFalse(code.contains("func search(query: String) async throws -> [RecallHit] { [] }"),
+                       "the gateway answers `[]` — 'could not ask' rendered as 'asked and got nothing'")
+        XCTAssertFalse(code.contains("func indexSize() async throws -> UInt32? { nil }"),
+                       "the gateway answers `nil` — a locality claim (`NO CORE`) from a remote core")
+        // POS control: the real bodies ARE present, so the two NEGs above are
+        // not passing because the methods vanished.
+        XCTAssertTrue(code.contains("let payload: SearchPayload = try await post"))
+        XCTAssertTrue(code.contains("let payload: FileListPayload = try await get(\"/v1/memory/files\")"))
+        // NEG control on the instrument itself.
+        XCTAssertFalse(code.contains("func zzzNoSuchSearch"))
+    }
+
     private func decode(_ json: String) throws -> [GatewayCapabilities.ReplayEntry] {
         try JSONDecoder()
             .decode(GatewayCapabilities.ReplayPayload.self, from: Data(json.utf8))
@@ -355,17 +494,47 @@ final class GatewayCapabilitiesTests: XCTestCase {
         // NEG control: the needle is not matching everything.
         XCTAssertFalse(code.contains("func zzzNoSuchMethod"))
 
-        let stubs = ["hasProvider", "indexSize", "listModels", "remember", "search", "setProvider"]
+        // The four now IMPLEMENTED. POS on each, so this half of the census
+        // cannot silently become vacuous if a name is renamed.
+        XCTAssertTrue(code.contains("func indexSize() async throws -> UInt32? {"))
+        XCTAssertTrue(code.contains("func remember(fact: String) async throws {"))
+        XCTAssertTrue(code.contains("func search(query: String) async throws -> [RecallHit] {"))
+
+        // THE CUE NAMES A SYMBOL, AND THE SAME LEG ASSERTS IT.
+        //
+        // This message used to carry LINE NUMBERS — `RootView:224`, `:499`,
+        // `:545`. S3b's edits to `RootView` pushed every one of them down and
+        // three of the four went stale, LATENTLY: the message only prints when
+        // the guard reds, so no gate between S3a′ and here could have caught
+        // it. A coordinate the instrument cannot re-derive at run time is a
+        // comment wearing an assertion's clothes.
+        //
+        // So the cue names the enclosing symbol, and each symbol printed below
+        // is asserted present in the same leg that prints it.
+        let siteSymbols: [(method: String, file: String, symbol: String)] = [
+            ("hasProvider", "RootView.swift",      "static func armedResolution(store:"),
+            ("setProvider", "RootView.swift",      "static func armedResolution(store:"),
+            ("listModels",  "Commissioning.swift", "EmbeddedCapabilities.shared()"),
+        ]
+        for site in siteSymbols {
+            let src = codeLines(try source(site.file)).joined(separator: "\n")
+            XCTAssertTrue(src.contains(site.symbol),
+                          "the cue for `\(site.method)` names `\(site.symbol)` in " +
+                          "\(site.file), and that symbol is not there — the coordinate " +
+                          "this guard would print has drifted, exactly as the line " +
+                          "numbers did.")
+        }
+
+        let stubs = ["hasProvider", "listModels", "setProvider"]
         for name in stubs {
             let isStubbed = code.contains("throw GatewayError.unimplemented(method: \"\(name)\")")
                 || code.contains("func \(name)() async throws -> Bool { false }")
-                || code.contains("func \(name)() -> UInt32? { nil }")
-                || code.contains("func \(name)(query: String) -> [SearchHit] { [] }")
+            let where_ = siteSymbols.first { $0.method == name }
             XCTAssertTrue(isStubbed,
                           "`\(name)` is no longer a stub. Its production site must now " +
-                          "migrate to `makeCapabilities`: hasProvider/setProvider -> " +
-                          "RootView:224, indexSize/search -> RootView:499, remember -> " +
-                          "RootView:545, listModels -> Commissioning:1222.")
+                          "migrate to `makeCapabilities` — the site is " +
+                          "`\(where_?.symbol ?? "?")` in \(where_?.file ?? "?"), and that " +
+                          "symbol is asserted present by this same leg.")
         }
     }
 
@@ -383,15 +552,24 @@ final class GatewayCapabilitiesTests: XCTestCase {
             total += codeLines(try source(n))
                 .filter { $0.contains("EmbeddedCapabilities.shared()") }.count
         }
-        XCTAssertEqual(total, 4,
+        XCTAssertEqual(total, 2,
                        "the un-migrated set moved. A site may only route through " +
                        "`makeCapabilities` once `GatewayCapabilities` IMPLEMENTS the " +
                        "methods that site calls — see the census leg above.")
 
-        // And the ONE that did migrate is the history sheet, by name.
+        // And the THREE that migrated are pinned BY NAME. A bare count of 2
+        // would permit a swap — migrate one site, un-migrate another, total
+        // unmoved — which is the fault `check_separator_debt.sh` was rewritten
+        // to fix, one subsystem over.
         let root = codeLines(try source("RootView.swift")).joined(separator: "\n")
         XCTAssertTrue(root.contains("HistorySheet(core: makeCapabilities("),
                       "the history sheet is the only screen reading sessions()/messages(); " +
                       "if it is not routed, a remote gateway shows LOCAL history")
+        XCTAssertTrue(root.contains("core: makeCapabilities(for: configSource.config,"),
+                      "NodesView is not routed — a commissioned gateway would search the " +
+                      "LOCAL workspace index and render it as the remote one")
+        XCTAssertTrue(root.contains("try await core.remember(fact: fact)"),
+                      "the remember site is not routed — `POST /v1/memory/remember` exists " +
+                      "(routes.rs:237), so refusing it denies a capability the gateway has")
     }
 }

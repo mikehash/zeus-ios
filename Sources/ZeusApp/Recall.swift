@@ -79,10 +79,30 @@ enum Recall {
     /// What the operator is told. Three arms, because three things can happen
     /// and a single "SAVED" would report the same success for all of them.
     enum RememberOutcome: Equatable {
-        /// The core took it.
+        /// The core took it, in this process, on this device.
         case written
         /// There was no core to ask — `EmbeddedCore.shared` failed to init.
+        ///
+        /// A LOCALITY claim, and only the `.local` arm may make it. See
+        /// `.writtenRemote`.
         case noCore
+        /// The fact went to a commissioned gateway.
+        ///
+        /// ── Why a FIFTH outcome and not a reuse ────────────────────────
+        ///
+        /// `.written` renders `MEMORY WRITTEN · THIS DEVICE` — a locality
+        /// claim that is FALSE the moment the write goes over REST, and
+        /// `.noCore`'s `NO CORE ON THIS DEVICE` is false in the other
+        /// direction: a remote gateway that refused HAS a core, it is simply
+        /// not here. Both are the costume defect, one sentence apart.
+        ///
+        /// SELECTED BY THE CONFIG ARM, never by a nil-core probe: resolution
+        /// already knows whether the operator is `.resolved` or `.local`
+        /// (`RootView:367` passes `configSource.config` to `makeCapabilities`
+        /// at the sibling site), so the string is a function of a decision
+        /// already made rather than of a second measurement that could
+        /// disagree with the first.
+        case writtenRemote
         /// The bubble held nothing writable.
         case empty
         /// The core raised. The message is the core's, not ours.
@@ -97,6 +117,7 @@ enum Recall {
         // firing on its author. `Theme.joined` is the migrated form: it owns the
         // separator and the W1 wrap rule with it.
         case .written:          return Theme.joined(["MEMORY WRITTEN", "THIS DEVICE"])
+        case .writtenRemote:    return Theme.joined(["MEMORY WRITTEN", "GATEWAY"])
         case .noCore:           return "NO CORE ON THIS DEVICE — NOTHING TO WRITE TO"
         case .empty:            return "NOTHING TO REMEMBER"
         case .failed(let why):  return "MEMORY WRITE FAILED — \(why.uppercased())"
@@ -151,19 +172,57 @@ enum Recall {
     /// `query` branch for the same reason — the count in every one of those
     /// sentences is a number we do not have yet.
     static func findSummary(query: String?,
-                            hitCount: Int,
+                            fileHits: Int,
                             indexSize: UInt32?,
-                            reading: Bool = false) -> String {
+                            reading: Bool = false,
+                            memoryHits: Int = 0,
+                            aperture: Aperture = .embedded) -> String {
         if reading { return "READING" }
         guard let indexSize else { return "NO CORE" }
+        let files = "FILES\(aperture.suffix)"
         guard query != nil else {
             return indexSize == 0
                 ? "INDEX EMPTY"
-                : "\(indexSize) FILES INDEXED"
+                : "\(indexSize) \(files) INDEXED"
         }
         if indexSize == 0 { return "INDEX EMPTY — NOTHING TO SEARCH" }
-        if hitCount == 0  { return "NO MATCH IN \(indexSize) FILES" }
-        return "\(hitCount) OF \(indexSize) FILES"
+        // THE DENOMINATOR NAMES WHAT IT COUNTS. `indexSize` is a count of
+        // FILES on both arms — `FileIndex.len()` locally, `GET
+        // /v1/memory/files` remotely — so a Mnemosyne record inside this
+        // numerator would be a memory hit counted as a file, the costume one
+        // layer up from the row. The file hits are counted here; the records
+        // carry their own clause.
+        if fileHits == 0 && memoryHits == 0 { return "NO MATCH IN \(indexSize) \(files)" }
+        var parts: [String] = []
+        if fileHits > 0 || memoryHits == 0 {
+            parts.append("\(fileHits) OF \(indexSize) \(files)")
+        }
+        if memoryHits > 0 {
+            parts.append("\(memoryHits) MEMOR\(memoryHits == 1 ? "Y" : "IES")")
+        }
+        return Theme.joined(parts)
+    }
+
+    /// WHICH measurement a FILES count came from.
+    ///
+    /// The two apertures are genuinely different and neither is wrong: the
+    /// embedded index is `scan_workspace` (MAX_DEPTH 6, dotfiles skipped,
+    /// 64 KiB of content per file) and the gateway's is `collect_files` over
+    /// the workspace root with no depth cap and no dotfile skip
+    /// (`memory_handlers.rs:190`). The remote number legitimately EXCEEDS the
+    /// local one on the same workspace, so a bare `N FILES INDEXED` shown
+    /// against a gateway is a number published without the aperture that
+    /// produced it.
+    enum Aperture: Equatable {
+        case embedded
+        case gateway
+
+        var suffix: String {
+            switch self {
+            case .embedded: return ""
+            case .gateway:  return " ON GATEWAY"
+            }
+        }
     }
 
     /// The row's trailing slot: the score, fixed to two places.

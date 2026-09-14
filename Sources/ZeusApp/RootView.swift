@@ -543,7 +543,13 @@ struct RootView: View {
                           gatewayEditor = true
                       },
                       resolution: configSource.resolution,
-                      core: EmbeddedCapabilities.shared())
+                      // MIGRATED. `search` and `indexSize` are implemented on
+                      // the gateway conformer as of this commit, so the
+                      // mnemosyne row and the find pane read the backend the
+                      // operator is actually on. Before this, a commissioned
+                      // remote gateway searched the LOCAL workspace index.
+                      core: makeCapabilities(for: configSource.config,
+                                             credentials: credentials))
         }
     }
 }
@@ -589,22 +595,37 @@ extension RootView {
             showToast(Recall.rememberToast(.empty))
             return
         }
-        guard let core = EmbeddedCapabilities.shared() else {
+        // MIGRATED. `GatewayCapabilities` now implements `remember` over
+        // `POST /v1/memory/remember` (`routes.rs:237`), so this site may route
+        // through the resolver — before it could not, and throwing
+        // `NOT AVAILABLE ON A REMOTE GATEWAY` here would have DENIED a
+        // capability the gateway has.
+        let config = configSource.config
+        guard let core = makeCapabilities(for: config, credentials: credentials) else {
             showToast(Recall.rememberToast(.noCore))
             return
         }
-        EmbeddedCore.queue.async {
+        // THE SUCCESS STRING IS CHOSEN BY THE ARM, not by a probe. A remote
+        // write reporting `THIS DEVICE` is the locality costume; resolution
+        // already knows which backend it built, so the sentence is a function
+        // of a decision already made.
+        let success: Recall.RememberOutcome
+        switch config {
+        case .resolved:                     success = .writtenRemote
+        case .absent, .malformed, .local:   success = .written
+        }
+        Task {
             let outcome: Recall.RememberOutcome
             do {
-                try core.remember(fact: fact)
-                outcome = .written
+                try await core.remember(fact: fact)
+                outcome = success
             } catch {
                 // The core's own message, not ours. A generic "write failed"
                 // here would discard the one string that says WHY — and the
                 // bridge's errors name their cause (`NoWorkspace`, an IO path).
                 outcome = .failed("\(error)")
             }
-            Task { @MainActor in showToast(Recall.rememberToast(outcome)) }
+            await MainActor.run { showToast(Recall.rememberToast(outcome)) }
         }
     }
 

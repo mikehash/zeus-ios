@@ -112,16 +112,87 @@ struct GatewayCapabilities: SessionCapabilities {
     // MARK: - the six this commit does not carry
 
     func hasProvider() async throws -> Bool { false }
-    func indexSize() -> UInt32? { nil }
     func listModels(id: String, key: String, baseURL: String?) throws -> [String] {
         throw GatewayError.unimplemented(method: "listModels")
     }
-    func remember(fact: String) throws {
-        throw GatewayError.unimplemented(method: "remember")
-    }
-    func search(query: String) -> [SearchHit] { [] }
     func setProvider(id: String, model: String, key: String, baseURL: String?) throws {
         throw GatewayError.unimplemented(method: "setProvider")
+    }
+
+    // MARK: - memory, over REST
+
+    /// `GET /v1/memory/files`, counted.
+    ///
+    /// ── A DIFFERENT APERTURE UNDER THE SAME NAME ───────────────────────
+    ///
+    /// The embedded answer is `FileIndex.len()` from `scan_workspace`:
+    /// MAX_DEPTH 6, dotfiles skipped, a 64 KiB content aperture. This one is
+    /// `collect_files` over the workspace root
+    /// (`zeus-api/handlers/memory_handlers.rs:190`) with NO depth cap and NO
+    /// dotfile skip. Same name, different measurement — the remote count
+    /// legitimately EXCEEDS the local one on the same workspace, and neither
+    /// is wrong. So the figure names its source at the render site
+    /// (`Recall.findSummary(aperture:)`); a number published without the
+    /// aperture that produced it is not a fact.
+    ///
+    /// THROWS rather than returning `nil` when it cannot read: `nil` renders
+    /// `NO CORE`, a locality claim, and a gateway that did not answer has a
+    /// core.
+    func indexSize() async throws -> UInt32? {
+        let payload: FileListPayload = try await get("/v1/memory/files")
+        return UInt32(payload.files.count)
+    }
+
+    /// `POST /v1/memory/remember`.
+    ///
+    /// The route exists (`zeus-api/routes.rs:237`) and takes `{"fact": ...}`
+    /// (`RememberRequest`, `memory_handlers.rs:21`), which is why throwing
+    /// `NOT AVAILABLE ON A REMOTE GATEWAY` here would have DENIED a capability
+    /// the gateway has.
+    func remember(fact: String) async throws {
+        _ = try await post("/v1/memory/remember", body: ["fact": fact]) as RememberPayload
+    }
+
+    /// `POST /v1/memory/search`, both arms consumed.
+    ///
+    /// Never `[]` on failure — `post` throws, and the throw is the point:
+    /// "we could not ask" and "we asked and got nothing" render differently
+    /// and must stay distinguishable.
+    func search(query: String) async throws -> [RecallHit] {
+        let payload: SearchPayload = try await post("/v1/memory/search",
+                                                    body: ["query": query]) as SearchPayload
+        return Self.hits(from: payload)
+    }
+
+    /// The search mapping, as a `static` over the decoded payload.
+    ///
+    /// Extracted for the reason `rows(from:)` was: a leg that builds its own
+    /// `RecallHit` from the decoded payload asserts a property of its own
+    /// copy, and passed a sentinel mutation at S3a until the mapping became a
+    /// production symbol it could call.
+    ///
+    /// BRANCHES ON THE STRUCTURED FIELDS, not on `search_method`. A `path`
+    /// present is a file hit whatever the method string says; `search_method`
+    /// is corroboration. And BOTH arms are consumed — mapping only the file
+    /// arm would silently drop every Mnemosyne record, rendering fewer rows
+    /// than the gateway returned with nothing on screen saying so.
+    static func hits(from payload: SearchPayload) -> [RecallHit] {
+        payload.results.compactMap { r in
+            if let path = r.path {
+                return RecallHit(kind: .file(path: path, snippet: r.snippet),
+                                 score: r.score ?? 0)
+            }
+            if let id = r.id, let content = r.content {
+                return RecallHit(kind: .memory(id: id,
+                                               memoryType: r.memory_type ?? "MEMORY",
+                                               content: content),
+                                 score: r.score ?? 0)
+            }
+            // Neither shape. Dropped rather than rendered as a blank row: an
+            // entry the app cannot identify is not a hit it can show, and a
+            // row with no label is the invention this type exists to refuse.
+            return nil
+        }
     }
 
     // MARK: - the decoder's join
@@ -189,6 +260,45 @@ struct GatewayCapabilities: SessionCapabilities {
         let sessions: [Item]
     }
 
+    /// `GET /v1/memory/files` — only the count is read, so only the array is
+    /// declared. `size`/`modified` are on the wire and deliberately unread:
+    /// a field decoded and discarded invites a later reader to believe it is
+    /// rendered somewhere.
+    struct FileListPayload: Decodable {
+        struct Item: Decodable { let path: String }
+        let files: [Item]
+    }
+
+    /// `POST /v1/memory/remember` — `{"success": true, "scope": …}`.
+    /// Decoded rather than ignored so a 200 carrying `success: false` cannot
+    /// read as a write.
+    struct RememberPayload: Decodable {
+        let success: Bool
+    }
+
+    /// `POST /v1/memory/search` — the UNION of the two arms.
+    ///
+    /// Every field Optional because each arm carries a strict subset:
+    /// hybrid sends `{id, session_id, content, score, memory_type,
+    /// importance}` (`memory_handlers.rs:512-527`), file sends
+    /// `{path, snippet, score}` (`:601`). A non-optional `path` here would
+    /// fail the WHOLE decode on a hybrid payload — the empty-array lie
+    /// arriving by a different door.
+    struct SearchPayload: Decodable {
+        struct Result: Decodable {
+            let path: String?
+            let snippet: String?
+            let id: String?
+            let content: String?
+            let memory_type: String?
+            let score: Double?
+        }
+        let results: [Result]
+        /// Corroborating metadata, NOT the branch. Decoded so a leg can
+        /// witness that the app read it and did not route on it.
+        let search_method: String?
+    }
+
     struct ReplayEntry: Decodable {
         struct Call: Decodable { let id: String; let name: String }
         struct Result: Decodable { let call_id: String }
@@ -207,14 +317,44 @@ struct GatewayCapabilities: SessionCapabilities {
 
     // MARK: - transport
 
+    /// `POST` with a JSON body. Shares `get`'s bearer, 404 arm, and error
+    /// vocabulary — one transport, two verbs, so a route that answers 404 on
+    /// POST names its path exactly as a GET one does.
+    private func post<T: Decodable>(_ path: String,
+                                    body: [String: String]) async throws -> T {
+        var request = authorized(path, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await send(request, path: path)
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
+        try await send(authorized(path, method: "GET"), path: path)
+    }
+
+    /// The ONE bearer site in this file.
+    ///
+    /// `CredentialTests.testEveryBearerSiteIsFedByTheProvider` reded when
+    /// `post` carried its own copy of the header — correctly, and its message
+    /// names the rule: one file with two header sites is drift. Two copies of
+    /// an auth header are two places a future edit can forget one, and the
+    /// forgotten one fails as a 401 the operator reads as a bad token.
+    private func authorized(_ path: String, method: String) -> URLRequest {
         var request = URLRequest(url: endpoint.url.appendingPathComponent(path))
-        request.httpMethod = "GET"
+        request.httpMethod = method
         // Same bearer path as `HTTPTransport:144` — one Keychain reader.
         if let token = credentials.credential(for: endpoint) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        return request
+    }
 
+    /// The one response path: unreachable / non-HTTP / 404 / status / decode.
+    ///
+    /// EXTRACTED, not copied. `post` needs every one of these arms and a
+    /// second copy of them is a copy that will drift — the 404-names-its-path
+    /// ruling would have held on GET and quietly not on POST.
+    private func send<T: Decodable>(_ request: URLRequest, path: String) async throws -> T {
         let data: Data
         let response: URLResponse
         do {
