@@ -251,4 +251,156 @@ final class VoiceTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - the meter
+
+    /// Silence draws a still orb, and an empty buffer is not motion.
+    ///
+    /// The floor is the load-bearing half: room tone on a phone mic sits far
+    /// above literal zero, so a meter mapping linearly from 0 would render an
+    /// empty room as a live orb — a picture claiming to hear something.
+    func testQuietAudioAndNoAudioBothReadAsStill() {
+        XCTAssertEqual(VoiceMeter.level([]), 0,
+                       "an empty buffer must not invent motion")
+        XCTAssertEqual(VoiceMeter.level([0, 0, 0, 0]), 0,
+                       "digital silence is still")
+
+        // Room tone: below the floor, so still.
+        let tone = [Float](repeating: 0.001, count: 512)
+        XCTAssertEqual(VoiceMeter.level(tone), 0,
+                       "room tone is below the floor and must not pulse")
+
+        // NEG CONTROL — the floor is a floor, not a mute. A signal just above
+        // it must move, or this leg would pass against a meter wired to 0.
+        let audible = [Float](repeating: 0.05, count: 512)
+        XCTAssertGreaterThan(VoiceMeter.level(audible), 0,
+                             "a signal above the floor must register")
+    }
+
+    /// Louder input yields a higher level, and the range is clamped at 1.
+    ///
+    /// Monotonicity is the property the orb actually consumes: the renderer
+    /// reads `level` into a displacement term, so a meter that is merely
+    /// non-zero but unordered would animate without corresponding to speech.
+    func testTheMeterIsMonotonicAndClampedToTheRendererRange() {
+        let quiet  = VoiceMeter.level([Float](repeating: 0.02, count: 256))
+        let mid    = VoiceMeter.level([Float](repeating: 0.10, count: 256))
+        let loud   = VoiceMeter.level([Float](repeating: 0.24, count: 256))
+
+        XCTAssertLessThan(quiet, mid, "level must rise with amplitude")
+        XCTAssertLessThan(mid, loud, "level must rise with amplitude")
+
+        // Clipping: full-scale and beyond both pin at 1, never above — the
+        // renderer's displacement term is scaled by this and a value over 1
+        // puts geometry outside the shape the tuning describes.
+        XCTAssertEqual(VoiceMeter.level([Float](repeating: 1.0, count: 256)), 1)
+        XCTAssertEqual(VoiceMeter.normalize(99), 1,
+                       "an out-of-range RMS must clamp, not escape the range")
+
+        // VACUITY — the three readings are genuinely distinct, so the
+        // ordering above is not three equal values trivially satisfying `<`.
+        XCTAssertNotEqual(quiet, loud)
+    }
+
+    /// RMS, not peak: one clipped sample must not pin the orb.
+    ///
+    /// A peak meter reads a single click as sustained speech for the whole
+    /// buffer. This leg fails against `samples.map(abs).max()`, which is the
+    /// mistake the implementation is written to avoid.
+    func testOneLoudSampleDoesNotPinTheMeter() {
+        var buffer = [Float](repeating: 0, count: 1024)
+        buffer[0] = 1.0                       // a single full-scale click
+
+        let level = VoiceMeter.level(buffer)
+        XCTAssertLessThan(level, 0.5,
+                          "a single clipped sample must not read as speech — "
+                              + "this is peak-vs-RMS and peak fails here")
+
+        // POS CONTROL — the same energy spread across the buffer DOES read
+        // high, so the leg above is measuring distribution and not just
+        // asserting that small numbers are small.
+        let sustained = [Float](repeating: 0.3, count: 1024)
+        XCTAssertGreaterThan(VoiceMeter.level(sustained), 0.5)
+    }
+
+    /// The tap feeds the meter, and it is the SAME buffer the recognizer gets.
+    ///
+    /// ⚠️ SOURCE LEG, and it has to be. `installTap`'s closure has no
+    /// in-process observable: nothing in this target can start an
+    /// `AVAudioEngine`, so a behavioural leg cannot witness the wire. A leg
+    /// asserting only that `VoiceMeter.level` is correct would be a property of
+    /// the TYPE and would stay green with the meter never called — the exact
+    /// shape that let `icon: "doc"` survive a green suite in S5.
+    ///
+    /// So this slices the shipped `beginTap` body between two anchors and
+    /// asserts the meter is reached inside it. VOID if either anchor moves.
+    func testTheInstalledTapFeedsTheMeterFromTheRecognizersOwnBuffer() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/Voice.swift")
+        let source = try String(contentsOf: file, encoding: .utf8)
+
+        let openAnchor  = "input.installTap("
+        let closeAnchor = "engine.prepare()"
+
+        guard let start = source.range(of: openAnchor),
+              let end   = source.range(of: closeAnchor, range: start.upperBound ..< source.endIndex)
+        else {
+            return XCTFail(
+                "VOID — an anchor moved (\(openAnchor) / \(closeAnchor)); this "
+                    + "leg measured nothing and must not be read as a pass"
+            )
+        }
+        let slice = String(source[start.upperBound ..< end.lowerBound])
+
+        // The recognizer still receives the buffer — the meter is an ADDITION
+        // to the existing wire, never a replacement for it.
+        XCTAssertTrue(slice.contains("req?.append(buffer)"),
+                      "the recognizer must still receive every buffer")
+
+        // The meter is reached from inside the tap.
+        XCTAssertTrue(slice.contains("VoiceMeter.level("),
+                      "the installed tap does not feed the meter — the orb "
+                          + "would pulse on a value nothing measures")
+
+        // ONE capture, TWO readers: a second tap is a second aperture, and two
+        // meters of one microphone can disagree.
+        XCTAssertEqual(
+            source.components(separatedBy: "installTap(").count - 1, 1,
+            "exactly one tap may be installed"
+        )
+
+        // NEG CONTROL — the slice is a real slice and not the whole file.
+        XCTAssertFalse(slice.contains("static func level("),
+                       "the slice escaped its anchors")
+    }
+
+    /// Teardown zeroes the meter, so a dead microphone cannot draw a live orb.
+    ///
+    /// Source-level for the same reason as above: `stop()` touches the engine.
+    /// The ORDER is the assertion — zeroing after the tap is removed races a
+    /// renderer already holding the last live value.
+    func testStopZeroesTheMeterBeforeItRemovesTheTap() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/ZeusApp/Voice.swift")
+        let source = try String(contentsOf: file, encoding: .utf8)
+
+        guard let stopRange = source.range(of: "func stop() {"),
+              let zero      = source.range(of: "level = 0", range: stopRange.upperBound ..< source.endIndex),
+              let removeTap = source.range(of: "removeTap(onBus: 0)", range: stopRange.upperBound ..< source.endIndex)
+        else {
+            return XCTFail("VOID — an anchor moved inside stop(); nothing measured")
+        }
+
+        XCTAssertLessThan(
+            zero.lowerBound, removeTap.lowerBound,
+            "the meter must be zeroed BEFORE the tap is removed, or a stale "
+                + "level survives the microphone it described"
+        )
+    }
 }

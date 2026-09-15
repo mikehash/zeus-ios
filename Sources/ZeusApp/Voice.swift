@@ -175,6 +175,72 @@ enum VoiceTranscript {
     }
 }
 
+// MARK: - the meter
+
+/// Turns one captured audio buffer into the orb's `level`.
+///
+/// WHY THIS EXISTS. `DeviceOrb.level` is documented as "audio level 0...1"
+/// (`DeviceOrb.swift:69`) and every production site passes it a LITERAL:
+/// `Commissioning:534` passes `narrator.isNarrating ? 0.7 : 0.2`, and
+/// `HomeView.orbLevel` says so in its own words — "THIS IS NOT AN AUDIO
+/// AMPLITUDE AND MUST NOT BE READ AS ONE". Those two are honest, because
+/// neither screen meters anything. A voice surface that pulsed the orb on a
+/// literal would NOT be honest: the picture would claim to be listening while
+/// reading a constant, which is the costume defect at the most visible surface
+/// in the app. `VoiceInput` already holds the real PCM frames — `beginTap`
+/// receives them and appends them to the recognizer — so the amplitude is not
+/// new capture, it is a read of data already in hand and already discarded.
+///
+/// PURE BY CONSTRUCTION, for the reason this file states above `VoiceInput`:
+/// the shell is untestable, so it must hold no decisions. The mapping from
+/// samples to energy is a decision, so it lives out here where legs reach it.
+enum VoiceMeter {
+
+    /// Root-mean-square energy of `samples`, mapped to `0...1`.
+    ///
+    /// RMS rather than peak: a single clipped sample would pin a peak meter to
+    /// 1 for the whole buffer, so the orb would read one click as sustained
+    /// speech. RMS is the energy the ear reports.
+    ///
+    /// An EMPTY buffer yields 0 and not a carried-forward value. "No frames
+    /// arrived" is not "silence was heard", but both are legitimately drawn as
+    /// a still orb; what would be a lie is inventing motion for a buffer that
+    /// never came.
+    static func level(_ samples: [Float]) -> Double {
+        guard !samples.isEmpty else { return 0 }
+        var sum = 0.0
+        for s in samples {
+            let v = Double(s)
+            sum += v * v
+        }
+        let rms = (sum / Double(samples.count)).squareRoot()
+        return normalize(rms)
+    }
+
+    /// The quietest RMS drawn as motion.
+    ///
+    /// Room tone on a phone mic sits around -60 dBFS. Mapping linearly from 0
+    /// would render an empty room as a live orb, so the floor is subtracted
+    /// rather than the range stretched.
+    static let floor = 0.0025
+
+    /// RMS at which the orb is fully energetic. Conversational speech at arm's
+    /// length lands well under 1.0 RMS, so a full-scale ceiling would leave the
+    /// orb nearly dormant through an entire sentence.
+    static let ceiling = 0.25
+
+    /// Map an RMS reading onto the orb's `0...1`, clamped at both ends.
+    ///
+    /// Clamped rather than trusted: `level` is read straight into the
+    /// renderer's displacement term (`DeviceOrb:511`), and a value above 1
+    /// would put geometry outside the shape the tuning describes.
+    static func normalize(_ rms: Double) -> Double {
+        guard rms > floor else { return 0 }
+        let span = ceiling - floor
+        return min(1, (rms - floor) / span)
+    }
+}
+
 // MARK: - the recognizer
 
 /// Owns the audio tap and the on-device recognition request.
@@ -193,6 +259,14 @@ final class VoiceInput: ObservableObject {
 
     /// The last accepted transcript, cleared as the composer consumes it.
     @Published var transcript: String?
+
+    /// Live microphone energy, `0...1`, for `DeviceOrb.level`.
+    ///
+    /// Zero whenever the tap is not installed — see `stop()`. A meter that
+    /// held its last reading after teardown would draw a listening orb over a
+    /// dead microphone, which is the same class as a stale badge surviving the
+    /// state it described.
+    @Published private(set) var level: Double = 0
 
     private let recognizer = SFSpeechRecognizer()
     private let engine = AVAudioEngine()
@@ -271,8 +345,13 @@ final class VoiceInput: ObservableObject {
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak req] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak req, weak self] buffer, _ in
             req?.append(buffer)
+            // The meter reads the SAME buffer the recognizer receives — one
+            // capture, two readers. A second tap would be a second aperture,
+            // and two meters of one microphone can disagree.
+            let energy = VoiceMeter.level(Self.samples(of: buffer))
+            Task { @MainActor in self?.level = energy }
         }
         engine.prepare()
         try engine.start()
@@ -293,8 +372,23 @@ final class VoiceInput: ObservableObject {
         }
     }
 
+    /// Copy the first channel of `buffer` out as plain samples.
+    ///
+    /// Returns empty for a buffer carrying no float data rather than
+    /// substituting silence-shaped zeros: `VoiceMeter.level` already maps
+    /// empty to 0, so the absence is expressed once, in the pure function that
+    /// the legs can reach.
+    nonisolated static func samples(of buffer: AVAudioPCMBuffer) -> [Float] {
+        guard let channel = buffer.floatChannelData?[0] else { return [] }
+        return Array(UnsafeBufferPointer(start: channel,
+                                         count: Int(buffer.frameLength)))
+    }
+
     /// Tear down every piece, in the order that does not deadlock.
     func stop() {
+        // Zeroed FIRST: the tap is removed on the next line, so any later
+        // reset would race a renderer already drawing the last live value.
+        level = 0
         engine.inputNode.removeTap(onBus: 0)
         if engine.isRunning { engine.stop() }
         request?.endAudio()
