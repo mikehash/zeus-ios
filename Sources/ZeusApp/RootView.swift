@@ -494,7 +494,18 @@ struct RootView: View {
                          gatewayEditor = true
                      },
                      approvals: approvals,
-                     resolution: configSource.resolution)
+                     resolution: configSource.resolution,
+                     // Second reader of the ONE catalogue store (`:104`), the
+                     // same one NODES reads. Not a second source.
+                     routes: routes,
+                     // Second reader of the ONE `VoiceInput` (`:61`). The ZEUS
+                     // tab and the SESSION composer cannot disagree about
+                     // whether the tap is installed.
+                     voiceState: voice.state,
+                     voiceLevel: voice.level,
+                     onVoice: voice.toggle,
+                     // Route selection has one surface; this is the affordance.
+                     onOpenRoutes: { tab = .nodes })
         case .session:
             SessionView(
                 messages: session.messages,

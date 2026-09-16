@@ -55,11 +55,43 @@ struct HomeView: View {
     /// one decision.
     let resolution: GatewayConfig.Resolution
 
+    /// The live provider catalogue — RECEIVED, not owned. `RootView:104` holds
+    /// the one `RouteCatalogStore`; NODES already reads it (`NodesView:349`).
+    /// This screen is a SECOND READER of that store, not a second source: the
+    /// prototype's `ROUTES` array is eight hardcoded entries carrying invented
+    /// `P50 180MS` latencies, and transcribing it would put a fabricated
+    /// measurement on the cold-start screen — the `t-12min` defect wearing a
+    /// catalogue. The pill renders what the gateway enumerated or the
+    /// catalogue's own word for why it enumerated nothing.
+    @ObservedObject var routes: RouteCatalogStore
+
+    /// Mic phase. Read, never owned: `RootView:61` holds the one `VoiceInput`
+    /// so the ZEUS tab and the SESSION composer cannot disagree about whether
+    /// the tap is installed.
+    let voiceState: VoiceState
+
+    /// Live microphone energy `0...1` from the tap already in hand
+    /// (`Voice.swift:269`, landed `9e06d1a`). Passed as a value rather than
+    /// observed so this view redraws with the engine's phase, not at buffer
+    /// rate.
+    let voiceLevel: Double
+
+    /// The COMMS action — `VoiceInput.toggle`. No default: a defaulted closure
+    /// lets a call site ship a button that does nothing, and the compiler must
+    /// enumerate the wiring.
+    var onVoice: () -> Void
+
+    /// Opens the same route-selection surface NODES draws. The sheet has one
+    /// owner; this is the affordance.
+    var onOpenRoutes: () -> Void
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 identity
                 agent
+                routePill
+                agentControls
                 LinkCard(state: link.state, onRetry: { Task { await link.probeOnce() } })
                 statusGrid
                 alertsRow
@@ -136,12 +168,201 @@ struct HomeView: View {
     /// twice and still leave the phase unrecoverable from the picture.
     private var agent: some View {
         DeviceOrb(mode: session.state.orbMode,
-                  level: Self.orbLevel(for: session.state))
+                  level: Self.orbLevel(for: session.state,
+                                       voiceState: voiceState,
+                                       micLevel: voiceLevel))
             .frame(width: Self.orbDiameter, height: Self.orbDiameter)
             .frame(maxWidth: .infinity, alignment: .center)
             .accessibilityElement()
             .accessibilityLabel("Zeus orb")
             .accessibilityValue(DeviceOrb.accessibilityValue(for: session.state.orbMode))
+    }
+
+    // MARK: - Route pill
+
+    /// `ROUTE · <name>` under the orb (`zeus-mobile-app1.jsx:585-591`).
+    ///
+    /// The value is the catalogue's, never a literal. `routeValue` is static
+    /// for the reason every other derivation in this file is: a SwiftUI body
+    /// is not observable in-process, so a derivation left inside one is
+    /// guardable only by screenshot.
+    private var routePill: some View {
+        Button(action: onOpenRoutes) {
+            HStack(spacing: 6) {
+                Image(systemName: "cpu")
+                    .font(Theme.mono(9))
+                Text(Self.routeValue(selected: routes.selected,
+                                     state: routes.state))
+                    .font(Theme.mono(9))
+                    .tracking(1.0)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(Theme.accent2)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Theme.accent.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .accessibilityLabel("Route")
+        .accessibilityValue(Self.routeValue(selected: routes.selected,
+                                            state: routes.state))
+    }
+
+    /// Selection first, then the catalogue's own reason, then the invitation.
+    ///
+    /// NO LITERAL PROVIDER LIST and no invented latency. The prototype ships
+    /// eight hardcoded routes carrying `P50 180MS · DIRECT` strings that
+    /// nothing measured; those are a fabricated measurement in a slot the eye
+    /// reads as telemetry, and they are not ported. Where the catalogue is
+    /// empty the pill says WHY in the catalogue's words (`emptyReason`)
+    /// instead of naming a provider the gateway never enumerated.
+    static func routeValue(selected: Route?, state: RouteCatalogState) -> String {
+        if let name = selected?.name, !name.isEmpty {
+            return Theme.joined(["ROUTE", name.uppercased()])
+        }
+        if let why = state.emptyReason, !why.isEmpty {
+            return Theme.joined(["ROUTE", why])
+        }
+        return Theme.joined(["ROUTE", "TAP TO SELECT"])
+    }
+
+    // MARK: - Controls
+
+    /// COMMS · BROADCAST · PING (`zeus-mobile-app1.jsx:597-640`).
+    ///
+    /// COMMS is wired to the one `VoiceInput`; the other two are TERMINALLY
+    /// DISABLED, and the reason is the strongest kind of absence there is.
+    private var agentControls: some View {
+        VStack(spacing: 7) {
+            HStack(spacing: 14) {
+                controlButton(symbol: Self.commsSymbol(for: voiceState),
+                              label: Self.commsLabel(for: voiceState),
+                              enabled: voiceState.isActionable,
+                              filled: true,
+                              action: onVoice)
+                controlButton(symbol: "megaphone",
+                              label: Self.absentVerbLabel(control: "Broadcast"),
+                              enabled: false,
+                              filled: false,
+                              action: {})
+                controlButton(symbol: "mappin.and.ellipse",
+                              label: Self.absentVerbLabel(control: "Ping node"),
+                              enabled: false,
+                              filled: false,
+                              action: {})
+            }
+            HStack(spacing: 14) {
+                ForEach(Self.controlCaptions, id: \.self) { caption in
+                    Text(caption)
+                        .font(Theme.display(7, .bold))
+                        .tracking(1.6)
+                        .foregroundStyle(Theme.w(0.35))
+                        .frame(width: Self.controlSide)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+            }
+            if let line = Self.controlsNote(voiceState: voiceState) {
+                Text(line)
+                    .font(Theme.mono(9))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.w(0.4))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    static let controlSide: CGFloat = 58
+    static let controlCaptions = ["COMMS", "BROADCAST", "PING"]
+
+    /// The COMMS glyph reports the mic's state rather than always claiming a
+    /// mic — the same rule `SessionView:488` already applies, reused so two
+    /// screens cannot draw different pictures of one `VoiceInput`.
+    static func commsSymbol(for state: VoiceState) -> String {
+        switch state {
+        case .idle:        return "mic"
+        case .listening:   return "stop.fill"
+        case .denied:      return "mic.slash"
+        case .unavailable: return "mic.slash"
+        }
+    }
+
+    static func commsLabel(for state: VoiceState) -> String {
+        switch state {
+        case .idle:        return "Start voice input"
+        case .listening:   return "Stop voice input"
+        case .denied:      return "Microphone denied — open Settings"
+        case .unavailable: return "Voice unavailable on this device"
+        }
+    }
+
+    /// BROADCAST and PING: DISABLED, TERMINALLY, ON VERB-ABSENCE.
+    ///
+    /// The census that settles it, POS/NEG controlled in one invocation:
+    ///
+    /// ```
+    /// broadcast/chime/pingNode/wakeNode/restartNode   app=0  ffi=0   (subject)
+    /// session                                         app=361 ffi=49 (POS ctl)
+    /// zzzNoVerb                                       app=0  ffi=0   (NEG ctl)
+    /// FFI surface: hasProvider indexSize listModels messages remember
+    ///              search send sessions setProvider   ← no node verb
+    /// ```
+    ///
+    /// A live POS beside a dead NEG makes this a PROVEN ABSENCE rather than an
+    /// unfound one. The prototype's handlers are literal toasts — `BROADCAST
+    /// SENT — KITCHEN NODE`, `PING — KITCHEN NODE CHIMED`, and on the offline
+    /// arm `NODE UNREACHABLE — QUEUED FOR NEXT LINK`, which additionally
+    /// claims a queue that does not exist. Shipping them would put two
+    /// controls on the cold-start screen asserting a node was reached and made
+    /// a sound while nothing left the phone.
+    ///
+    /// NOT CONDITIONED ON `link.isLinked`, deliberately, and `LinkMonitor` IS
+    /// in scope here (`:24`) with `LinkState.unreachable(host:reason:)` — so
+    /// the temptation is concrete, not hypothetical. A control that reads link
+    /// state to decide its enablement ASSERTS THE VERB EXISTS and is merely
+    /// unreachable. It does not exist, and that assertion is the same costume
+    /// defect one layer up. A missing verb is terminal, exactly as
+    /// `VoiceState.unavailable` is terminal (`Voice.swift:117`, `canArm` false
+    /// at `:139`) and for the same stated reason: re-tapping cannot change it.
+    /// An unreachable host is NOT terminal, which is why the two arms differ.
+    static func absentVerbLabel(control: String) -> String {
+        "\(control) — no transport on this build"
+    }
+
+    /// The one line under the row. Mic state first (the operator can fix a
+    /// denial), otherwise the verb-absence note.
+    static func controlsNote(voiceState: VoiceState) -> String? {
+        if let line = voiceState.line { return line }
+        return Theme.joined(["BROADCAST", "PING — NO NODE TRANSPORT ON THIS BUILD"])
+    }
+
+    private func controlButton(symbol: String,
+                               label: String,
+                               enabled: Bool,
+                               filled: Bool,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(Theme.display(21, .bold))
+                .foregroundStyle(filled && enabled ? Theme.bg : Theme.accent2)
+                .frame(width: Self.controlSide, height: Self.controlSide)
+                .background(filled && enabled
+                            ? AnyShapeStyle(Theme.accentGradient)
+                            : AnyShapeStyle(Theme.w(0.04)))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Theme.accent.opacity(enabled ? 0.55 : 0.25),
+                                lineWidth: 1)
+                )
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
+        .accessibilityLabel(label)
     }
 
     /// 250 in the prototype (`:543`). Held as a fixed square rather than a
@@ -153,11 +374,19 @@ struct HomeView: View {
 
     /// Energy handed to the renderer, derived from the engine phase.
     ///
-    /// THIS IS NOT AN AUDIO AMPLITUDE AND MUST NOT BE READ AS ONE. The
-    /// prototype's `level` is a live mic meter; nothing on this screen meters
-    /// anything, and a plausible oscillating number would be the `t-12min`
-    /// defect wearing a renderer argument — a fabricated value in a slot the
-    /// eye reads as a measurement.
+    /// TWO ARMS, AND WHICH ONE IS HONEST DEPENDS ON WHETHER THE TAP IS
+    /// INSTALLED. While `voiceState == .listening` this IS an audio amplitude:
+    /// `VoiceInput.level` is RMS over the very buffer the recognizer receives
+    /// (`Voice.swift:274`, landed `9e06d1a`), so the orb renders measured
+    /// energy and the prototype's live meter is satisfied by real data.
+    ///
+    /// In every other phase NOTHING ON THIS SCREEN METERS ANYTHING, and a
+    /// plausible oscillating number would be the `t-12min` defect wearing a
+    /// renderer argument — a fabricated value in a slot the eye reads as a
+    /// measurement. So the non-listening arm stays the two-valued constant.
+    /// The prototype does the opposite at both sites: its stage orb (`:913`)
+    /// passes no `level` at all, and the one orb that meters is fed
+    /// `Math.random() * 0.7 + 0.15` (`:430`). Neither is ported.
     ///
     /// So it is a two-valued constant over a REAL reading, which is exactly
     /// the shape `Commissioning:110` already uses (`narrator.isNarrating ?
@@ -169,7 +398,17 @@ struct HomeView: View {
     /// Static for the reason the six other derivations here are static — a
     /// SwiftUI body is not observable in-process, so anything computed inside
     /// one is guardable only by screenshot.
-    static func orbLevel(for state: AgentState) -> Double {
+    static func orbLevel(for state: AgentState,
+                         voiceState: VoiceState,
+                         micLevel: Double) -> Double {
+        // ARM ONE — the tap is installed, so there IS an audio amplitude and
+        // the orb renders it. Clamped at the seam: `DeviceOrb.level` is
+        // documented `0...1` and a renderer argument may not inherit a
+        // producer's range by assumption.
+        if voiceState == .listening { return min(max(micLevel, 0), 1) }
+
+        // ARM TWO — nothing is metering, so the value is the two-valued
+        // constant over a real reading it always was.
         switch state {
         case .listening, .responding: return 0.7
         case .thinking, .ambient:     return 0.2

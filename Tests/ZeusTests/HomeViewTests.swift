@@ -135,7 +135,7 @@ final class HomeViewTests: XCTestCase {
     /// the higher energy, the two that do not carry the lower.
     func testOrbLevelDiffersAcrossTheModeBoundaryItIsReadAt() {
         for state in AgentState.allCases {
-            let level = HomeView.orbLevel(for: state)
+            let level = HomeView.orbLevel(for: state, voiceState: .idle, micLevel: 0)
             let speaking = state.orbMode == .speaking
             XCTAssertEqual(
                 level, speaking ? 0.7 : 0.2,
@@ -146,8 +146,8 @@ final class HomeViewTests: XCTestCase {
         // happened to share a mode. It does not — but that is a fact about
         // `orbMode`, not about this leg, so the leg states it itself.
         XCTAssertNotEqual(
-            HomeView.orbLevel(for: .responding),
-            HomeView.orbLevel(for: .ambient),
+            HomeView.orbLevel(for: .responding, voiceState: .idle, micLevel: 0),
+            HomeView.orbLevel(for: .ambient, voiceState: .idle, micLevel: 0),
             "orbLevel must not collapse to a constant"
         )
     }
@@ -159,7 +159,7 @@ final class HomeViewTests: XCTestCase {
     /// pins the count the author reasoned over.
     func testOrbLevelIsTotalOverEveryAgentState() {
         XCTAssertEqual(AgentState.allCases.count, 4)
-        let levels = Set(AgentState.allCases.map { HomeView.orbLevel(for: $0) })
+        let levels = Set(AgentState.allCases.map { HomeView.orbLevel(for: $0, voiceState: .idle, micLevel: 0) })
         XCTAssertEqual(levels, [0.2, 0.7])
     }
 
