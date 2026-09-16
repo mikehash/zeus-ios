@@ -185,6 +185,13 @@ impl ZeusCore {
         let workspace = Workspace::new(&root);
         rt.block_on(workspace.init())?;
 
+        // Immediately after `init`, because `init` is what put the desktop
+        // template on disk in the first place (and, on every launch after the
+        // first, is a no-op that leaves the frozen one there). The model is
+        // `None` here by necessity: `client` below starts as `None`, so at this
+        // instant nothing is armed and there is no route to name.
+        rt.block_on(make_agents_honest(&workspace, None))?;
+
         // MEASURED, and the reason this scan exists: `FileIndex` has ZERO
         // production consumers in the pin — every `FileEntry::new` call site
         // sits above `#[cfg(test)]` at indexer.rs:414 (0 prod hits; POS control
@@ -266,6 +273,28 @@ impl ZeusCore {
         let client = LlmClient::with_api_key(provider, model, key)?;
         self.rt
             .block_on(async { *self.client.lock().await = Some(Arc::new(client)) });
+
+        // THE ARMING SITE, which is the only place the model string exists in
+        // time to be written. `send` computes the same pair off the live client
+        // (`{provider}/{model}`, :372) and hands it to `Config`, where the loop
+        // reads it for ROUTING ONLY (agent_loop:625, :2514). Nothing carried it
+        // into the prompt: "model" inside the whole `get_context` body is 2
+        // hits, both in a path comment (POS control "agents" = 3). So the app
+        // saying it could not see its own model was HONEST, and the repair is
+        // to GIVE the prompt the value rather than to stop it disclaiming.
+        //
+        // Rendered from the client rather than from the `model` argument: the
+        // argument is what the caller ASKED for, `client.model()` is what was
+        // CONSTRUCTED, and the prompt should name the second.
+        let armed = {
+            let c = self
+                .rt
+                .block_on(async { self.client.lock().await.clone() })
+                .ok_or(BridgeError::NoProvider)?;
+            format!("{}/{}", c.provider().name(), c.model())
+        };
+        self.rt
+            .block_on(make_agents_honest(&self.workspace, Some(&armed)))?;
         Ok(())
     }
 
@@ -677,6 +706,149 @@ fn resolve_provider(id: &str) -> Result<Provider, BridgeError> {
 /// EMPTY allow list as "everything not denied" (zeus-core:4666-4683), so a
 /// deny-list phone build silently gains every tool a future registry adds.
 const PHONE_TOOLS: [&str; 5] = ["read_file", "write_file", "edit_file", "list_dir", "web_fetch"];
+
+/// The marker that identifies an UNEDITED desktop template on a phone.
+///
+/// Not a guess at the file's identity — it is a literal lifted from
+/// `DEFAULT_AGENTS` (zeus-memory:1217), the single sentence that makes the
+/// frozen file wrong on this device: "a full-featured autonomous AI Titan with
+/// 218 tools". Matching on it is what keeps this a GUARD-replace rather than a
+/// clobber: a file that does not contain it was not written by that template,
+/// so we do not own it and do not touch it.
+const DESKTOP_MARKER: &str = "218 tools";
+
+/// The marker identifying a file THIS CRATE wrote, so it may rewrite it.
+///
+/// Load-bearing, and it was a live defect rather than a precaution: with only
+/// `DESKTOP_MARKER` to match on, `init`'s replacement REMOVES the trigger, so
+/// the `set_provider` re-render finds no marker, declines, and the armed model
+/// never reaches the prompt on any real launch — correct-looking code that is
+/// dead from the second call onward. The guard must recognise its own output to
+/// be idempotent, which is the whole point of writing a marker into the body.
+///
+/// It is emitted by `phone_agents_body` and asserted against it, so the two
+/// cannot drift.
+const PHONE_MARKER: &str = "# Zeus — on this phone";
+
+/// The filename the assembled prompt reads first (`get_context` → `get_agents`).
+const AGENTS_FILE: &str = "AGENTS.md";
+
+/// Render the phone's own AGENTS.md body.
+///
+/// ONE BODY, TWO READERS. The tool list is GENERATED from `PHONE_TOOLS` — the
+/// same array `phone_tool_policy` hands to the agent — so the prompt cannot
+/// advertise a tool the policy refuses, or miss one it allows. Writing the five
+/// names out by hand here would produce exactly the defect this cut exists to
+/// remove, one layer down: a capability claim with no enforcement behind it.
+///
+/// `model` is `None` until the operator arms a provider. That is not a
+/// placeholder for laziness: `init` runs with `client: Mutex::new(None)`, so at
+/// write time the model is genuinely unknown, and a rendered guess would be the
+/// same class of lie in the opposite direction. `set_provider` re-renders with
+/// `Some`.
+fn phone_agents_body(model: Option<&str>) -> String {
+    let mut s = String::from(
+        "# Zeus — on this phone\n\n\
+         You are **Zeus**, running EMBEDDED ON AN iOS DEVICE. This is not the \
+         desktop Titan: you are the same agent with a deliberately smaller \
+         surface, and the limits below are enforced by the tool policy, not \
+         merely requested.\n\n\
+         ## Tools you actually have\n\n",
+    );
+    for name in PHONE_TOOLS {
+        s.push_str("- `");
+        s.push_str(name);
+        s.push_str("`\n");
+    }
+    s.push_str(
+        "\nThat list is COMPLETE and it is the whole of what you can do here. \
+         Every other tool name — `shell`, `python_exec`, `spawn`, `message` \
+         among them — is denied at the registry and a call to one is refused \
+         before it runs. Do not offer capabilities outside the list above, and \
+         do not describe yourself as having them.\n\n\
+         File access is confined to this app's workspace directory. There is \
+         no `~/.zeus/config.toml` and no `zeus status` command on this device; \
+         never direct the operator to either.\n\n\
+         ## Model\n\n",
+    );
+    match model {
+        Some(m) => {
+            s.push_str("You are currently running as `");
+            s.push_str(m);
+            s.push_str(
+                "`. That is the armed route — if the operator asks which model \
+                 they are talking to, answer with it.\n",
+            );
+        }
+        None => s.push_str(
+            "No provider is armed yet. If the operator asks which model they \
+             are talking to, say that none is selected and point them at the \
+             route picker on this device.\n",
+        ),
+    }
+    s
+}
+
+/// Make the on-disk `AGENTS.md` honest, or leave it entirely alone.
+///
+/// ## Why the source, and not the prompt
+///
+/// The assembly is APPEND-ONLY. `Workspace::get_context` (zeus-memory:764)
+/// pushes the filesystem header, then `AGENTS.md`, then SOUL/USER/…, and the
+/// pin exposes no override seam — `set_system_prompt`, `with_system_prompt`,
+/// `set_context_override`, `set_prompt`, `set_capabilities_summary` are all 0
+/// hits (POS controls `set_tool_policy` = 1, `set_goals_context` = 1; NEG
+/// control `zzzNoSuchSeam` = 0), and `Workspace` is a concrete struct with no
+/// trait to conform. So a preamble appended from here could only COEXIST with
+/// the desktop file's claims: honest text sitting beside the lie, with the lie
+/// still in the model's input. Built-but-dark at the prompt layer.
+///
+/// Fixing the SOURCE is the only repair available without moving the pin, and
+/// it is also the better one: the renderer stays faithful and starts telling
+/// the truth because what it renders became true.
+///
+/// ## Why not edit the template instead
+///
+/// `Workspace::init` writes `DEFAULT_AGENTS` through `ensure_file`
+/// (zeus-memory:80), and `ensure_file` opens with `create_new(true)` — O_CREAT
+/// | O_EXCL, "File already exists — nothing to do" (:90-108). WRITE-ONCE. Every
+/// phone that has launched this app even once already holds the desktop
+/// persona, and no future default will ever overwrite it. A template edit is a
+/// fix for installs that do not exist yet; this runs on the install in the
+/// operator's hand.
+///
+/// ## Why it is guarded
+///
+/// A file whose content does not carry `DESKTOP_MARKER` was not produced by
+/// that template, so it is not ours to rewrite, and it is returned BYTE-FOR-BYTE
+/// untouched. On this device that arm is VACUOUS — there is no editor, viewer
+/// or writer for `AGENTS.md` anywhere in the app (0 files; NEG control
+/// `zzzNoFile` = 0, POS control `send` = 24 files), so the container's copy has
+/// exactly one author. It is pinned as a REGRESSION SAFETY, not claimed as
+/// phone coverage: if this crate ever runs somewhere an operator can edit, the
+/// guard is already the right shape.
+///
+/// Returns `true` when the file was replaced.
+async fn make_agents_honest(
+    workspace: &Workspace,
+    model: Option<&str>,
+) -> Result<bool, BridgeError> {
+    let current = workspace
+        .read(AGENTS_FILE)
+        .await
+        .map_err(|e| BridgeError::Core(format!("read {AGENTS_FILE}: {e}")))?;
+    // Two accepted shapes, and the second is what makes `set_provider`'s
+    // re-render reachable: the desktop template we are replacing, or a body we
+    // previously wrote ourselves. Anything else is a stranger's file.
+    if !current.contains(DESKTOP_MARKER) && !current.contains(PHONE_MARKER) {
+        return Ok(false);
+    }
+    workspace
+        .write(AGENTS_FILE, &phone_agents_body(model))
+        .await
+        .map_err(|e| BridgeError::Core(format!("write {AGENTS_FILE}: {e}")))?;
+    Ok(true)
+}
 
 /// Denied explicitly, though the allow-list already excludes them.
 ///
@@ -2166,6 +2338,302 @@ mod tests {
             rows[2].tool_name, None,
             "a call from BEFORE the operator's new question must not name a \
              row after it"
+        );
+    }
+
+    // ========================================================================
+    // Phone prompt honesty — §5 content-matched guard-replace
+    // ========================================================================
+
+    /// Build a workspace whose AGENTS.md is the DESKTOP template, i.e. the real
+    /// state of every phone that has already launched this app once.
+    ///
+    /// It plants `DEFAULT_AGENTS`'s actual offending sentence rather than a
+    /// paraphrase: a fixture that only contained the needle would let a
+    /// substring-delete pass while the surrounding capability claim survived.
+    async fn planted_desktop(tag: &str) -> (std::path::PathBuf, Workspace) {
+        let dir = std::env::temp_dir().join(format!("zcb-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let ws = Workspace::new(&dir);
+        ws.init().await.unwrap();
+        ws.write(
+            AGENTS_FILE,
+            "# Zeus — Autonomous AI Titan\n\nYou are **Zeus**, a full-featured \
+             autonomous AI Titan with 218 tools, advanced memory, cognitive \
+             reasoning, and multi-channel communication. You run on the user's \
+             machine with direct access to the filesystem, shell, web, \
+             messaging platforms, macOS automation, and browser control.\n",
+        )
+        .await
+        .unwrap();
+        (dir, ws)
+    }
+
+    /// LOAD-BEARING. The honesty NEG runs on the ASSEMBLED prompt — the string
+    /// the model actually receives — starting from a planted desktop file.
+    ///
+    /// A NEG on `phone_agents_body` alone would pass while the frozen file kept
+    /// lying beside it, because `get_context` is APPEND-ONLY and cannot
+    /// supersede what is on disk. This leg is the difference between fixing
+    /// new installs and fixing the install in the operator's hand.
+    #[test]
+    fn the_assembled_phone_prompt_carries_no_desktop_claim() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let (_dir, ws) = planted_desktop("honesty").await;
+
+            // Vacuity control: the lie must be present BEFORE, or the assertion
+            // after it would pass against a fixture that never lied.
+            let before = ws.get_context().await.unwrap();
+            assert!(
+                before.contains(DESKTOP_MARKER),
+                "fixture must start dishonest, else the NEG below is vacuous"
+            );
+
+            assert!(make_agents_honest(&ws, None).await.unwrap(), "must replace");
+
+            let after = ws.get_context().await.unwrap();
+            assert!(
+                !after.contains(DESKTOP_MARKER),
+                "the model's actual input still claims 218 tools"
+            );
+            for claim in ["macOS automation", "browser control", "messaging platforms"] {
+                assert!(
+                    !after.contains(claim),
+                    "assembled prompt still claims `{claim}`"
+                );
+            }
+            // POS control on the same string: the strip did not simply empty
+            // the corpus. A NEG that passes because nothing is there is not a
+            // measurement.
+            assert!(
+                after.contains(PHONE_MARKER),
+                "assembled prompt lost the phone body entirely"
+            );
+        });
+    }
+
+    /// WIRING. `ZeusCore::init` — the production constructor Swift calls — must
+    /// itself perform the guard-replace.
+    ///
+    /// This leg exists because a mutation deleting the call inside `init` left
+    /// the whole suite GREEN: every other leg invokes `make_agents_honest`
+    /// directly, so they prove the helper is CORRECT and say nothing about
+    /// whether anything calls it. Correct-and-unreached is the defect class this
+    /// codebase keeps meeting; here it would mean the operator's phone is never
+    /// actually fixed. Asserted through the constructor, and on the ASSEMBLED
+    /// prompt, so only real wiring passes.
+    #[test]
+    fn init_makes_the_agents_file_honest_on_an_existing_install() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = std::env::temp_dir().join(format!("zcb-init-honest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Plant the desktop template the way a prior launch would have left it.
+        rt.block_on(async {
+            let ws = Workspace::new(&dir);
+            ws.init().await.unwrap();
+            ws.write(
+                AGENTS_FILE,
+                "# Zeus — Autonomous AI Titan\n\nYou are **Zeus**, a \
+                 full-featured autonomous AI Titan with 218 tools, with direct \
+                 access to the filesystem, shell, web, messaging platforms, \
+                 macOS automation, and browser control.\n",
+            )
+            .await
+            .unwrap();
+            // Vacuity: dishonest before the constructor runs.
+            assert!(ws.get_context().await.unwrap().contains(DESKTOP_MARKER));
+        });
+
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).expect("init");
+
+        let assembled = core
+            .rt
+            .block_on(async { core.workspace.get_context().await })
+            .unwrap();
+        assert!(
+            !assembled.contains(DESKTOP_MARKER),
+            "init did not make the existing install's prompt honest"
+        );
+        assert!(
+            assembled.contains(PHONE_MARKER),
+            "init left no phone body behind"
+        );
+    }
+
+    /// WIRING, arming side. `set_provider` — the production export — must
+    /// re-render the prompt with the model it just armed.
+    ///
+    /// Sibling of the `init` leg and added for the same measured reason: a
+    /// mutation deleting the re-render inside `set_provider` left every
+    /// honesty leg green, because they call the helper directly. What reds here
+    /// is the operator's actual question ("which model am I talking to?")
+    /// reaching the model's actual input.
+    ///
+    /// Runs the FULL production sequence — `init` then `set_provider` — so it
+    /// also witnesses idempotence end to end: `init` strips the desktop marker,
+    /// and if the guard did not recognise its own body the re-render would
+    /// decline and the model would never land.
+    #[test]
+    fn set_provider_puts_the_armed_model_into_the_assembled_prompt() {
+        let dir = std::env::temp_dir().join(format!("zcb-arm-prompt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).expect("init");
+
+        // Vacuity: before arming, the prompt must NOT name a model — otherwise
+        // the assertion below could pass against a hardcoded string.
+        let unarmed = core
+            .rt
+            .block_on(async { core.workspace.get_context().await })
+            .unwrap();
+        assert!(
+            !unarmed.contains("ollama/qwen3:8b"),
+            "prompt named a model before one was armed"
+        );
+
+        core.clone()
+            .set_provider(
+                "ollama".into(),
+                "qwen3:8b".into(),
+                "unused-by-ollama".into(),
+                None,
+            )
+            .expect("ollama prefix resolves");
+
+        let armed = core
+            .rt
+            .block_on(async { core.workspace.get_context().await })
+            .unwrap();
+        assert!(
+            armed.contains("ollama/qwen3:8b"),
+            "the armed model never reached the model's own input — this is the \
+             `I can't see my LLM` defect, still live"
+        );
+        assert!(
+            !armed.contains("No provider is armed yet"),
+            "stale unarmed sentence survived arming"
+        );
+        assert_ne!(
+            unarmed, armed,
+            "arming must CHANGE the prompt — a constant body passes one arm and \
+             this pair is the only thing that refuses it"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Arity + fidelity: the advertised tools ARE `PHONE_TOOLS`, all of them.
+    ///
+    /// Without the count, adding a sixth name to the array leaves the prompt
+    /// advertising five and every other leg green.
+    #[test]
+    fn the_phone_body_advertises_exactly_the_allowed_tools() {
+        let body = phone_agents_body(None);
+        for name in PHONE_TOOLS {
+            assert!(body.contains(name), "prompt omits allowed tool `{name}`");
+        }
+        let listed = body.lines().filter(|l| l.starts_with("- `")).count();
+        assert_eq!(
+            listed,
+            PHONE_TOOLS.len(),
+            "advertised tool count drifted from the enforced policy"
+        );
+        for name in PHONE_DENIED {
+            assert!(
+                !body.contains(&format!("- `{name}`")),
+                "prompt advertises denied tool `{name}`"
+            );
+        }
+    }
+
+    /// The SAFETY arm: a file we did not write is left byte-for-byte.
+    ///
+    /// Vacuous on a phone (no editor exists in the app) and pinned anyway, so
+    /// the guard cannot regress into a clobber if this crate is ever run
+    /// somewhere an operator can edit.
+    #[test]
+    fn a_diverged_agents_file_is_left_untouched() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("zcb-diverged-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            let ws = Workspace::new(&dir);
+            ws.init().await.unwrap();
+            let mine = "# My own notes\n\nHand written, not a template.\n";
+            ws.write(AGENTS_FILE, mine).await.unwrap();
+
+            assert!(
+                !make_agents_honest(&ws, None).await.unwrap(),
+                "a stranger's file must not be claimed"
+            );
+            assert_eq!(
+                ws.read(AGENTS_FILE).await.unwrap(),
+                mine,
+                "diverged file was modified"
+            );
+        });
+    }
+
+    /// The armed model reaches the prompt — the "give it the value" repair.
+    ///
+    /// Also pins IDEMPOTENCE, which is where this cut had a live defect: with
+    /// only `DESKTOP_MARKER` to match on, the init replacement removes the
+    /// trigger, so this second call declines and the model never lands. The
+    /// planted file is replaced once WITHOUT a model, exactly as `init` does,
+    /// before the model is injected — so the leg reds if the crate stops
+    /// recognising its own output.
+    #[test]
+    fn the_armed_model_reaches_the_assembled_prompt() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let (_dir, ws) = planted_desktop("armed-model").await;
+
+            // Leg 1: the init-shaped write, model unknown.
+            assert!(make_agents_honest(&ws, None).await.unwrap());
+            let unarmed = ws.get_context().await.unwrap();
+            assert!(
+                !unarmed.contains("anthropic/claude-opus-4"),
+                "named a model before one was armed"
+            );
+            assert!(
+                unarmed.contains("No provider is armed yet"),
+                "unarmed prompt must say so rather than guess"
+            );
+
+            // Leg 2: the set_provider-shaped re-render over our OWN body.
+            assert!(
+                make_agents_honest(&ws, Some("anthropic/claude-opus-4")).await.unwrap(),
+                "re-render declined — the guard does not recognise its own body, \
+                 so the armed model would never reach the prompt on a real launch"
+            );
+            let armed = ws.get_context().await.unwrap();
+            assert!(
+                armed.contains("anthropic/claude-opus-4"),
+                "assembled prompt does not name the armed model"
+            );
+            assert!(
+                !armed.contains("No provider is armed yet"),
+                "stale unarmed sentence survived the re-render"
+            );
+        });
+    }
+
+    /// The two markers are emitted by the body they claim to identify.
+    ///
+    /// `PHONE_MARKER` is a literal compared against another literal elsewhere;
+    /// nothing but this leg stops the heading and the guard from drifting apart,
+    /// which would silently disable the re-render.
+    #[test]
+    fn the_phone_marker_is_actually_in_the_phone_body() {
+        assert!(
+            phone_agents_body(None).contains(PHONE_MARKER),
+            "guard marker absent from the body it guards"
+        );
+        assert!(
+            !phone_agents_body(None).contains(DESKTOP_MARKER),
+            "phone body reproduces the desktop claim it replaces"
         );
     }
 }
