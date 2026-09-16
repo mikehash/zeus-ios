@@ -55,6 +55,16 @@ struct RootView: View {
     /// a URL and nothing downstream needed changing.
     @State private var pendingPrompt: String? = LaunchArgs.seededPrompt
 
+    /// A transcript the operator SPOKE, awaiting commit by the session screen.
+    ///
+    /// SEPARATE from `pendingPrompt` and that separation is the security
+    /// property, not a style choice: `pendingPrompt` is also the deep-link
+    /// channel (`:460`), so auto-sending it would auto-send every `zeus://`
+    /// URL any other app on the phone can fire. Two channels make the wrong
+    /// dispatch unrepresentable; one channel plus an origin flag would put
+    /// that authority inside a `Bool` a caller sets.
+    @State private var voiceCommit: String? = nil
+
     /// The on-device recogniser. `@StateObject` because it owns an
     /// `AVAudioEngine` and a live tap — a `@State` value would be reconstructed
     /// on identity changes and leak the tap.
@@ -407,14 +417,18 @@ struct RootView: View {
         // consumable exactly once. Reusing it also means the composer needs no
         // second ingestion path — one place text arrives, one place it clears.
         //
-        // NEVER AUTO-SENDS. `VoiceTranscript.accepted` has already refused an
-        // empty or whitespace-only result, so nothing here can dispatch an
-        // utterance the operator did not make; what it cannot check is whether
-        // the device heard them CORRECTLY, and that is what the review-then-tap
-        // step is for.
+        // AUTO-COMMITS, on its OWN channel. The voice arm dispatches without a
+        // second tap (jsx:447); the keyboard arm stays explicit-send
+        // (jsx:1001-1003). That asymmetry is the whole ruling, and it is
+        // expressed as two BINDINGS rather than one binding plus a flag:
+        // `pendingPrompt` is the deep-link channel, so arming auto-send there
+        // would hand every `zeus://` URL a release auto-send — the threat
+        // `LaunchArgs.swift:177` names. `VoiceTranscript.accepted` has already
+        // refused an empty or whitespace-only result, and the value can only
+        // have come from this device's own microphone.
         .onChange(of: voice.transcript) { _, new in
             guard let new, !new.isEmpty else { return }
-            pendingPrompt = new
+            voiceCommit = new
             voice.transcript = nil
             if tab != .session { tab = .session }
         }
@@ -545,7 +559,15 @@ struct RootView: View {
                 // environment, and a config read in a body would re-run on
                 // every render. One read, one owner, rendered downstream.
                 disarmReason: configSource.config.disarmReason,
-                onRemember: remember
+                onRemember: remember,
+                // The ONE `VoiceInput` (`:61`) — this screen does not own a
+                // second microphone. The stage orb meters it while the tap is
+                // installed and reads the two-valued constant otherwise.
+                micLevel: voice.level,
+                // The spoken channel. Distinct from `prefill:` above, which
+                // is where deep links land and which must keep its
+                // review-then-tap step.
+                voiceCommit: $voiceCommit
             )
         case .nodes:
             NodesView(routes: routes, onToast: showToast,

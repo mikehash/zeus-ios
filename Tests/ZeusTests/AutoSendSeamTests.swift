@@ -119,12 +119,23 @@ final class AutoSendSeamTests: XCTestCase {
                       "the seed must initialise pendingPrompt itself — a separate store is a second path")
     }
 
-    /// Writers of `pendingPrompt`, named. NOTE the count is 3 and not the
-    /// ruling's 2: `.onChange(of: voice.transcript)` already wrote this
-    /// binding before the seed existed and is a real user path (the mic).
-    /// Named rather than absorbed — a census that returns the number it was
-    /// told to expect is not a measurement.
-    func testPendingPromptHasExactlyThreeNamedWriters() throws {
+    /// Writers of `pendingPrompt`, named. The count is **2** as of phase 3,
+    /// DOWN from 3, and the retirement is the security property this leg now
+    /// carries rather than an accounting change.
+    ///
+    /// 🔴 WHAT MOVED AND WHY. `.onChange(of: voice.transcript)` used to write
+    /// this binding; it now writes `voiceCommit`. The reason is that voice
+    /// AUTO-COMMITS and a deep link must not: `pendingPrompt` is the channel
+    /// `zeus://session?prompt=` lands on, so an auto-send armed on it would
+    /// hand every URL any other app on the phone can fire a release
+    /// auto-send — the exact threat `LaunchArgs.swift:177` documents. Two
+    /// bindings make the wrong dispatch unrepresentable. One binding plus an
+    /// origin flag would put that authority inside a `Bool` a caller sets.
+    ///
+    /// This leg red on the phase-3 cut and was RIGHT to: a writer left this
+    /// channel, and lowering the number is the explicit act of blessing that.
+    /// The surviving two are named below, so a re-arrival reds again.
+    func testPendingPromptHasExactlyTwoNamedWriters() throws {
         let body = try sourceFile("RootView.swift")
         let writers = body.split(separator: "\n").map(String.init).filter { line in
             let t = line.trimmingCharacters(in: .whitespaces)
@@ -132,8 +143,14 @@ final class AutoSendSeamTests: XCTestCase {
             return t.hasPrefix("pendingPrompt =")
                 || t.contains("pendingPrompt: String? = LaunchArgs.seededPrompt")
         }
-        XCTAssertEqual(writers.count, 3,
-                       "expected 3 writers (deep link, voice transcript, DEBUG seed); found \(writers.count): \(writers)")
+        XCTAssertEqual(writers.count, 2,
+                       "expected 2 writers (deep link, DEBUG seed); found \(writers.count): \(writers)")
+
+        // NEG, the whole point of the retirement: the voice transcript must
+        // NOT write this binding. A future author re-routing it here would
+        // silently re-arm auto-send on the deep-link channel.
+        XCTAssertFalse(writers.contains(where: { $0.contains("voice.transcript") }),
+                       "NEG: voice must write voiceCommit, not the deep-link channel")
     }
 
     /// The seed's read sits inside a `#if DEBUG` bloc, by the depth walker —

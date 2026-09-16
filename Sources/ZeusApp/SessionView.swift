@@ -102,6 +102,32 @@ struct SessionView: View {
     /// nothing — a lie with a tap target on it.
     var onRemember: (Message) -> Void
 
+    /// Live microphone energy, `0...1`, forwarded to the stage orb.
+    ///
+    /// Passed in rather than read here for the reason every other derivation
+    /// on this screen is static: a `View` cannot be observed in-process, so a
+    /// value computed inside a body is guardable only by screenshot. The
+    /// producer is the ONE `VoiceInput` at `RootView:61` — this screen does
+    /// not own a second microphone.
+    var micLevel: Double = 0
+
+    /// A transcript the operator SPOKE, committed once.
+    ///
+    /// 🔴 WHY THIS IS NOT `prefill`. The two carry different intents and only
+    /// one of them may dispatch itself. `prefill` is also the deep-link
+    /// channel (`RootView:460`), so arming auto-send on it would not add a
+    /// voice behaviour — it would add a RELEASE auto-send to every `zeus://`
+    /// URL any other app on the phone can fire, which is the precise threat
+    /// `LaunchArgs.swift:177` documents and the reason the capture seam below
+    /// is `#if DEBUG`. Discriminating by an origin flag riding alongside the
+    /// text would put the authority to send inside a `Bool` a caller sets;
+    /// two channels make the wrong dispatch unrepresentable instead.
+    ///
+    /// A `Binding` for the same single-shot reason `prefill` is: saying the
+    /// same sentence twice is two intents, and a non-clearing value would
+    /// compare equal the second time and silently do nothing.
+    var voiceCommit: Binding<String?> = .constant(nil)
+
     // DECLARATION ORDER IS CALL-SITE ORDER, and that is load-bearing: Swift's
     // memberwise init fixes argument order to declaration order, so each
     // property's position in this file IS its position at the call site.
@@ -111,6 +137,16 @@ struct SessionView: View {
 
 
     @State private var input: String = ""
+
+    /// The transcript log is SECONDARY on this screen — the prototype demotes
+    /// it behind a toggle (jsx:`showLog`) and the stage takes the body. False
+    /// by default: the voice stage is the screen, not a mode of it.
+    @State private var showLog: Bool = false
+
+    /// The keyboard is SUMMONED, not resident (jsx:`showText`). The composer
+    /// is a secondary path on a voice-first screen, so it is absent until
+    /// asked for — and it keeps explicit send when it arrives.
+    @State private var showKeyboard: Bool = false
 
     private var trimmed: String {
         input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -146,10 +182,75 @@ struct SessionView: View {
         disarmReason == nil && !trimmedInput.isEmpty
     }
 
+    // MARK: - Voice stage (jsx:911-film — SessionTab rebuilt voice-first)
+
+    /// The one line under the stage orb.
+    ///
+    /// Mic state wins when it has something to say, because a denial is
+    /// fixable and the operator can act on it. Otherwise the invitation —
+    /// which names the control by the label the button actually carries, so
+    /// the sentence and the tap target cannot drift apart.
+    static func stageLine(voiceState: VoiceState, partial: String?) -> String {
+        if let p = partial?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty {
+            return p
+        }
+        if let line = voiceState.line { return line }
+        return "TAP COMMS TO TRANSMIT"
+    }
+
+    /// Whether the stage orb should meter real audio.
+    ///
+    /// Clamped at the seam for the reason `HomeView.orbLevel` clamps: the
+    /// renderer documents `0...1` and an argument may not inherit a
+    /// producer's range by assumption. Off the tap, the value is the
+    /// two-valued constant over a real reading — NOT a mic amplitude, because
+    /// nothing is metering one.
+    static func stageLevel(state: AgentState, voiceState: VoiceState, micLevel: Double) -> Double {
+        if voiceState == .listening { return min(max(micLevel, 0), 1) }
+        switch state {
+        case .listening, .responding: return 0.7
+        case .thinking, .ambient:     return 0.2
+        }
+    }
+
+    /// 🔴 THE ATTACH ARM — terminal-disabled, and the reason names the verb.
+    ///
+    /// The prototype draws a paperclip opening a sheet that invents a
+    /// filename (`CAPTURE-0142.JPG`), toasts `FILE INDEXED — SESSION
+    /// CONTEXT`, and appends "Received X — indexed to session context". None
+    /// of that exists: censused at this commit, `codeOnly` hits for `attach`,
+    /// `PHPicker`, `UIImagePicker`, `fileImporter`, `documentPicker` and
+    /// `PhotosPicker` are ZERO across `Sources/ZeusApp` and
+    /// `Sources/ZeusCoreFFI` (POS control `session` = 234). `send` takes a
+    /// `String` and has nowhere to put a file.
+    ///
+    /// So the control ships DISABLED with the true reason, exactly as
+    /// BROADCAST/PING do (`HomeView.absentVerbLabel`) and for the same stated
+    /// distinction: a missing verb is TERMINAL — no tap, no link state, no
+    /// retry can produce it — where an unreachable host is not. Conditioning
+    /// this on connectivity would assert the ingest path exists and is merely
+    /// unreachable, which is the costume defect one layer up.
+    static let attachReason = "ATTACH — NO FILE INGEST ON THIS BUILD"
+
+    /// Whether the attach control may act. A `false` CONSTANT is the honest
+    /// value while the verb is absent — and it is a named derivation rather
+    /// than an inline `false` so a leg can refuse a future `link`-conditioned
+    /// spelling by NAME.
+    static var attachEnabled: Bool { false }
+
     var body: some View {
         VStack(spacing: 0) {
             header
-            transcript
+            // VOICE-FIRST. The stage is the screen's body by default and the
+            // transcript is a toggle over it, inverting the pre-phase-3
+            // layout where the log was the body and voice was a button on the
+            // composer. The prototype makes the same inversion (jsx:`showLog`
+            // false by default, orb centred).
+            if showLog {
+                transcript
+            } else {
+                stage
+            }
             // The state SAID, above the composer, not merely glyphed. A
             // slashed icon tells an operator something is off; this tells
             // them WHICH thing and whether Settings can fix it. `.idle`
@@ -172,6 +273,19 @@ struct SessionView: View {
             // to do about it. `NO PROVIDER — SET ONE IN ROUTES` names the
             // destination, so the sentence is an instruction rather than a
             // diagnosis.
+            // SAID. The attach control is dead with a reason, and the
+            // reason is on the screen rather than only in an accessibility
+            // label — the same rule BROADCAST/PING follow one tab over.
+            if !SessionView.attachEnabled {
+                Text(SessionView.attachReason)
+                    .font(Theme.mono(10))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.w(0.45))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .accessibilityLabel(SessionView.attachReason)
+            }
             if let reason = disarmReason {
                 Text(reason)
                     .font(Theme.mono(10))
@@ -182,14 +296,50 @@ struct SessionView: View {
                     .padding(.top, 6)
                     .accessibilityLabel(reason)
             }
-            composer
+            // SUMMONED, not resident. A voice-first screen that keeps a
+            // permanent text field says the keyboard is the primary path;
+            // the field arrives when asked for and keeps EXPLICIT send when
+            // it does — `onSubmit(send)` and the SEND button, both guarded by
+            // `canSend`. The keyboard arm is deliberately the one that does
+            // not auto-commit.
+            if showKeyboard {
+                composer
+            }
+            stageControls
         }
         // Apply on APPEAR as well as on change: a deep link arriving on a
         // cold start sets the value before this view exists, so an
         // `onChange`-only wiring would drop the very first link the app ever
         // receives — the one case a user is most likely to try.
-        .onAppear { applyPrefill() }
+        .onAppear {
+            applyPrefill()
+            applyVoiceCommit()
+        }
         .onChange(of: prefill.wrappedValue) { _, _ in applyPrefill() }
+        .onChange(of: voiceCommit.wrappedValue) { _, _ in applyVoiceCommit() }
+    }
+
+    /// Commit a SPOKEN turn. The voice arm auto-sends; the keyboard arm does
+    /// not (jsx:447 vs jsx:1001-1003).
+    ///
+    /// It calls `send()` — the SAME function the SEND button and the return
+    /// key call — rather than reaching past it to `onSend`, so `canSend`'s
+    /// refusal of a disarmed composer applies identically. A path that
+    /// assembled its own turn would bypass the one decision this screen has.
+    ///
+    /// NOT `#if DEBUG`: unlike the capture seam, this arm is reachable only
+    /// from an utterance `VoiceTranscript.accepted` already accepted on THIS
+    /// device, and it never carries a value another app can set.
+    ///
+    /// Single-shot: the binding is nilled BEFORE the send, so a re-render
+    /// triggered by the send cannot re-enter it.
+    private func applyVoiceCommit() {
+        guard let spoken = voiceCommit.wrappedValue,
+              !spoken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        voiceCommit.wrappedValue = nil
+        input = spoken
+        send()
     }
 
     /// Move a pending prefill into the composer, then clear it.
@@ -338,6 +488,74 @@ struct SessionView: View {
     /// The header pill's badge, composed over (readiness, phase).
     private var headerBadge: ReadinessBadge {
         ReadinessBadge.forState(state, disarmReason: disarmReason)
+    }
+
+    // MARK: - Voice stage body
+
+    /// The default body: orb, the one status line, the last two turns.
+    ///
+    /// Only the last two, because the stage is a GLANCE surface — the full
+    /// log is one toggle away and duplicating it here would make the toggle
+    /// meaningless.
+    private var stage: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            DeviceOrb(mode: state.orbMode,
+                      level: SessionView.stageLevel(state: state,
+                                                    voiceState: voiceState,
+                                                    micLevel: micLevel))
+                .frame(width: 200, height: 200)
+                .accessibilityHidden(true)
+
+            Text(SessionView.stageLine(voiceState: voiceState, partial: nil))
+                .font(Theme.mono(10))
+                .tracking(1.2)
+                .foregroundStyle(voiceState == .listening ? Theme.accent : Theme.w(0.45))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .padding(.top, 10)
+
+            VStack(spacing: 10) {
+                ForEach(messages.suffix(2)) { m in
+                    bubbleRow(m)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The hero row: COMMS, the keyboard summons, the transcript toggle, and
+    /// the terminal-disabled attach.
+    private var stageControls: some View {
+        HStack(spacing: 12) {
+            // ATTACH — disabled on verb-absence. `enabled:` reads the named
+            // derivation so a leg can refuse a `link`-conditioned spelling.
+            accentButton(symbol: "paperclip",
+                         label: SessionView.attachReason,
+                         enabled: SessionView.attachEnabled,
+                         action: {})
+
+            // COMMS is the hero: the one control the screen exists for.
+            accentButton(symbol: voiceSymbol,
+                         label: voiceLabel,
+                         enabled: voiceState.isActionable,
+                         action: onVoice)
+
+            accentButton(symbol: "keyboard",
+                         label: showKeyboard ? "Hide keyboard" : "Show keyboard",
+                         action: { showKeyboard.toggle() })
+
+            accentButton(symbol: "list.bullet",
+                         label: showLog ? "Hide transcript" : "Show transcript",
+                         action: { showLog.toggle() })
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Transcript (:879-898)
