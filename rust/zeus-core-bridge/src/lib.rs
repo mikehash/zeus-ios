@@ -1256,11 +1256,99 @@ fn flatten_messages(messages: &[zeus_core::Message]) -> Vec<TurnMessage> {
 mod tests {
     use super::*;
 
-    /// `OLLAMA_HOST` is process-global and cargo runs tests on threads, so the
-    /// three env-touching legs below must not interleave. Poison is recovered
-    /// rather than propagated (`into_inner`): a panic in one leg should fail
-    /// THAT leg, not convert the other two into a second, misleading failure.
+    /// The serialiser for every leg that touches PROCESS-GLOBAL state, of which
+    /// this crate's tests have two kinds: the `OLLAMA_HOST` environment
+    /// variable, and the workspace root that `ZeusCore::init` installs through
+    /// `set_workspace_root` (lib.rs:226). Cargo runs tests on threads, so an
+    /// unguarded `init` racing a guarded leg re-points the root mid-assertion
+    /// and the served write lands in — or is refused against — ANOTHER leg's
+    /// fixture directory. That surfaces as a red on the leg that held the lock,
+    /// which reads as an environment fault and is not one.
+    ///
+    /// THE RULE THIS STATIC CARRIES: every test that calls `ZeusCore::init`
+    /// takes this lock, without exception. A partial discipline is worse than
+    /// none — it makes the suite pass on most interleavings, so the failures it
+    /// does produce look like the box rather than the sharing. This was learned
+    /// the expensive way: four of nine `init` sites were unguarded, one gate box
+    /// went red, and the first diagnosis blamed a `/private/tmp` symlink.
+    ///
+    /// Poison is recovered rather than propagated (`into_inner`): a panic in one
+    /// leg should fail THAT leg, not convert its neighbours into a second,
+    /// misleading failure.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// STRUCTURAL. Every `ZeusCore::init` in this module takes `ENV_LOCK`.
+    ///
+    /// This leg exists because the defect it guards is NOT reachable by a
+    /// mutation. Deleting a lock take leaves a race: the suite still passes on
+    /// most interleavings, so the mutation arm reports GREEN and certifies a
+    /// guard that is gone. A remembered discipline has the durability of a
+    /// comment with no compiler behind it — this is the compiler.
+    ///
+    /// The measurement reads THIS FILE with comments stripped, because the
+    /// module's prose discusses `ZeusCore::init` by name several times and a
+    /// raw-text count cannot tell a call from a sentence about calls (three
+    /// legs in the Swift suite were red on exactly that confusion). The strip
+    /// is itself a probe, so a surviving-token control asserts it did not eat
+    /// the corpus and hand back a vacuous zero.
+    #[test]
+    fn every_init_in_this_module_is_serialised() {
+        let src = include_str!("lib.rs");
+        let code_only: Vec<&str> = src
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect();
+
+        // The strip's own control: real code must survive it, or a zero below
+        // is a statement about the stripper and not about the suite.
+        let surviving = code_only.iter().filter(|l| l.contains("fn ")).count();
+        assert!(
+            surviving > 20,
+            "the comment strip ate the corpus — {surviving} fn tokens left, so \
+             every count below would be vacuously clean"
+        );
+
+        // Walk the test module, tracking the most recent fn header, and record
+        // which fns call `init` and which take the lock.
+        let start = code_only
+            .iter()
+            .position(|l| l.trim_start().starts_with("mod tests {"))
+            .expect("the test module must be findable");
+
+        let mut current = String::new();
+        let mut inits: Vec<String> = Vec::new();
+        let mut locked: Vec<String> = Vec::new();
+        for line in &code_only[start..] {
+            if line.starts_with("    fn ") || line.starts_with("    async fn ") {
+                current = line.trim().to_string();
+            }
+            if line.contains("ZeusCore::init(") {
+                inits.push(current.clone());
+            }
+            if line.contains("ENV_LOCK.lock()") {
+                locked.push(current.clone());
+            }
+        }
+
+        // POS control: the census found the call sites at all. A zero here
+        // would pass the subset assertion below for the wrong reason.
+        assert!(
+            inits.len() >= 6,
+            "expected the init call sites to be visible, found {}",
+            inits.len()
+        );
+
+        let unguarded: Vec<&String> = inits.iter().filter(|f| !locked.contains(f)).collect();
+        assert!(
+            unguarded.is_empty(),
+            "these legs call ZeusCore::init without taking ENV_LOCK, and \
+             `set_workspace_root` (lib.rs:226) is process-global — they will \
+             re-point another leg's root under parallel cargo: {unguarded:?}"
+        );
+    }
 
     /// Put `OLLAMA_HOST` back exactly as found — including ABSENT, which
     /// `set_var("")` would not restore: an empty value is a present variable,
@@ -1318,6 +1406,7 @@ mod tests {
     /// the content hit and the filename POS.
     #[test]
     fn remembered_fact_is_findable_by_content() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("zcb-content-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let core = ZeusCore::init(dir.to_string_lossy().to_string()).unwrap();
@@ -1564,6 +1653,7 @@ mod tests {
     /// doc comment.
     #[test]
     fn has_provider_reports_the_cell_send_reads() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("zcb-armed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -2182,11 +2272,30 @@ mod tests {
         ))
         .expect("a path inside the root must be served");
 
-        let written = core.root.join("probefile.txt");
-        assert!(written.exists(), "the served write must be on disk at {written:?}");
+        // WHERE the write landed, asserted against THIS leg's own fixture
+        // directory — a value that exists before `ZeusCore::init` runs and is
+        // therefore independent of anything init installs.
+        //
+        // The assertion that stood here was
+        // `core.root.join(x).starts_with(&core.root)`: TRUE BY CONSTRUCTION,
+        // since the subject is derived from the thing it is compared against.
+        // It could not fail on any filesystem, so it proved nothing while
+        // wearing the name of the confinement's positive arm.
+        //
+        // `dir` is canonicalised because `init` canonicalises its root
+        // (lib.rs:219) and macOS resolves `/tmp` → `/private/tmp`; comparing an
+        // uncanonical fixture against a canonical root is the false-red that
+        // sent the first diagnosis of this leg chasing a symlink.
+        let fixture = dir.canonicalize().expect("the fixture dir exists");
+        let written = fixture.join("probefile.txt");
         assert!(
-            written.starts_with(&core.root),
-            "and under the canonical root"
+            written.exists(),
+            "the served write must land in THIS leg's root at {written:?} — if it \
+             does not, the process-global root was re-pointed by another init"
+        );
+        assert_ne!(
+            written, outside,
+            "and must not be the outside file — vacuity guard on the POS arm"
         );
 
         // The round trip that proves loop and index share ONE root: a fact
@@ -2425,6 +2534,7 @@ mod tests {
     /// prompt, so only real wiring passes.
     #[test]
     fn init_makes_the_agents_file_honest_on_an_existing_install() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let rt = tokio::runtime::Runtime::new().unwrap();
         let dir = std::env::temp_dir().join(format!("zcb-init-honest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2476,6 +2586,7 @@ mod tests {
     /// decline and the model would never land.
     #[test]
     fn set_provider_puts_the_armed_model_into_the_assembled_prompt() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("zcb-arm-prompt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
