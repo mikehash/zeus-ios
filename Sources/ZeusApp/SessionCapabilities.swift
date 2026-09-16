@@ -135,6 +135,19 @@ protocol SessionCapabilities: Sendable {
     /// semaphore on the cooperative pool deadlocks. The embedded arm was
     /// already off the main thread (`EmbeddedCore.queue`), so the conversion
     /// costs the caller an `await` and nothing else.
+    /// Copy a picked file into the workspace; return its relative path.
+    ///
+    /// 🔴 A COPY-IN, NOT A READ. This does not widen what the backend can see —
+    /// every path it can produce was already readable by the confined
+    /// `read_file`. The file's CONTENT never crosses this seam: the caller gets
+    /// a path, composes a reference, and the model chooses whether to open it.
+    ///
+    /// `Data` rather than a `URL` because the gateway conformer would have to
+    /// ship bytes over the wire anyway, and a URL into this app's sandbox means
+    /// nothing on the other end of a REST call. Reading the security-scoped URL
+    /// is the CALLER's job — it is the only layer that holds the scope.
+    func stageAttachment(fileName: String, bytes: Data) async throws -> String
+
     func remember(fact: String) async throws
 
     /// Query the memory index.
@@ -201,6 +214,23 @@ struct EmbeddedCapabilities: SessionCapabilities, @unchecked Sendable {
 
     func messages(sessionID: String) async throws -> [TurnMessage] {
         try core.messages(sessionId: sessionID)
+    }
+
+    func stageAttachment(fileName: String, bytes: Data) async throws -> String {
+        try stageAttachmentSync(fileName: fileName, bytes: bytes)
+    }
+
+    /// The embedded stage, synchronously.
+    ///
+    /// The picker callback wants an answer it can render in the same frame the
+    /// sheet closes, and this is a file copy on a local disk — an `await` here
+    /// would put the staged line a frame late and buy nothing. Exposed on the
+    /// CONCRETE conformer only: `SessionCapabilities` keeps the `async throws`
+    /// form because the gateway arm cannot be synchronous, and widening the
+    /// protocol with a blocking variant would invite a semaphore on the gateway
+    /// side — the deadlock the protocol was made async to prevent.
+    func stageAttachmentSync(fileName: String, bytes: Data) throws -> String {
+        try core.stageAttachment(fileName: fileName, bytes: bytes)
     }
 
     func remember(fact: String) async throws { try core.remember(fact: fact) }

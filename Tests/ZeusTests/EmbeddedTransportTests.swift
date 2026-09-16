@@ -40,6 +40,10 @@ private func makeNonisolated(core: ZeusCoreProtocol) -> EmbeddedTransport {
 /// These legs cover the adapter's edges (double-finish, error-after-token,
 /// sync throw) which a real provider cannot be asked to produce on demand.
 private final class FakeCore: ZeusCoreProtocol, @unchecked Sendable {
+    func stageAttachment(fileName: String, bytes: Data) throws -> String {
+        "attachments/stub-\(fileName)"
+    }
+
     enum Script {
         case tokensThenComplete([String])
         case tokensThenError([String], String)

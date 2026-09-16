@@ -21,6 +21,10 @@ struct StubCatalog: ProviderCataloging {
 /// `private` to that class by design, and reaching for it would couple two
 /// suites through a fixture neither owns.
 private final class CatalogCore: ZeusCoreProtocol {
+    func stageAttachment(fileName: String, bytes: Data) throws -> String {
+        "attachments/stub-\(fileName)"
+    }
+
     let refuse: Bool
     private(set) var setCalls: [(id: String, model: String, key: String, baseUrl: String?)] = []
     private var armed = false

@@ -567,7 +567,24 @@ struct RootView: View {
                 // The spoken channel. Distinct from `prefill:` above, which
                 // is where deep links land and which must keep its
                 // review-then-tap step.
-                voiceCommit: $voiceCommit
+                voiceCommit: $voiceCommit,
+                // For the STAGED line's WORDING only — staged-and-sending vs
+                // staged-and-pending. NOT for `attachEnabled`: the copy
+                // succeeds with no provider armed, and the reference rides the
+                // next turn that has somewhere to go. Gating the control on
+                // this would discard a capability that works offline.
+                // `disarmReason == nil` IS the armed fact, and it is the same
+                // value the composer already refuses on two lines up — one
+                // reader, not a second async probe that could disagree with it.
+                // Gate (b): `credentials.isArmed` does NOT exist (isArmed lives
+                // on `ProviderArming`, is `async throws`, and is not in scope
+                // here) — checked before this compiled.
+                providerArmed: configSource.config.disarmReason == nil,
+                // The stage seam. Reading the security-scoped URL happens HERE,
+                // at the layer that holds the scope — `SessionCapabilities`
+                // takes `Data`, because a sandbox URL means nothing to a remote
+                // gateway and the bytes would have to cross the wire regardless.
+                onStage: stage
             )
         case .nodes:
             NodesView(routes: routes, onToast: showToast,
@@ -623,6 +640,45 @@ extension RootView {
     /// that appends to a file on disk; every other embedded call in this app
     /// goes through `EmbeddedCore.queue` for exactly that reason, and doing it
     /// inline would block the render that is about to show the toast.
+    /// Read a picked file and stage it into the workspace.
+    ///
+    /// ## Security scope, and why the read is here
+    ///
+    /// `.fileImporter` hands back a URL into ANOTHER app's sandbox, valid only
+    /// between `startAccessingSecurityScopedResource` and its stop. A seam that
+    /// took the URL and read it later would read it after the scope closed —
+    /// working in the simulator, failing on a device, which is the worst
+    /// possible split. So the bytes are read at the one layer holding the
+    /// scope, and the seam takes `Data`.
+    ///
+    /// ## Synchronous, deliberately
+    ///
+    /// The picker callback wants an answer it can render immediately, and the
+    /// embedded stage is a file copy on a local disk. A `Task` here would make
+    /// the staged line appear a frame after the sheet closed, and buy nothing.
+    /// The gateway conformer throws rather than blocking, so no network call
+    /// hides behind this.
+    private func stage(_ url: URL) -> StageOutcome {
+        guard let caps = EmbeddedCapabilities.shared() else {
+            return .failed("NO CORE ON THIS DEVICE — CANNOT STAGE")
+        }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            return .failed("COULD NOT READ THAT FILE")
+        }
+        guard !data.isEmpty else { return .failed("THAT FILE IS EMPTY — NOTHING STAGED") }
+        do {
+            return .staged(try caps.stageAttachmentSync(fileName: url.lastPathComponent,
+                                                         bytes: data))
+        } catch {
+            return .failed("STAGING FAILED — \(EmbeddedTransport.describe(error).uppercased())")
+        }
+    }
+
     private func remember(_ message: Message) {
         guard let fact = Recall.factToWrite(from: message.text) else {
             showToast(Recall.rememberToast(.empty))

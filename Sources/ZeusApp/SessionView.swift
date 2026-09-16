@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// What a pick produced: a staged path, or a reason it did not.
+///
+/// A named two-case enum rather than `Result<String, String>` — `String` does
+/// not conform to `Error`, which the compiler said before this shipped, and
+/// wrapping the reason in an error type to satisfy `Result` would be ceremony
+/// around a value that is already a display string. The failure arm carries the
+/// sentence the operator READS, so there is no layer between the refusal and
+/// what is on screen.
+enum StageOutcome: Equatable {
+    case staged(String)
+    case failed(String)
+}
+
 /// One turn in the session transcript.
 ///
 /// The prototype's message objects (:411-412, :455-465) carry three fields:
@@ -148,6 +161,36 @@ struct SessionView: View {
     /// asked for — and it keeps explicit send when it arrives.
     @State private var showKeyboard: Bool = false
 
+    /// Whether the document picker is up.
+    @State private var showPicker: Bool = false
+
+    /// The workspace-relative path of the staged file, if one is waiting.
+    ///
+    /// Owned here rather than pushed straight into `input`: the reference is
+    /// not the operator's prose and must not land in a field they can edit into
+    /// something else. It is composed onto the turn at SEND time, which is also
+    /// why a staged file survives a `NoProvider` — the copy already happened,
+    /// and the reference rides the next turn that has somewhere to go.
+    @State private var stagedPath: String? = nil
+
+    /// Why the last pick failed, if it did. An empty file, a read refusal, or a
+    /// staging error — said rather than swallowed, because a silent pick reads
+    /// as "the app ignored my file."
+    @State private var stageError: String? = nil
+
+    /// Whether a provider is armed — for the STAGED line's wording only.
+    ///
+    /// NOT for `attachEnabled`. Staging works offline; the provider gates the
+    /// model READING the file, so it changes what the line SAYS and never
+    /// whether the control acts.
+    var providerArmed: Bool = false
+
+    /// Stage a picked file. Injected, because a `View` cannot own a core.
+    ///
+    /// Returns the workspace-relative path on success. `nil` means the stage
+    /// failed and `stageError` carries the reason.
+    var onStage: (URL) -> StageOutcome = { _ in .failed("NO CORE ON THIS DEVICE") }
+
     private var trimmed: String {
         input.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -213,30 +256,74 @@ struct SessionView: View {
         }
     }
 
-    /// 🔴 THE ATTACH ARM — terminal-disabled, and the reason names the verb.
+    /// 🔴 THE ATTACH ARM — now real, and real is why the reason changed.
     ///
-    /// The prototype draws a paperclip opening a sheet that invents a
-    /// filename (`CAPTURE-0142.JPG`), toasts `FILE INDEXED — SESSION
-    /// CONTEXT`, and appends "Received X — indexed to session context". None
-    /// of that exists: censused at this commit, `codeOnly` hits for `attach`,
-    /// `PHPicker`, `UIImagePicker`, `fileImporter`, `documentPicker` and
-    /// `PhotosPicker` are ZERO across `Sources/ZeusApp` and
-    /// `Sources/ZeusCoreFFI` (POS control `session` = 234). `send` takes a
-    /// `String` and has nowhere to put a file.
+    /// It shipped terminal-disabled for three phases because no picker and no
+    /// ingest path existed: the prototype drew a paperclip that fabricated a
+    /// filename (`CAPTURE-0142.JPG`), toasted `FILE INDEXED — SESSION CONTEXT`
+    /// and appended "Received X — indexed to session context", all of it
+    /// invented. None of that is transcribed now either; what landed instead is
+    /// the capability the button was always claiming.
     ///
-    /// So the control ships DISABLED with the true reason, exactly as
-    /// BROADCAST/PING do (`HomeView.absentVerbLabel`) and for the same stated
-    /// distinction: a missing verb is TERMINAL — no tap, no link state, no
-    /// retry can produce it — where an unreachable host is not. Conditioning
-    /// this on connectivity would assert the ingest path exists and is merely
-    /// unreachable, which is the costume defect one layer up.
-    static let attachReason = "ATTACH — NO FILE INGEST ON THIS BUILD"
+    /// ## What the pick actually does
+    ///
+    /// The file is COPIED into the workspace (`ZeusCore.stageAttachment`) and
+    /// the turn carries a one-line REFERENCE to its path — never the bytes.
+    /// The model opens it, if it chooses, with the confined `read_file` it
+    /// already has, and the content comes back on the tool channel as DATA. A
+    /// build that inlined the file into the turn text would put a body reading
+    /// "ignore previous instructions" into the prompt as prose; this one
+    /// cannot, because the composer never sees the content.
+    ///
+    /// ## Why it is not conditioned on the provider
+    ///
+    /// Staging is real work that survives a `NoProvider`: the copy succeeds
+    /// offline, and the reference rides the next turn that has somewhere to go.
+    /// So `attachEnabled` tracks the PICK-AND-STAGE path — which is always
+    /// present in this build — and NOT provider state, exactly as it is not
+    /// conditioned on link state. The provider gates the model READING the
+    /// file, the way it gates every other message.
+    static let attachReason = "ATTACH — STAGE A FILE INTO THE WORKSPACE"
 
-    /// Whether the attach control may act. A `false` CONSTANT is the honest
-    /// value while the verb is absent — and it is a named derivation rather
-    /// than an inline `false` so a leg can refuse a future `link`-conditioned
-    /// spelling by NAME.
-    static var attachEnabled: Bool { false }
+    /// What a staged-but-unsent file says. STAGED, never RECEIVED.
+    ///
+    /// The honesty bar the whole arc has been held to: the file is on disk and
+    /// nothing has read it yet. "Received" would claim the model saw it, which
+    /// is the fabricated-toast defect with a true filename attached — worse,
+    /// not better, because a real name makes the lie credible.
+    /// Built through `Theme.joined`, not a hardcoded separator: `check_separator_debt`
+    /// caught the literal form, and it was right — `Theme.separator` is
+    /// NBSP-padded, so a retyped `·` renders a different glyph pair than every
+    /// other identity strip on the screen.
+    static func stagedLine(path: String, armed: Bool) -> String {
+        Theme.joined(["STAGED", path,
+                      armed ? "SENDS WITH NEXT MESSAGE" : "PENDING — NO PROVIDER ARMED"])
+    }
+
+    /// The text one turn actually carries: the operator's prose, plus a
+    /// reference line when a file is staged.
+    ///
+    /// 🔴 A PATH, NEVER THE BYTES — the security invariant as a function. The
+    /// content the model learns about the file it learns by CALLING `read_file`
+    /// on this path, so it arrives on the tool channel as data. Composing the
+    /// bytes in here instead would be the auto-execute surface wearing a
+    /// convenience costume.
+    ///
+    /// Reference goes LAST, after the operator's words, so a file cannot
+    /// prefix-frame the instruction it is attached to.
+    static func turnText(typed: String, stagedPath: String?) -> String {
+        guard let staged = stagedPath, !staged.isEmpty else { return typed }
+        return "\(typed)\n\(attachmentReference(relPath: staged))"
+    }
+
+    /// Whether the attach control may act.
+    ///
+    /// Reads whether a stage path EXISTS, which in this build it does. Kept a
+    /// named derivation rather than an inline `true` for the reason it was a
+    /// named `false` before: a leg refuses a `link.`- or provider-conditioned
+    /// spelling BY NAME, and both are live temptations that would re-assert the
+    /// thing this arc spent three phases removing.
+    static var attachEnabled: Bool { true }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -276,8 +363,21 @@ struct SessionView: View {
             // SAID. The attach control is dead with a reason, and the
             // reason is on the screen rather than only in an accessibility
             // label — the same rule BROADCAST/PING follow one tab over.
-            if !SessionView.attachEnabled {
-                Text(SessionView.attachReason)
+            // The staged file, said honestly. STAGED, never RECEIVED — the
+            // arc's standing bar: a real filename attached to a false claim is
+            // worse than a fabricated one, because it is credible.
+            if let why = stageError {
+                Text(why)
+                    .font(Theme.mono(10))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.warn)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .accessibilityLabel(why)
+            }
+            if let staged = stagedPath {
+                Text(SessionView.stagedLine(path: staged, armed: providerArmed))
                     .font(Theme.mono(10))
                     .tracking(1.2)
                     .foregroundStyle(Theme.w(0.45))
@@ -317,6 +417,26 @@ struct SessionView: View {
         }
         .onChange(of: prefill.wrappedValue) { _, _ in applyPrefill() }
         .onChange(of: voiceCommit.wrappedValue) { _, _ in applyVoiceCommit() }
+        // `.fileImporter` over a hand-rolled `UIDocumentPickerViewController`
+        // wrapper: it IS that controller, presented by SwiftUI, and it hands
+        // back a security-scoped URL with the same semantics. A
+        // `UIViewControllerRepresentable` would add a file of ceremony to reach
+        // the identical API.
+        .fileImporter(isPresented: $showPicker,
+                      allowedContentTypes: [.item],
+                      allowsMultipleSelection: false) { result in
+            stageError = nil
+            switch result {
+            case .failure(let e):
+                stageError = "PICK FAILED — \(e.localizedDescription.uppercased())"
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                switch onStage(url) {
+                case .staged(let rel): stagedPath = rel
+                case .failed(let why): stageError = why
+                }
+            }
+        }
     }
 
     /// Commit a SPOKEN turn. The voice arm auto-sends; the keyboard arm does
@@ -538,7 +658,7 @@ struct SessionView: View {
             accentButton(symbol: "paperclip",
                          label: SessionView.attachReason,
                          enabled: SessionView.attachEnabled,
-                         action: {})
+                         action: { showPicker = true })
 
             // COMMS is the hero: the one control the screen exists for.
             accentButton(symbol: voiceSymbol,
@@ -748,7 +868,16 @@ struct SessionView: View {
         // said was impossible.
         let t = trimmed
         guard SessionView.canSend(trimmedInput: t, disarmReason: disarmReason) else { return }
-        onSend(t)
+        // 🔴 THE REFERENCE, COMPOSED HERE AND NOWHERE ELSE. The staged path
+        // joins the turn at the moment of send — a PATH, never the file's
+        // bytes. `attachmentReference` is the bridge's own builder, so the
+        // marker is one literal with two readers rather than a string this
+        // file retypes.
+        onSend(SessionView.turnText(typed: t, stagedPath: stagedPath))
+        // Consumed: a staged file rides exactly ONE turn. Leaving it set would
+        // silently re-attach it to every subsequent message, which the operator
+        // never asked for and the transcript would not explain.
+        stagedPath = nil
         input = ""
     }
 }

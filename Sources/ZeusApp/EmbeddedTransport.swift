@@ -170,6 +170,13 @@ struct EmbeddedTransport: SessionTransport {
             // field. Same shape as `noProviderMessage`: a state with a known
             // next action gets the action, not the diagnosis.
             return "OLLAMA NEEDS A BASE URL — SET ONE IN ROUTES"
+        case .EmptyAttachment:
+            // A pick that produced no bytes. The crate says "that file is empty
+            // — nothing was staged"; the operator needs the same fact plus the
+            // reassurance that nothing half-landed, which "NOTHING STAGED"
+            // carries. A generic failure here would read as "the app broke",
+            // when the honest answer is "that file has nothing in it".
+            return "THAT FILE IS EMPTY — NOTHING STAGED"
         case let .Core(message):
             return message
         }

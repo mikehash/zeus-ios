@@ -17,6 +17,10 @@ final class SessionCapabilitiesTests: XCTestCase {
     /// what ARRIVES, so a double that discarded its arguments would be unable
     /// to fail the test it exists for.
     private final class RecordingCore: ZeusCoreProtocol {
+    func stageAttachment(fileName: String, bytes: Data) throws -> String {
+        "attachments/stub-\(fileName)"
+    }
+
         var armed = false
         var size: UInt32 = 0
         var modelRows: [String] = []
@@ -141,6 +145,10 @@ final class SessionCapabilitiesTests: XCTestCase {
     func testTheCoresOwnErrorReachesTheCaller() async throws {
         struct Named: Error, CustomStringConvertible { var description: String { "NO WORKSPACE AT /tmp/x" } }
         final class Throwing: ZeusCoreProtocol {
+    func stageAttachment(fileName: String, bytes: Data) throws -> String {
+        "attachments/stub-\(fileName)"
+    }
+
             func messages(sessionId: String) throws -> [TurnMessage] { throw Named() }
             func hasProvider() -> Bool { false }
             func indexSize() -> UInt32 { 0 }

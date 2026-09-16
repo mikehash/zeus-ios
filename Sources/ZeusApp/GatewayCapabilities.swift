@@ -149,6 +149,20 @@ struct GatewayCapabilities: SessionCapabilities {
     /// (`RememberRequest`, `memory_handlers.rs:21`), which is why throwing
     /// `NOT AVAILABLE ON A REMOTE GATEWAY` here would have DENIED a capability
     /// the gateway has.
+    /// Refused, and the refusal is the honest answer.
+    ///
+    /// Staging means copying bytes into the workspace the MODEL reads from. On
+    /// a remote gateway that workspace is on another machine, and no upload
+    /// route exists in the pin (`zeus-api/routes.rs` has no attachment
+    /// endpoint). Returning a fabricated path would hand the composer a
+    /// reference to a file that is not there — the model would call `read_file`
+    /// and get nothing, which reads to the operator as the file being ignored.
+    /// That is the exact defect this arc exists to remove, so this throws
+    /// instead, and the picker says why.
+    func stageAttachment(fileName: String, bytes: Data) async throws -> String {
+        throw GatewayError.unimplemented(method: "stageAttachment")
+    }
+
     func remember(fact: String) async throws {
         _ = try await post("/v1/memory/remember", body: ["fact": fact]) as RememberPayload
     }

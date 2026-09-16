@@ -18,6 +18,10 @@ final class ProviderArmingTests: XCTestCase {
     /// only ever test one branch, and a one-branch readiness test passes
     /// against a constant.
     private final class ArmingCore: ZeusCoreProtocol {
+    func stageAttachment(fileName: String, bytes: Data) throws -> String {
+        "attachments/stub-\(fileName)"
+    }
+
         var armed = false
         var models: [String] = []
         var listThrows = false

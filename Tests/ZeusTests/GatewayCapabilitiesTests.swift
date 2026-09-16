@@ -552,7 +552,15 @@ final class GatewayCapabilitiesTests: XCTestCase {
             total += codeLines(try source(n))
                 .filter { $0.contains("EmbeddedCapabilities.shared()") }.count
         }
-        XCTAssertEqual(total, 2,
+        // 3 as of the attach arc: `RootView.stage` is a THIRD deliberate
+        // holder. It cannot route through `makeCapabilities` — staging copies
+        // bytes into the workspace the MODEL reads from, which on a gateway is
+        // another machine with no upload route in the pin, so
+        // `GatewayCapabilities.stageAttachment` throws by design rather than
+        // fabricating a path to a file that is not there. The count moved for a
+        // reason that is stated; the leg still reds on an UNEXPLAINED move,
+        // which is its whole job.
+        XCTAssertEqual(total, 3,
                        "the un-migrated set moved. A site may only route through " +
                        "`makeCapabilities` once `GatewayCapabilities` IMPLEMENTS the " +
                        "methods that site calls — see the census leg above.")
