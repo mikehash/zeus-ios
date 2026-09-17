@@ -664,13 +664,58 @@ extension RootView {
         }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            return .failed("COULD NOT READ THAT FILE")
+
+        // (a) STATUS PRECONDITION, before any read. A ubiquitous item that is
+        // not `.current` is a placeholder whose bytes are elsewhere; reading it
+        // returns a fragment or nothing, and `!data.isEmpty` alone cannot tell
+        // a fragment from a file. Refusing here puts the whole class out of
+        // reach rather than detecting it afterwards.
+        let values = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey,
+                                                       .fileSizeKey])
+        let status = values?.ubiquitousItemDownloadingStatus?.rawValue
+        if case .refuse(let why) = AttachCoherence.materialisation(downloadingStatus: status) {
+            return .failed(why)
         }
+        // THE DECLARED TOTAL IS CAPTURED HERE AND PASSED DOWN. It is never read
+        // inside the seam that compares it — inline, the sim never makes it
+        // short and the failing red becomes unwritable.
+        let declaredTotal = values?.fileSize
+
+        // (b) COORDINATED READ. `NSFileCoordinator` is a BARRIER, not a witness:
+        // it materialises the item and makes the status, the declared size and
+        // the bytes come from one coherent snapshot instead of three racy
+        // provider reads. It does NOT make the provider an independent source —
+        // one that under-reports and short-reads agrees with itself inside the
+        // block as happily as outside it.
+        //
+        // Still inside the security scope, which is the whole reason the read
+        // lives at this layer rather than behind the seam.
+        var data = Data()
+        var readError: NSError?
+        var failure: String?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &readError) { coherent in
+            do {
+                data = try Data(contentsOf: coherent)
+            } catch {
+                failure = "COULD NOT READ THAT FILE"
+            }
+        }
+        // TWO FAILURE PATHS, BOTH CHECKED. The coordinator reports its own
+        // failure through `readError` and never runs the accessor; the accessor
+        // reports the read's failure through `failure`. Checking only one would
+        // hand an empty `Data` to the guards below, which would then refuse for
+        // the wrong reason.
+        if readError != nil { return .failed("COULD NOT READ THAT FILE") }
+        if let failure { return .failed(failure) }
+
         guard !data.isEmpty else { return .failed("THAT FILE IS EMPTY — NOTHING STAGED") }
+        // (c) COHERENCE POST-CONDITION. A streaming provider extension can
+        // report `.current` and still hand back a fragment, so the precondition
+        // does not subsume this.
+        if case .refuse(let why) = AttachCoherence.coherence(declaredTotal: declaredTotal,
+                                                            stagedCount: data.count) {
+            return .failed(why)
+        }
         do {
             return .staged(try caps.stageAttachmentSync(fileName: url.lastPathComponent,
                                                          bytes: data))

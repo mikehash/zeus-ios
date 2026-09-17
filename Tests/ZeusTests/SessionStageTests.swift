@@ -425,6 +425,15 @@ final class SessionStageTests: XCTestCase {
     /// scope closed — working in the simulator and failing on a device, which
     /// is the worst possible split. The read is in `RootView.stage`, between
     /// start and stop.
+    ///
+    /// SUBJECT INVERTED, LEG REWRITTEN RATHER THAN DELETED. This anchored on
+    /// `Data(contentsOf: url)` until the coherence arc replaced the
+    /// uncoordinated read with `Data(contentsOf: coherent)` inside an
+    /// `NSFileCoordinator` block. Deleting would have left the ground
+    /// unwatched; the INVARIANT never changed — the bytes are read at the one
+    /// layer holding the scope — only the marker did. The now-absent raw form
+    /// is asserted absent in `AttachCoherenceTests`, so retiring the anchor
+    /// here did not retire the claim.
     func testTheStageReadsInsideTheSecurityScope() throws {
         let root = try Self.rootViewSource()
         let code = Self.codeOnly(root)
@@ -433,10 +442,18 @@ final class SessionStageTests: XCTestCase {
         XCTAssertTrue(code.contains("stopAccessingSecurityScopedResource"),
                       "POS: and closed")
         guard let start = code.range(of: "startAccessingSecurityScopedResource"),
-              let read = code.range(of: "Data(contentsOf: url)"),
+              let read = code.range(of: "Data(contentsOf: coherent)"),
               let stop = code.range(of: "stopAccessingSecurityScopedResource") else {
             return XCTFail("the three markers must all be present")
         }
+        // The COORDINATION also sits inside the scope. A coordinator opened
+        // after the scope closed fails on a device exactly the way the raw
+        // read did, which is the split this leg has always existed to catch.
+        guard let coordinate = code.range(of: "NSFileCoordinator().coordinate(readingItemAt: url") else {
+            return XCTFail("VOID: the coordinated read moved; this leg measured nothing")
+        }
+        XCTAssertLessThan(start.lowerBound, coordinate.lowerBound,
+                          "the coordination must follow the scope opening")
         XCTAssertLessThan(start.lowerBound, read.lowerBound,
                           "the read must follow the scope opening")
         // `defer` puts the textual stop BEFORE the read; what matters is that
