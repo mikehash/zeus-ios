@@ -123,10 +123,31 @@ struct NodesView: View {
     /// defaulted closure would let a future call site ship the row dead.
     var onOpenGatewayEditor: (GatewayConfig) -> Void
 
+    /// Opens the ROUTE PICKER — the surface that was reachable only during
+    /// onboarding, which is why `TURNS 0` had no fix on a commissioned phone.
+    ///
+    /// RAISED, NOT HANDLED. This view could render `RoutePicker` itself, but
+    /// it could not finish the act: committing a provider means writing the
+    /// commission AND re-arming the core from it, and `AppState.commission`
+    /// republishing does NOT re-run `RootView.init` — `configSource` is a
+    /// `@StateObject`, and the `.task` that adopts an armed resolution has no
+    /// `id:`, so it does not re-fire on a value change. Committing from here
+    /// would leave the pill and the AGENT tile reading `NO PROVIDER` until
+    /// the next launch: a control that narrates an act that half-happened.
+    /// `RootView` owns the store, the keys and the resolution, so the raise
+    /// goes there — the same seam, for the same reason, as
+    /// `onOpenGatewayEditor` one field up.
+    var onOpenRoutes: () -> Void
+
     /// The arm the console was built from. RECEIVED, not re-derived —
     /// `RootView` measured it once at `init`; a second resolver call over
     /// the same store here would be two pictures of one decision.
     var resolution: GatewayConfig.Resolution
+
+    /// The provider id on the commission, handed down. RECEIVED, not
+    /// re-derived: `RootView` reads the store once, and a second read here
+    /// would be two pictures of one record.
+    var commissionedProvider: String?
 
     /// The core handle this pane reads `index_size()` from.
     ///
@@ -252,6 +273,14 @@ struct NodesView: View {
             : "MNEMOSYNE — \(n) FILES INDEXED"
     }
 
+    /// The provider row's value. Reads the RECORD, not a guess: nil provider
+    /// is a real state and it says so rather than naming a default nobody
+    /// chose — the same rule the Route row above follows for its own nil.
+    private var providerRowValue: String {
+        guard let id = commissionedProvider else { return "TAP TO SET" }
+        return ProviderCatalog.label(for: id).uppercased()
+    }
+
     private var gatewayRowLabel: String  { Self.gatewayRowLabel(for: resolution.config) }
     private var gatewayRowValue: String? { Self.gatewayRowValue(for: resolution.config) }
 
@@ -349,6 +378,15 @@ struct NodesView: View {
                         value: routes.selected?.name ?? "TAP TO SELECT",
                         last: true) {
                     routeSheet = true
+                }
+                // THE PROVIDER ROW. Distinct from Route above: that one picks
+                // among the routes a GATEWAY offers, this one sets the
+                // provider the CORE arms from. A phone with no gateway has
+                // only this one, and until this cut it had neither.
+                NodeRow(icon: "key.horizontal", label: "Provider",
+                        value: providerRowValue,
+                        last: true) {
+                    onOpenRoutes()
                 }
                 // THE GATEWAY ROW — present under EVERY config arm, labelled
                 // by arm (the four-arm leg asserts the four labels differ).

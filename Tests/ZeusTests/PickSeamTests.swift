@@ -58,7 +58,7 @@ final class PickSeamTests: XCTestCase {
     ///
     /// MUT: delete the `providerPick == nil,` clause — this leg fires.
     func testTheSeamIsGuardedAgainstStompingAHandChoice() throws {
-        let body = codeLines(try sourceFile("Commissioning.swift"))
+        let body = codeLines(try sourceFile("RoutePicker.swift"))
         XCTAssertTrue(body.contains("if providerPick == nil, let seed = LaunchArgs.pickedRoute"),
                       "the seed must not overwrite a pick the operator has already made")
     }
@@ -71,7 +71,7 @@ final class PickSeamTests: XCTestCase {
     /// `provider: String?` exists to preserve — would be erased by a debug
     /// flag. MUT: add `commission.recordRoutesChoice(` inside the block.
     func testTheSeamWritesViewStateAndNotTheRecord() throws {
-        let body = codeLines(try sourceFile("Commissioning.swift"))
+        let body = codeLines(try sourceFile("RoutePicker.swift"))
         guard let range = body.range(of: "if providerPick == nil, let seed = LaunchArgs.pickedRoute") else {
             return XCTFail("VOID: the seam is not present — every leg below would pass vacuously")
         }
@@ -104,7 +104,7 @@ final class PickSeamTests: XCTestCase {
         XCTAssertFalse(launch.contains("keyText"),
                        "no launch argument may carry or seed a key")
 
-        let body = codeLines(try sourceFile("Commissioning.swift"))
+        let body = codeLines(try sourceFile("RoutePicker.swift"))
         guard let range = body.range(of: "if providerPick == nil, let seed = LaunchArgs.pickedRoute") else {
             return XCTFail("VOID: the seam is not present")
         }

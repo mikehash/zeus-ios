@@ -287,12 +287,21 @@ final class GatewayConfigSourceTests: XCTestCase {
         // would now admit a swap. The three are: the appearance read, the
         // save-invalidation (which must precede its re-read), and the save's
         // re-read itself.
+        // FIVE as of Arc B. The three originals (appearance read, gateway-save
+        // invalidation, gateway-save re-read) plus TWO from the routes commit,
+        // which performs the SAME pair for the same reason: a record write
+        // behind a `@StateObject` does not re-fire an id-less `.task`, so a
+        // commit that did not invalidate-then-re-arm would leave the pill and
+        // the AGENT tile reading NO PROVIDER until relaunch. The number moved
+        // with a reason stated; the leg still reds on an unexplained move, and
+        // the FORM legs below are what keep a bump from admitting a swap.
         let adopts = code(rootView).filter { $0.contains("configSource.adopt(") }
-        XCTAssertEqual(adopts.count, 3,
-                       "assignment sites: appearance read, save invalidation, save re-read")
+        XCTAssertEqual(adopts.count, 5,
+                       "assignment sites: appearance read, and an invalidation + "
+                       + "re-arm for each of the two commit doors (gateway save, routes commit)")
 
         let armed = adopts.filter { $0.contains("RootView.armedResolution(store: store, keys: keys)") }
-        XCTAssertEqual(armed.count, 2,
+        XCTAssertEqual(armed.count, 3,
                        "the re-resolve must read the store this view was handed, not a fresh one, "
                        + "and it must go through the ARMED helper: a bare `resolve` reverts the "
                        + "`.local` readiness arm to `commission.provider == nil` on every SAVE")

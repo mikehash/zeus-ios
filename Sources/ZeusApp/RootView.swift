@@ -78,6 +78,11 @@ struct RootView: View {
     /// owned here: the LINK pill and the NODES gateway row are two
     /// affordances for one sheet, and a per-tab flag would let both tabs
     /// believe their own editor was open.
+    /// The ROUTE PICKER sheet. ONE flag, same shape and same reason as
+    /// `gatewayEditor` below: one sheet, one piece of state about whether it
+    /// is open, raised from NODES because only this view can finish the act.
+    @State private var routesSheet = false
+
     @State private var gatewayEditor = false
     @State private var gatewayEditorConfig: GatewayConfig? = nil
 
@@ -381,6 +386,37 @@ struct RootView: View {
                     .zIndex(75)
             }
 
+            if routesSheet {
+                SheetLayer(isPresented: $routesSheet,
+                           title: "ROUTE",
+                           subtitle: "THE PROVIDER THIS DEVICE ARMS FROM") {
+                    RoutePicker(keys: keys, ctaTitle: "SET ROUTE") { id, model, baseURL in
+                        // WRITE, INVALIDATE, RE-ARM — as one act, at the one
+                        // site that can perform all three. Splitting it is the
+                        // `armedResolution` incident in a new costume: a caller
+                        // that remembers two of the three ships a phone whose
+                        // pill says NO PROVIDER over a commission that names
+                        // one.
+                        var updated = store.load() ?? Commission()
+                        updated.recordRoutesChoice(providerID: id,
+                                                   model: model,
+                                                   baseURL: baseURL)
+                        store.save(updated)
+                        routesSheet = false
+                        // INVALIDATE BEFORE RE-READING, exactly as the gateway
+                        // editor does: the PURE resolve re-reads the record so
+                        // `.local` drops to `.checking`, and a reading taken
+                        // before this commit cannot survive into the screen
+                        // after it. Then the armed resolution replaces it.
+                        configSource.adopt(RootView.resolve(store: store))
+                        Task { configSource.adopt(await RootView.armedResolution(store: store, keys: keys)) }
+                    }
+                    .padding(.horizontal, 4)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(78)
+            }
+
             if let config = gatewayEditorConfig, gatewayEditor {
                 GatewayEditorSheet(config: config,
                                    resolution: configSource.resolution,
@@ -592,7 +628,16 @@ struct RootView: View {
                           gatewayEditorConfig = config
                           gatewayEditor = true
                       },
+                      // THE SECOND PRODUCTION RAISER OF THE PICKER, and the
+                      // first one reachable in a shipped build: the other is
+                      // `CommissioningView`, which is gone after onboarding.
+                      // Not `#if DEBUG`-gated — the census asserts exactly
+                      // that, because an arity count would have passed on the
+                      // build where the only other caller was a release-nil
+                      // debug seam.
+                      onOpenRoutes: { routesSheet = true },
                       resolution: configSource.resolution,
+                      commissionedProvider: store.load()?.provider,
                       // MIGRATED. `search` and `indexSize` are implemented on
                       // the gateway conformer as of this commit, so the
                       // mnemosyne row and the find pane read the backend the

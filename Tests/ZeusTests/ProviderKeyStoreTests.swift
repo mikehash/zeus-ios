@@ -81,7 +81,7 @@ final class ProviderKeyStoreTests: XCTestCase {
     }
 
     func testTheKeyWriterIsTheKeychainAndNotUserDefaults() throws {
-        let src = try source("Commissioning.swift")
+        let src = try source("RoutePicker.swift")
         let code = src.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") }
@@ -198,7 +198,7 @@ final class ProviderKeyStoreTests: XCTestCase {
     // MARK: - The field is live, and the copy no longer says it is not
 
     func testTheKeyFieldIsEnterableAndMasked() throws {
-        let src = try source("Commissioning.swift")
+        let src = try source("RoutePicker.swift")
         XCTAssertTrue(src.contains("SecureField(\"\", text: $keyText"),
                       "the key field must be a SecureField: an unmasked secret is "
                       + "readable over a shoulder and offered to the keyboard cache")
@@ -210,7 +210,7 @@ final class ProviderKeyStoreTests: XCTestCase {
     }
 
     func testSwitchingProviderClearsTheTypedKeyAndRemovesTheOld() throws {
-        let src = try source("Commissioning.swift")
+        let src = try source("RoutePicker.swift")
         XCTAssertTrue(src.contains("keys.removeProviderKey(for: previous)"),
                       "switching rows must remove the abandoned provider's key: "
                       + "a half-finished choice must not leave an orphan secret")
@@ -220,7 +220,7 @@ final class ProviderKeyStoreTests: XCTestCase {
     }
 
     func testTheKeyStoreHasNoDefaultOnTheView() throws {
-        let src = try source("Commissioning.swift")
+        let src = try source("RoutePicker.swift")
         XCTAssertTrue(src.contains("let keys: ProviderKeyStoring"),
                       "VOID: no key-store seam on the view")
         XCTAssertFalse(src.contains("keys: ProviderKeyStoring = "),

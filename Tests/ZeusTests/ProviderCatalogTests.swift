@@ -171,7 +171,7 @@ final class ProviderCatalogTests: XCTestCase {
     /// view body left all 424 tests green (measured), which is the
     /// no-importable-surface class one file over from `main.rs`.
     func testTheRoutesCTARequiresBothAProviderAndAModel() {
-        typealias V = CommissioningView
+        typealias V = RoutePicker
         XCTAssertFalse(V.routesCTAEnabled(providerPick: nil, modelText: "", shape: nil, baseURLText: ""),
                        "neither half given")
         XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama", modelText: "", shape: .key, baseURLText: ""),
@@ -241,7 +241,7 @@ final class ProviderBaseURLGateTests: XCTestCase {
     /// the CTA — it is the one shape that satisfies every other gate and is
     /// still unarmable.
     func testTheCTARefusesAURLProviderWithNoEndpoint() {
-        typealias V = CommissioningView
+        typealias V = RoutePicker
         XCTAssertFalse(V.routesCTAEnabled(providerPick: "ollama",
                                           modelText: "llama3.2",
                                           shape: .url,
@@ -273,7 +273,7 @@ final class ProviderBaseURLGateTests: XCTestCase {
     /// modifier is unreachable from this target — the same no-importable-surface
     /// limit that let `.disabled(false)` pass 424 tests.
     func testTheEndpointFieldIsRenderedForTheURLShape() throws {
-        let src = try source("Commissioning.swift")
+        let src = try source("RoutePicker.swift")
         XCTAssertTrue(src.contains("if case .url = selected.shape {"),
                       "the url arm must exist beside the key arm")
         XCTAssertTrue(src.contains("baseURLField(for: selected)"),
@@ -342,7 +342,7 @@ final class ProviderBaseURLGateTests: XCTestCase {
     /// The default `http://localhost:11434` appears as a PROMPT and never as a
     /// stored value: on a phone, localhost is the phone.
     func testTheLocalhostDefaultIsAPromptAndNotAValue() throws {
-        let src = try source("Commissioning.swift")
+        let src = try source("RoutePicker.swift")
         XCTAssertTrue(src.contains(#"prompt:"#), "POS: the file uses the prompt API")
         XCTAssertFalse(src.contains(#"baseURLText: String = "http://localhost"#),
                        "the state must not be seeded with the daemon default")

@@ -257,8 +257,15 @@ final class ManagedDeferralTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
-        let src = try String(contentsOf: url, encoding: .utf8)
+            .appendingPathComponent("Sources/ZeusApp/")
+        // THE SUBJECT SPLIT ACROSS TWO FILES AT THE EXTRACTION, and so did
+        // this leg. `recordRoutesChoice` is still called from
+        // `Commissioning.swift` — the record write never moved — but the poll
+        // and the CTA are in `RoutePicker.swift` now. Reading one file would
+        // have left half the claim unasserted with nothing to say so.
+        let src = try ["Commissioning.swift", "RoutePicker.swift"]
+            .map { try String(contentsOf: url.appendingPathComponent($0), encoding: .utf8) }
+            .joined(separator: "\n")
         XCTAssertTrue(src.contains("mutating func recordRoutesChoice"),
                       "POS control: the grep is reading the right file")
         // The needle moved with the cut: the CTA now passes the model it
@@ -290,8 +297,14 @@ final class ManagedDeferralTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
-        let src = try String(contentsOf: url, encoding: .utf8)
+            .appendingPathComponent("Sources/ZeusApp/")
+        // RE-ANCHORED AGAIN, and this time across TWO files. The picker moved
+        // to `RoutePicker.swift`; a ban that kept reading only the file it was
+        // written against would have gone green over a pasted literal in the
+        // new one. Both corpora, one assertion.
+        let src = try ["Commissioning.swift", "RoutePicker.swift"]
+            .map { try String(contentsOf: url.appendingPathComponent($0), encoding: .utf8) }
+            .joined(separator: "\n")
         // POS CONTROL, RE-ANCHORED. The old control asserted the CONSTANT
         // exists — retiring the constant would have left this guard asserting
         // about a thing that no longer exists, which fails silently rather
@@ -384,8 +397,10 @@ final class ManagedDeferralTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
-        let src = try String(contentsOf: url, encoding: .utf8)
+            .appendingPathComponent("Sources/ZeusApp/")
+        let src = try ["Commissioning.swift", "RoutePicker.swift"]
+            .map { try String(contentsOf: url.appendingPathComponent($0), encoding: .utf8) }
+            .joined(separator: "\n")
         // POS CONTROL, RE-ANCHORED. It used to name the single BYOK card's title;
         // the picker retired that card — rows come from the core's catalog now —
         // so the control anchors on the step that renders them. A control whose

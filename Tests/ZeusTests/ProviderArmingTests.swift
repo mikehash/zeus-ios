@@ -557,8 +557,14 @@ final class ProviderArmingTests: XCTestCase {
             .filter { !$0.hasPrefix("//") && !$0.hasPrefix("///") }
 
         // POS control, same invocation: a call form known present.
-        XCTAssertEqual(lines.filter { $0.contains("armedResolution(store: store, keys: keys)") }.count, 2,
-                       "VOID or drift: expected exactly two entry points (init + onSaved) into the armed helper")
+        // THREE as of Arc B. The third is the ROUTES COMMIT: setting a
+        // provider from NODES must re-arm for exactly the reason the gateway
+        // save must — `configSource` is a `@StateObject` and the adopting
+        // `.task` has no `id:`, so a record write alone leaves the pill and
+        // the AGENT tile reading NO PROVIDER until relaunch. The number moved
+        // for a stated reason; the leg still reds on an UNEXPLAINED move.
+        XCTAssertEqual(lines.filter { $0.contains("armedResolution(store: store, keys: keys)") }.count, 3,
+                       "VOID or drift: expected three entry points (init + gateway onSaved + routes commit) into the armed helper")
 
         // The bare resolver may appear ONLY inside the helper — one call, and
         // it is the one the helper composes onto.
@@ -571,13 +577,21 @@ final class ProviderArmingTests: XCTestCase {
         // before the re-read). Both are the pure resolver used AS the
         // `.checking` producer, which is the opposite of dropping the core's
         // answer — and both are followed by a composing read.
+        // FOUR as of Arc B — the fourth is the routes commit's invalidation,
+        // named in the leg below beside the gateway save's. Still every
+        // occurrence enumerated by FORM, never a raised number.
         let bare = lines.filter { $0.contains("RootView.resolve(store: store)") }
-        XCTAssertEqual(bare.count, 3,
+        XCTAssertEqual(bare.count, 4,
                        "a bare `RootView.resolve` outside the helper drops the core's readiness answer; found \(bare.count)")
         XCTAssertEqual(lines.filter { $0.contains("let resolution = RootView.resolve(store: store)") }.count, 1,
                        "the init seed must be exactly one site")
-        XCTAssertEqual(lines.filter { $0.contains("configSource.adopt(RootView.resolve(store: store))") }.count, 1,
-                       "the save-invalidation must be exactly one site")
+        // TWO invalidation sites, and they are the SAME act at two doors:
+        // the gateway save and the routes commit each drop the badge to
+        // `.checking` before their re-read. Identical in form because they
+        // are identical in kind — this is the pure resolver used AS the
+        // `.checking` producer, not as a substitute for the armed one.
+        XCTAssertEqual(lines.filter { $0.contains("configSource.adopt(RootView.resolve(store: store))") }.count, 2,
+                       "the save-invalidation sites are the gateway save and the routes commit")
         XCTAssertEqual(lines.filter { $0.contains("return await RootView.resolve(store: store)") }.count, 1,
                        "the helper's own composing resolve must be exactly one site")
 

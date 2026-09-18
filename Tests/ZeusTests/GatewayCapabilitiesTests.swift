@@ -514,7 +514,7 @@ final class GatewayCapabilitiesTests: XCTestCase {
         let siteSymbols: [(method: String, file: String, symbol: String)] = [
             ("hasProvider", "RootView.swift",      "static func armedResolution(store:"),
             ("setProvider", "RootView.swift",      "static func armedResolution(store:"),
-            ("listModels",  "Commissioning.swift", "EmbeddedCapabilities.shared()"),
+            ("listModels",  "RoutePicker.swift",   "EmbeddedCapabilities.shared()"),
         ]
         for site in siteSymbols {
             let src = codeLines(try source(site.file)).joined(separator: "\n")
@@ -546,7 +546,7 @@ final class GatewayCapabilitiesTests: XCTestCase {
     /// NOT. Moving a site without implementing its method reds here; the
     /// failure message says which pairing to check.
     func testExactlyFourSitesStillHoldTheEmbeddedHandleDirectly() throws {
-        let names = ["RootView.swift", "Commissioning.swift"]
+        let names = ["RootView.swift", "Commissioning.swift", "RoutePicker.swift"]
         var total = 0
         for n in names {
             total += codeLines(try source(n))

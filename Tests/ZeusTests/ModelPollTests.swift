@@ -133,7 +133,7 @@ final class ModelPollTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
+            .appendingPathComponent("Sources/ZeusApp/RoutePicker.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(src.contains("TextField(\"\", text: $modelText"),
                       "POS control: the grep is reading the file that owns the field")
@@ -151,7 +151,7 @@ final class ModelPollTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
+            .appendingPathComponent("Sources/ZeusApp/RoutePicker.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(src.contains("pollDebounce"),
                       "POS control plus the claim: the window has a name")
@@ -167,7 +167,7 @@ final class ModelPollTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/ZeusApp/Commissioning.swift")
+            .appendingPathComponent("Sources/ZeusApp/RoutePicker.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(src.contains("pollTask?.cancel()"),
                       "the in-flight debounce must be cancelled, not left to fire")
