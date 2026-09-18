@@ -164,7 +164,17 @@ final class ProviderArmingTests: XCTestCase {
         XCTAssertNotEqual(measured.config, .local(.noProvider))
     }
 
-    /// THE EIGHT SILENT SITES, PINNED. `LocalReadiness` is not `CaseIterable`
+    /// THE NINE SILENT SITES, PINNED.
+    ///
+    /// NINTH, added by Arc A and REVIEWED under this leg's own instruction:
+    /// `LinkMonitor.probeOnce`'s `case .local:` asks "is the core local",
+    /// and the answer is terminal for all three readiness sub-arms — an
+    /// in-process core has no round trip to measure whether or not a provider
+    /// has been picked. `HonestControlsTests` proves that over the whole
+    /// `LocalReadiness` domain rather than over the one arm a fixture
+    /// happened to use, which is what earns the non-destructuring form here.
+    ///
+    /// THE ORIGINAL EIGHT. `LocalReadiness` is not `CaseIterable`
     /// and `case .local:` binds the payload without inspecting it, so adding
     /// `.checking` reded exactly TWO switches and the compiler named none of
     /// the rest. These eight ask "is the core local", not "is it ready", and
@@ -188,7 +198,7 @@ final class ProviderArmingTests: XCTestCase {
         }
         XCTAssertEqual(negative, 0, "VOID: the counter matched a pattern that does not exist")
         XCTAssertGreaterThan(destructuring, 0, "VOID: no destructuring sites found — the scan did not reach the sources")
-        XCTAssertEqual(nonDestructuring, 8,
+        XCTAssertEqual(nonDestructuring, 9,
                        "the count of `.local` matches that do NOT inspect readiness moved. The compiler will not name them: `LocalReadiness` is not CaseIterable and `case .local:` binds without inspecting. Read each one and decide whether it means \"is the core local\" (leave it) or \"is it ready\" (destructure it), then move this number.")
     }
 

@@ -92,7 +92,13 @@ struct HomeView: View {
                 agent
                 routePill
                 agentControls
-                LinkCard(state: link.state, onRetry: { Task { await link.probeOnce() } })
+                // The retry arm is chosen from whether a probe CAN produce a
+                // verdict, not from whether the pill currently looks bad.
+                // `.local` yields nil and the arrow does not render.
+                LinkCard(state: link.state,
+                         onRetry: link.isProbeable
+                                  ? { Task { await link.probeOnce() } }
+                                  : nil)
                 statusGrid
                 alertsRow
                 ApprovalsSection(store: approvals, now: Date())
@@ -647,7 +653,18 @@ struct LinkCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let state: LinkState
-    let onRetry: () -> Void
+
+    /// The re-probe control. OPTIONAL, and the optionality is the guard.
+    ///
+    /// Nil = there is nothing to re-probe, so NO BUTTON IS RENDERED. The
+    /// alternative — always render, and let the handler decide — is the shape
+    /// that shipped the `.local` corruption: a control that looks live, taps
+    /// cleanly, and either lies or does nothing. Absence of an act is spelled
+    /// by absence of a control, not by a handler that returns early.
+    ///
+    /// Not defaulted: a default would let a call site omit the decision and
+    /// inherit whichever arm the default picked.
+    let onRetry: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -670,14 +687,16 @@ struct LinkCard: View {
 
             Spacer(minLength: 0)
 
-            Button(action: onRetry) {
-                Image(systemName: "arrow.clockwise")
-                    .font(Theme.mono(12, .semibold))
-                    .foregroundStyle(Theme.r(0.9))
-                    .frame(minWidth: Theme.controlSize, minHeight: Theme.controlSize)
+            if let onRetry = onRetry {
+                Button(action: onRetry) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(Theme.mono(12, .semibold))
+                        .foregroundStyle(Theme.r(0.9))
+                        .frame(minWidth: Theme.controlSize, minHeight: Theme.controlSize)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Re-probe the gateway")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Re-probe the gateway")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

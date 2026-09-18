@@ -609,9 +609,35 @@ struct NodesView: View {
 
     // MARK: - :735-741  enroll
 
+    /// The label under a disabled ENROLL. Same author, same reason, and
+    /// deliberately the same SENTENCE SHAPE as `HomeView.absentVerbLabel`:
+    /// the absence is of a VERB, not of a link, so re-tapping cannot change
+    /// it and no host is named.
+    ///
+    /// A static function rather than an inline literal so a test can assert
+    /// the rendered string without a rendered view.
+    static var absentEnrollmentLabel: String {
+        Theme.joined(["ENROLL NODE", "NO ENROLLMENT TRANSPORT ON THIS BUILD"])
+    }
+
+    /// 🔴 TERMINALLY DISABLED, and it replaces a FABRICATION.
+    ///
+    /// This button toasted `NODE ENROLLMENT — SCAN THE NEW DEVICE` and then
+    /// began nothing: no scanner, no pairing, no write. The sentence narrated
+    /// a flow that does not exist in this build — the same class as the
+    /// retired `MNEMOSYNE CONSISTENT` line, and worse than a dead button,
+    /// because it instructed the operator to go do something.
+    ///
+    /// Disabled on VERB ABSENCE, exactly as BROADCAST/PING are: there is no
+    /// enrollment transport here at all, so it is not conditioned on link
+    /// state. Conditioning it on `resolution` would assert the verb exists
+    /// and is merely unreachable.
     private var enrollButton: some View {
+        VStack(spacing: 6) {
         Button {
-            onToast("NODE ENROLLMENT — SCAN THE NEW DEVICE")
+            // Intentionally empty: `.disabled(true)` below means this never
+            // runs. Empty rather than a toast, because any string here would
+            // be a claim about an act that has no implementation.
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus").font(Theme.display(14, .regular))
@@ -619,17 +645,31 @@ struct NodesView: View {
                     .font(Theme.display(9.5, .bold))
                     .tracking(1.9)                         // 0.2em at 9.5pt
             }
-            .foregroundStyle(Theme.r(0.6))
+            .foregroundStyle(Theme.r(0.3))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(true)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(style: StrokeStyle(lineWidth: Theme.hairline, dash: [4, 4]))
-                .foregroundStyle(Theme.r(0.3))
+                .foregroundStyle(Theme.r(0.2))
         )
+        .accessibilityLabel(Self.absentEnrollmentLabel)
+
+            // The reason, ON SCREEN. A greyed control with no sentence under
+            // it reads as a bug; the sentence is what makes the disablement
+            // honest rather than merely inert.
+            Text(Self.absentEnrollmentLabel)
+                .font(Theme.mono(8.5))
+                .tracking(0.6)
+                .foregroundStyle(Theme.w(0.4))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .accessibilityHidden(true)
+        }
         .padding(.horizontal, 20)
         .padding(.top, 12)
     }

@@ -410,15 +410,50 @@ final class LinkMonitor: ObservableObject {
         start()
     }
 
+    /// Whether a probe can produce a verdict at all — i.e. whether there is
+    /// an endpoint to ask. FALSE on `.local`, and that is the point: an
+    /// in-process core is reachable by construction and has no round trip to
+    /// measure, so "re-probe" is not an act this build can perform.
+    ///
+    /// Exposed so a VIEW can decline to render a control rather than render
+    /// one that returns without doing anything. A button whose handler is a
+    /// no-op is indistinguishable, to the operator, from a broken app.
+    var isProbeable: Bool {
+        if case .resolved = config { return true }
+        return false
+    }
+
     /// One probe, awaited. The test seam and the pull-to-refresh path: it
     /// returns only after the verdict has been published, so a caller can
     /// assert on `state` without a settle loop.
+    ///
+    /// 🔴 THE `.local` ARM IS A RETURN WITHOUT A WRITE, and it is the repair
+    /// of a shipped defect. This was one `guard case .resolved` whose `else`
+    /// wrote `.unconfigured` — correct for `.absent`/`.malformed`, and a
+    /// CORRUPTION on `.local`: it took a true `LOCAL · ON THIS PHONE` and
+    /// replaced it with `NO GATEWAY · SET ZEUS_GATEWAY_URL`, an instruction
+    /// to fix something that was never broken. Nothing restored it, because
+    /// `start()` guards on `.resolved` so no poll loop exists to re-derive
+    /// the label — it survived until relaunch, across all four surfaces that
+    /// read this state. `.local` was swept into a guard written for `.absent`
+    /// purely by shape.
+    ///
+    /// A SWITCH, not a guard, and exhaustive with no `default`: the arms have
+    /// three DIFFERENT correct behaviours, so a sixth config case must fail
+    /// to compile here rather than inherit whichever one the guard's `else`
+    /// happened to hold.
     func probeOnce() async {
-        guard case .resolved(let endpoint) = config else {
-            state = .unconfigured
+        switch config {
+        case .resolved(let endpoint):
+            state = await probe.probe(endpoint)
+        case .local:
+            // Terminal, exactly as `stateFor` says at its own `.local` arm:
+            // "the pill should never move off it." Returning without writing
+            // is what makes that sentence true under a retry.
             return
+        case .absent, .malformed:
+            state = .unconfigured
         }
-        state = await probe.probe(endpoint)
     }
 
     deinit { pollTask?.cancel() }
