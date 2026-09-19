@@ -132,12 +132,7 @@ struct NodesView: View {
                 settingsBreadcrumb
                 findPanel
                 enrollButton
-                Text("ZEUS · NOVAXAI")
-                    .font(Theme.mono(8.5))
-                    .tracking(1.19)                       // 0.14em at 8.5pt
-                    .foregroundStyle(Theme.w(0.2))
-                    .padding(.top, 18)
-                    .padding(.bottom, 8)
+                Wordmark()
             }
             .padding(.bottom, 86)                          // :743 tab-bar gutter
         }

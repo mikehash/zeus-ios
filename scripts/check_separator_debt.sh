@@ -30,6 +30,14 @@
 # APERTURE, stated because the numbers are meaningless without it: `Sources`,
 # `*.swift`, whole-line comments excluded, `Theme.separator` call sites
 # excluded (the definition in `Theme.swift` is itself pinned below).
+# LOWERED ONCE, EXPLICITLY (Arc D): the footer site
+# `Sources/ZeusApp/NodesView.swift|Text("ZEUS · NOVAXAI")` was removed from
+# the set below because the text no longer exists at TWO sites or at ONE — it
+# was extracted into `Wordmark.swift`, which builds it with `Theme.joined`.
+# So the retirement is a real migration, not a waiver: there is nothing left
+# to pin because there is no bare `·` literal for that string anywhere.
+# `WordmarkTests` holds the other half (one construction site, both screens
+# render it), because this script can only see literals it can grep.
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 2
 
@@ -48,7 +56,6 @@ Sources/ZeusApp/LinkMonitor.swift|return "NO GATEWAY · SET ZEUS_GATEWAY_URL"
 Sources/ZeusApp/LinkMonitor.swift|return "REMOTE · \(host.uppercased()) · \(reason.uppercased())"
 Sources/ZeusApp/LinkMonitor.swift|return "\(host) · /health 200 · \(ms)ms"
 Sources/ZeusApp/LinkMonitor.swift|return "\(host) · \(reason)"
-Sources/ZeusApp/NodesView.swift|Text("ZEUS · NOVAXAI")
 Sources/ZeusApp/OrbBench.swift|String(format: "%4d pts · %6.3f ms/frame · glow candidates %4d · %@",
 Sources/ZeusApp/PushRegistrar.swift|return "allowed · no device token yet"
 Sources/ZeusApp/PushRegistrar.swift|return "token ·\(suffix)"

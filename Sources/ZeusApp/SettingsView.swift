@@ -72,12 +72,7 @@ struct SettingsView: View {
             VStack(spacing: 0) {
                 routingSection
                 voiceSection
-                Text("ZEUS · NOVAXAI")
-                    .font(Theme.mono(8.5))
-                    .tracking(1.19)
-                    .foregroundStyle(Theme.w(0.2))
-                    .padding(.top, 18)
-                    .padding(.bottom, 8)
+                Wordmark()
             }
             .padding(.bottom, 86)
         }
