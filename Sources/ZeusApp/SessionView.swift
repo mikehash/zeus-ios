@@ -191,6 +191,20 @@ struct SessionView: View {
     /// failed and `stageError` carries the reason.
     var onStage: (URL) -> StageOutcome = { _ in .failed("NO CORE ON THIS DEVICE") }
 
+    /// Whether the orb is currently allowed to speak replies.
+    ///
+    /// Passed in, not owned: the producer is the ONE reply `Narrator` at
+    /// `RootView:84`, and a second source of truth here would let the glyph
+    /// disagree with the synthesizer it claims to describe.
+    var narrationOn: Bool = true
+
+    /// Flip the narration preference. NO DEFAULT for the same reason `onSend`
+    /// has none — an empty closure would ship a speaker glyph that toggles its
+    /// own picture and changes nothing, which is the dead-control class this
+    /// app retires.
+    var onToggleNarration: () -> Void
+
+
     private var trimmed: String {
         input.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -669,6 +683,15 @@ struct SessionView: View {
             accentButton(symbol: "keyboard",
                          label: showKeyboard ? "Hide keyboard" : "Show keyboard",
                          action: { showKeyboard.toggle() })
+
+            // NARRATION MUTE — the first production site for this control
+            // outside `Commissioning.swift`, which owned the only one and
+            // took it away with the screen. Placed on the stage row because
+            // this is the screen where the orb speaks.
+            accentButton(symbol: narrationOn ? "speaker.wave.2" : "speaker.slash",
+                         label: narrationOn ? "Mute narration voice"
+                                            : "Unmute narration voice",
+                         action: onToggleNarration)
 
             accentButton(symbol: "list.bullet",
                          label: showLog ? "Hide transcript" : "Show transcript",

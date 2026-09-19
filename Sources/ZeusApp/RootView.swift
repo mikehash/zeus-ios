@@ -70,6 +70,23 @@ struct RootView: View {
     /// on identity changes and leak the tap.
     @StateObject private var voice = VoiceInput()
 
+    /// The reply narrator. THE SECOND PRODUCTION OWNER of a `Narrator`, and
+    /// the first outside `Commissioning.swift`.
+    ///
+    /// 🔴 WHY A SECOND ONE RATHER THAN A SHARED INSTANCE. `Commissioning`'s
+    /// narrator is owned by a screen that is GONE after `onComplete` — its
+    /// `.onDisappear` calls `stop()` and its `@StateObject` dies with the
+    /// view. Reaching for it here would mean reading a narrator that no
+    /// longer exists on every build past onboarding, which is the dead-control
+    /// class this app retires rather than ships. The mute preference is what
+    /// must be shared, and it is: `NarrationPreference` persists it, and both
+    /// owners read the same key.
+    @StateObject private var replyNarrator = Narrator()
+
+    /// Reply ids already spoken. Prevents the utterance from restarting on
+    /// every republish — `messages` changes on every streamed token.
+    @State private var spokenReplies: Set<UUID> = []
+
     /// :433 — `showToast(text)` sets, then clears after 2800ms.
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
@@ -462,6 +479,22 @@ struct RootView: View {
         // `LaunchArgs.swift:177` names. `VoiceTranscript.accepted` has already
         // refused an empty or whitespace-only result, and the value can only
         // have come from this device's own microphone.
+        // REPLY NARRATION. The orb speaks the agent's answers.
+        //
+        // 🔴 WHY `messages` AND NOT A COMPLETION CALLBACK. `SessionEngine`
+        // has no did-finish hook — the turn settles inside a `defer`
+        // (`Session.swift:316`) that is private and returns nothing. The
+        // published array is the only surface a view can observe, so the
+        // eligibility decision is made in `ReplyNarration.nextToSpeak`,
+        // which refuses user turns, streaming prefixes, and ids already
+        // spoken. Without that dedup this fires once per token.
+        .onChange(of: session.messages) { _, latest in
+            guard let reply = ReplyNarration.nextToSpeak(messages: latest,
+                                                         spoken: spokenReplies)
+            else { return }
+            spokenReplies.insert(reply.id)
+            replyNarrator.narrate(reply.text)
+        }
         .onChange(of: voice.transcript) { _, new in
             guard let new, !new.isEmpty else { return }
             voiceCommit = new
@@ -620,7 +653,18 @@ struct RootView: View {
                 // at the layer that holds the scope — `SessionCapabilities`
                 // takes `Data`, because a sandbox URL means nothing to a remote
                 // gateway and the bytes would have to cross the wire regardless.
-                onStage: stage
+                onStage: stage,
+                // The glyph reads the narrator that actually speaks, and the
+                // toggle writes it — one owner, one preference, persisted.
+                narrationOn: replyNarrator.voiceOn,
+                onToggleNarration: {
+                    replyNarrator.voiceOn.toggle()
+                    // Muting mid-sentence must SILENCE the sentence. The
+                    // narrator's `didSet` stops the synthesizer; `stop()`
+                    // also clears the caption, so the screen does not keep
+                    // typing out a line nobody can hear.
+                    if !replyNarrator.voiceOn { replyNarrator.stop() }
+                }
             )
         case .nodes:
             NodesView(routes: routes, onToast: showToast,

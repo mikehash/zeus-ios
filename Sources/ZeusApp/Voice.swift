@@ -268,6 +268,14 @@ final class VoiceInput: ObservableObject {
     /// state it described.
     @Published private(set) var level: Double = 0
 
+    /// The most recent reading the recognizer produced, final or partial.
+    ///
+    /// NOT `@Published` and not the composer's channel: `transcript` is what
+    /// the composer consumes, and it is written exactly once per capture by
+    /// `finish()`. This is the working value the finalize reads FROM, so a
+    /// half-heard sentence never reaches a surface that could send it.
+    private var latest: String = ""
+
     private let recognizer = SFSpeechRecognizer()
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -359,14 +367,33 @@ final class VoiceInput: ObservableObject {
         task = recognizer?.recognitionTask(with: req) { [weak self] result, error in
             guard let self else { return }
             Task { @MainActor in
-                if let result, result.isFinal {
-                    // The guard: silence yields nothing, not an empty prompt.
-                    self.transcript = VoiceTranscript.accepted(
-                        result.bestTranscription.formattedString
-                    )
-                    self.stop()
+                if let result {
+                    // EVERY result is retained, not only the final one.
+                    //
+                    // 🔴 WHY. `shouldReportPartialResults` is true above and
+                    // nothing used to read a partial: only `isFinal` wrote
+                    // `transcript`. With `requiresOnDeviceRecognition`, the
+                    // final arrives ASYNCHRONOUSLY after `endAudio()` — and
+                    // `stop()` cancelled the task on the next line, so on the
+                    // stop path the final never arrived and the whole
+                    // utterance was discarded in silence. Retaining each
+                    // partial means the last reading the recognizer produced
+                    // is in hand BEFORE any teardown, so a stop can finalize
+                    // from it. The final still wins when it arrives: it
+                    // overwrites the partial with the recognizer's own best
+                    // transcription, which is why this is a fallback and not
+                    // a replacement.
+                    self.latest = result.bestTranscription.formattedString
+                    if result.isFinal {
+                        self.finish()
+                    }
                 } else if error != nil {
-                    self.stop()
+                    // An ERROR is an abort, and an abort must not publish.
+                    // A recognizer that failed mid-utterance holds a prefix
+                    // of what was said, and dispatching that would invent a
+                    // shorter sentence the operator never finished — the
+                    // same class as the empty-transcript bug one step up.
+                    self.abort()
                 }
             }
         }
@@ -384,8 +411,44 @@ final class VoiceInput: ObservableObject {
                                          count: Int(buffer.frameLength)))
     }
 
-    /// Tear down every piece, in the order that does not deadlock.
+    /// The operator's stop. Ends the audio and PUBLISHES what was heard.
+    ///
+    /// 🔴 THE DEFECT THIS REPLACES. The old `stop()` called `endAudio()` and
+    /// `task?.cancel()` on consecutive lines. `endAudio()` ASKS for the final
+    /// result; `cancel()` discards the task before it can arrive. Since only
+    /// `isFinal` wrote `transcript`, every utterance ended by the stop button
+    /// was thrown away — the mic recorded, the orb returned to idle, and
+    /// nothing was ever sent. It failed silently, which is why it read as
+    /// "voice doesn't work" rather than as an error.
+    ///
+    /// The teardown order is unchanged and still load-bearing; what changed
+    /// is that `finish()` runs on this path, publishing the retained reading
+    /// rather than dropping it.
     func stop() {
+        request?.endAudio()
+        finish()
+    }
+
+    /// Publish the retained transcript and tear down.
+    ///
+    /// Called from BOTH ends of a successful capture — the operator's stop
+    /// and the recognizer's own final — so there is exactly one site that
+    /// writes `transcript`, and it cannot disagree with itself.
+    private func finish() {
+        // The guard: silence yields nothing, not an empty prompt. Applied to
+        // the retained reading, so the property that made a blank utterance
+        // unsendable holds on the stop path too.
+        transcript = VoiceTranscript.accepted(latest)
+        teardown()
+    }
+
+    /// Tear down WITHOUT publishing. The abort path.
+    private func abort() {
+        teardown()
+    }
+
+    /// Tear down every piece, in the order that does not deadlock.
+    private func teardown() {
         // Zeroed FIRST: the tap is removed on the next line, so any later
         // reset would race a renderer already drawing the last live value.
         level = 0
@@ -395,6 +458,7 @@ final class VoiceInput: ObservableObject {
         task?.cancel()
         request = nil
         task = nil
+        latest = ""
         if state == .listening { state = .idle }
     }
 }
