@@ -58,7 +58,7 @@ private final class FakeCore: ZeusCoreProtocol, @unchecked Sendable {
 
     init(_ script: Script) { self.script = script }
 
-    func send(sessionId: String, text: String, sink: TokenSink) throws {
+    func send(sessionId: String, text: String, images: [ImageAttachment], sink: TokenSink) throws {
         lock.lock()
         sentSessionIDs.append(sessionId)
         sentTexts.append(text)

@@ -45,7 +45,7 @@ final class ProviderArmingTests: XCTestCase {
         // subject is arming. A send that returned fixture text would let a
         // readiness leg pass through a core that cannot send.
         func indexSize() -> UInt32 { 0 }
-        func send(sessionId: String, text: String, sink: TokenSink) throws {}
+        func send(sessionId: String, text: String, images: [ImageAttachment], sink: TokenSink) throws {}
         func sessions() throws -> [SessionInfo] { [] }
         func messages(sessionId: String) throws -> [TurnMessage] { [] }
         func remember(fact: String) throws {}

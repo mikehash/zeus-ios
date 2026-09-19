@@ -103,7 +103,15 @@ struct EmbeddedTransport: SessionTransport {
             // HERE, on a queue nobody is drawing a UI from.
             queue.async {
                 do {
-                    try core.send(sessionId: id, text: prompt, sink: sink)
+                    // E1: the channel is open and carries no images YET —
+                    // the picker (E2) is what fills it. This is deliberately
+                    // an empty ARRAY and not a second code path: the bridge
+                    // threads whatever it is given straight into
+                    // `run_with_attachments`, whose empty case IS the old
+                    // `run_structured` behaviour, so there is no text-arm /
+                    // image-arm pair here whose two sides a mutation could
+                    // not tell apart.
+                    try core.send(sessionId: id, text: prompt, images: [], sink: sink)
                 } catch {
                     // A throw from `send` itself (BridgeError) — as opposed to
                     // an error delivered through `onError` — still has to
@@ -177,6 +185,19 @@ struct EmbeddedTransport: SessionTransport {
             // carries. A generic failure here would read as "the app broke",
             // when the honest answer is "that file has nothing in it".
             return "THAT FILE IS EMPTY — NOTHING STAGED"
+        case let .NotAnImage(mimeType):
+            // The vision channel refusing a non-image AT THE DOOR. The reason
+            // this is audible at all: both dialect formatters return nil for a
+            // non-image one layer below the bridge, so without the typed
+            // refusal the file would vanish and the turn would read as though
+            // the model had seen it — the same class as the toast that claimed
+            // a file was indexed.
+            //
+            // The mime is named because the operator picked something and
+            // needs to know WHICH thing was refused; the second clause names
+            // the channel that does work, since files have a live path.
+            return Theme.joined(["\(mimeType.uppercased()) ISN'T AN IMAGE",
+                                 "ATTACH IT AS A FILE INSTEAD"])
         case let .Core(message):
             return message
         }

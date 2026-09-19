@@ -38,7 +38,7 @@ private final class CatalogCore: ZeusCoreProtocol {
     }
     func listModels(id: String, key: String, baseUrl: String?) throws -> [String] { [] }
     func indexSize() -> UInt32 { 0 }
-    func send(sessionId: String, text: String, sink: TokenSink) throws {}
+    func send(sessionId: String, text: String, images: [ImageAttachment], sink: TokenSink) throws {}
     func sessions() throws -> [SessionInfo] { [] }
     func messages(sessionId: String) throws -> [TurnMessage] { [] }
     func remember(fact: String) throws {}

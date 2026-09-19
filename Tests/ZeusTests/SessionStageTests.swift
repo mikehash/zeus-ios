@@ -472,14 +472,80 @@ final class SessionStageTests: XCTestCase {
     /// Comments stripped. See `HomeControlsTests.codeOnly` for the incident
     /// that bought this: a census whose corpus includes prose cannot tell a
     /// use from a mention, and the sharper the doc comment the redder the leg.
+    /// Strip comments so a census counts CODE, not the prose describing it.
+    ///
+    /// 🔴 Both forms, and the second was learned by a red on a correct tree.
+    /// This stripped only `//`, which is every comment a hand-written Swift
+    /// file in this repo has — so it was complete for three arcs. It is not
+    /// complete for `Sources/ZeusCoreFFI`, which is GENERATED: UniFFI renders
+    /// each Rust doc comment into a Swift block comment, and the vision arc put
+    /// the word `PhotosPicker` inside one (explaining why a phone attachment is
+    /// bytes and never a URL). The banned-picker census then counted a
+    /// SENTENCE as a picker.
+    ///
+    /// The failure mode to notice: the leg was right that the token was in the
+    /// corpus, and wrong about what its presence meant. An instrument that
+    /// cannot see the difference between a mention and a use reports the
+    /// mention with the same confidence, so the repair belongs here rather
+    /// than in the prose that tripped it.
     private static func codeOnly(_ source: String) -> String {
-        source
+        let lineStripped = source
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line -> Substring in
                 guard let slash = line.range(of: "//") else { return line }
                 return line[line.startIndex ..< slash.lowerBound]
             }
             .joined(separator: "\n")
+
+        // Block comments, counted rather than regexed because Swift's nest.
+        var out = ""
+        var depth = 0
+        var i = lineStripped.startIndex
+        let open = "/" + "*", close = "*" + "/"
+        while i < lineStripped.endIndex {
+            let rest = lineStripped[i...]
+            if rest.hasPrefix(open) {
+                depth += 1
+                i = lineStripped.index(i, offsetBy: 2)
+            } else if rest.hasPrefix(close), depth > 0 {
+                depth -= 1
+                i = lineStripped.index(i, offsetBy: 2)
+            } else {
+                if depth == 0 { out.append(lineStripped[i]) }
+                i = lineStripped.index(after: i)
+            }
+        }
+        return out
+    }
+
+    /// The strip removes both comment forms, and leaves code behind.
+    ///
+    /// A control for the instrument above: a stripper that ate everything would
+    /// make every `XCTAssertEqual(count, 0)` in this file pass vacuously, which
+    /// is failure in the direction that looks like success.
+    func testTheCommentStripSeesBothCommentForms() {
+        // The delimiters are ASSEMBLED, never written literally. A fixture
+        // containing a real block comment would be a block comment in THIS
+        // file, and `check_network_shape.sh`'s stripper is line-oriented — it
+        // VOIDs rather than half-parse when it meets one. Measured: writing
+        // the fixture the obvious way voided a passing guard, so the test for
+        // the instrument broke a different instrument.
+        let open = "/" + "*", close = "*" + "/"
+        let sample = [
+            #"let live = "KEPT""#,
+            "// BANNED_LINE",
+            open + " BANNED_BLOCK " + close,
+            #"let alsoLive = "KEPT2""#,
+        ].joined(separator: "\n")
+        let code = Self.codeOnly(sample)
+
+        XCTAssertTrue(code.contains("KEPT"), "the strip ate real code")
+        XCTAssertTrue(code.contains("KEPT2"), "the strip ate code after a block")
+        XCTAssertEqual(Self.count(of: "BANNED_LINE", in: code), 0,
+                       "line comments survive the strip")
+        XCTAssertEqual(Self.count(of: "BANNED_BLOCK", in: code), 0,
+                       "block comments survive the strip — a generated doc "
+                       + "comment would be counted as code")
     }
 
     private static func sourceURL(_ relative: String) -> URL {

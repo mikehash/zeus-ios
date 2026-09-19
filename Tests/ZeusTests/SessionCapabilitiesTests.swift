@@ -53,7 +53,7 @@ final class SessionCapabilitiesTests: XCTestCase {
         func sessions() throws -> [SessionInfo] { infos }
         func remember(fact: String) throws { facts.append(fact) }
         func search(query: String) -> [SearchHit] { hits }
-        func send(sessionId: String, text: String, sink: TokenSink) throws {}
+        func send(sessionId: String, text: String, images: [ImageAttachment], sink: TokenSink) throws {}
     }
 
     // MARK: - the arguments survive the seam
@@ -157,7 +157,7 @@ final class SessionCapabilitiesTests: XCTestCase {
             func sessions() throws -> [SessionInfo] { [] }
             func remember(fact: String) throws {}
             func search(query: String) -> [SearchHit] { [] }
-            func send(sessionId: String, text: String, sink: TokenSink) throws {}
+            func send(sessionId: String, text: String, images: [ImageAttachment], sink: TokenSink) throws {}
         }
         let caps = EmbeddedCapabilities(core: Throwing())
         do {

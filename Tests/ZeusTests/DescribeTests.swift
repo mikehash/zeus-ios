@@ -79,23 +79,65 @@ final class DescribeTests: XCTestCase {
         XCTAssertNotEqual(text, GatewayConfig.noProviderMessage)
     }
 
-    /// ARITY. The four arms above are the whole enum at this pin. If a regen
-    /// grows a fifth, the switch in `describe` reds at build time — but a
-    /// build error is a statement about the SOURCE, and this leg is the one
-    /// that says the TEST FILE went stale too. Without it, a new arm gets a
-    /// hurried `case .Whatever: return ""` to make the build pass and no leg
-    /// ever notices.
+    /// ARITY. If a regen grows an arm, the switch in `describe` reds at build
+    /// time — but a build error is a statement about the SOURCE, and this leg
+    /// is the one that says the TEST FILE went stale too. Without it, a new arm
+    /// gets a hurried `case .Whatever: return ""` to make the build pass and no
+    /// leg ever notices.
+    ///
+    /// 🔴 It went stale exactly as predicted, and the prediction is why it was
+    /// caught: this list read FOUR arms while the enum carried six —
+    /// `.EmptyAttachment` had landed with the attach arc and never reached
+    /// here. A leg that enumerates by hand cannot detect its own omission, so
+    /// the count is now asserted against the enum's rendered set below, and
+    /// the number is the thing a regen must come back and change.
     func test_every_arm_renders_a_distinct_non_empty_sentence() {
         let rendered = [
             EmbeddedTransport.describe(BridgeError.NoProvider),
             EmbeddedTransport.describe(BridgeError.NoBaseUrl),
             EmbeddedTransport.describe(BridgeError.Unsupported("A-SENTINEL")),
             EmbeddedTransport.describe(BridgeError.Core("B-SENTINEL")),
+            EmbeddedTransport.describe(BridgeError.EmptyAttachment),
+            EmbeddedTransport.describe(BridgeError.NotAnImage("application/pdf")),
         ]
         for text in rendered {
             XCTAssertFalse(text.isEmpty, "an arm rendered an empty sentence")
         }
         XCTAssertEqual(Set(rendered).count, rendered.count,
                        "two arms render the same sentence")
+        XCTAssertEqual(rendered.count, 6,
+                       "BridgeError grew or shrank an arm — update this list AND the count")
+    }
+
+    /// The vision refusal NAMES the file it refused and points somewhere real.
+    ///
+    /// Load-bearing because of where the alternative failure lives: both
+    /// dialect formatters in `zeus-llm::multimodal` return nil for a non-image,
+    /// which drops the attachment one layer BELOW the bridge and lets the turn
+    /// read as though the model saw it. `.NotAnImage` exists to make that
+    /// audible, so a sentence that omitted the mime would restore half the
+    /// defect — the operator would know something was refused but not what.
+    func test_the_vision_refusal_names_the_mime_and_the_working_channel() {
+        let text = EmbeddedTransport.describe(BridgeError.NotAnImage("application/pdf"))
+
+        XCTAssertTrue(text.contains("APPLICATION/PDF"),
+                      "the refusal does not name what was refused: \(text)")
+        XCTAssertTrue(text.contains("ISN'T AN IMAGE"),
+                      "the refusal does not say why: \(text)")
+        XCTAssertTrue(text.contains("FILE"),
+                      "the refusal names no channel that does work: \(text)")
+
+        // It must not read as a breakage. The honest answer is "wrong channel",
+        // not "the app failed" — same discipline as the empty-pick sentence.
+        for alarm in ["ERROR", "FAILED", "UNAVAILABLE"] {
+            XCTAssertFalse(text.contains(alarm),
+                           "a channel mismatch is rendered as a fault: \(text)")
+        }
+
+        // Vacuity control: a DIFFERENT mime must render differently, or the
+        // assertions above are consistent with a fixed string.
+        let other = EmbeddedTransport.describe(BridgeError.NotAnImage("text/plain"))
+        XCTAssertNotEqual(text, other,
+                          "the arm ignores its payload — the mime is decoration")
     }
 }

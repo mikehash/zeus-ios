@@ -74,6 +74,24 @@ pub enum BridgeError {
     /// class as the toast that claimed a file was indexed. Refused at the door.
     #[error("that file is empty — nothing was staged")]
     EmptyAttachment,
+    /// A non-image handed to the vision channel. Refused HERE rather than
+    /// below, and the layer matters: both dialect formatters return `None` for
+    /// a mime outside the image family (multimodal:316, :397), so a PDF sent
+    /// down this path is dropped silently one layer beneath us and the turn
+    /// reads as though the model saw it. That is verbatim the failure
+    /// `stage_attachment` was written to prevent, arriving through a new door.
+    ///
+    /// NOTE — no glob syntax in this doc comment, deliberately. UniFFI renders
+    /// it into a Swift block comment, and Swift block comments NEST: an
+    /// unbalanced open-comment token inside the prose swallows the rest of the
+    /// generated file. Measured, not feared — it cost one build. Guarded by
+    /// `no_doc_comment_can_unbalance_the_generated_swift_block`.
+    ///
+    /// The predicate is the CORE's — `zeus_core::Attachment::is_image` — read,
+    /// not reimplemented. A second copy of "what counts as an image" on this
+    /// side of the bridge is a second source for a fact the core already owns.
+    #[error("{0} is not an image — only images cross the vision channel")]
+    NotAnImage(String),
 }
 
 // The core's fallible surface returns `zeus_core::Error`, NOT `anyhow::Error` —
@@ -107,6 +125,24 @@ pub struct SessionInfo {
     pub updated_at_rfc3339: String,
 }
 
+/// One image crossing from Swift into the turn.
+///
+/// Flattened deliberately: `zeus_core::Attachment` carries `source_url` and a
+/// serde base64 codec that have no meaning on this side — the phone always
+/// holds BYTES (a `PhotosPicker` result is data, never a URL the provider can
+/// fetch), so a Record mirroring all four fields would export two of them with
+/// exactly one legal value. Two fields, both required.
+///
+/// No `is_image` here and no allow-list of mime types: the predicate lives on
+/// the core type and is called at the door (`BridgeError::NotAnImage`).
+#[derive(uniffi::Record)]
+pub struct ImageAttachment {
+    /// e.g. `image/png`. Declared by the picker; the dialect formatter is the
+    /// only thing that reads it.
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// One hit from the workspace file index.
 #[derive(uniffi::Record)]
 pub struct SearchHit {
@@ -114,6 +150,36 @@ pub struct SearchHit {
     pub name: String,
     pub score: f64,
     pub context: Option<String>,
+}
+
+/// Convert the phone's picked images into the core's attachment type, refusing
+/// anything that is not an image.
+///
+/// A FREE function, and the reason is testability rather than tidiness — the
+/// same reason `list_models`' empty-fold was extracted. Inline inside `send`,
+/// this gate sat behind a live `LlmClient` and a network round trip, so it was
+/// unreachable from every hermetic leg: a mutation deleting the refusal left
+/// the whole suite green, which I measured rather than assumed. Extracted, the
+/// gate has a caller a test can be.
+///
+/// The predicate is the CORE's (`Attachment::is_image`), read and not
+/// reimplemented. A second copy of "what counts as an image" on this side of
+/// the bridge is a second source for a fact the core already owns, and the two
+/// would drift the day a mime family is added.
+fn into_core_attachments(
+    images: Vec<ImageAttachment>,
+) -> Result<Vec<zeus_core::Attachment>, BridgeError> {
+    images
+        .into_iter()
+        .map(|i| {
+            let a = zeus_core::Attachment::from_data(i.mime_type, i.bytes);
+            if a.is_image() {
+                Ok(a)
+            } else {
+                Err(BridgeError::NotAnImage(a.mime_type.clone()))
+            }
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -385,12 +451,39 @@ impl ZeusCore {
     /// turn, agent_loop:1657/:2571), and the turn written back to memory.
     ///
     /// Blocks the calling thread, as before — Swift calls it off the main actor.
+    ///
+    /// ## Images
+    ///
+    /// `images` is threaded to `run_with_attachments`, whose encoding is
+    /// DIALECT-OWNED: `zeus_llm::multimodal` emits Anthropic's
+    /// `{"type":"image","source":{"type":"base64",…}}` and OpenAI's
+    /// `{"type":"image_url",…}` from the same `Attachment`, selected by
+    /// provider. Nothing above `zeus-llm` chooses between them, here or in
+    /// Swift — a second chooser would be a second source for a fact the
+    /// dialect table already owns, and it would drift the day a provider
+    /// changes shape.
+    ///
+    /// The MODEL gate is likewise not ours: `zeus-llm/capabilities:548`
+    /// answers whether the armed model can see, and when it cannot the core
+    /// STRIPS the images and injects an in-band note telling the model to say
+    /// so. A Swift-side vision allow-list would drift the day a provider ships
+    /// a new vision model; this renders the core's answer instead.
+    ///
+    /// An empty `images` is not a special case — `run_with_attachments(t, [])`
+    /// is `run_turn(t, vec![], None)`, which is what `run_structured` was. One
+    /// path, so there is no text-arm/image-arm pair whose two sides no
+    /// mutation could tell apart.
     pub fn send(
         self: Arc<Self>,
         session_id: String,
         text: String,
+        images: Vec<ImageAttachment>,
         sink: Box<dyn TokenSink>,
     ) -> Result<(), BridgeError> {
+        // Refuse at the door, before the runtime, so a non-image never reaches
+        // a formatter that would drop it without saying so.
+        let attachments = into_core_attachments(images)?;
+
         let client = self
             .rt
             .block_on(async { self.client.lock().await.clone() })
@@ -429,7 +522,16 @@ impl ZeusCore {
             let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(64);
             agent.set_events(tx);
 
-            let turn = tokio::spawn(async move { agent.run_structured(&text).await });
+            // `run_with_attachments`, not `run_structured`: the latter hardcodes
+            // `vec![]` at its only call to `run_turn` (agent_loop:1223), so no
+            // image could reach the dialect formatters through it. Measured
+            // before the swap: the bridge reads `.content` off the turn and
+            // NOTHING else (`result.tool_calls`/`input_tokens`/`stop_reason` all
+            // 0 hits), and `run_with_attachments` is `run_turn(…).await` then
+            // `Ok(turn.content)` — so the authoritative body is what crosses
+            // either way, and the `is_empty() → streamed join` fallback below
+            // is String-identical.
+            let turn = tokio::spawn(async move { agent.run_with_attachments(&text, attachments).await });
 
             let full = match pump(&mut rx, sink.as_ref()).await {
                 Some(full) => full,
@@ -444,11 +546,11 @@ impl ZeusCore {
                     // Prefer the turn's own content when non-empty, for the same
                     // reason v1 preferred the joined response: the events carry
                     // deltas, `TurnResult` carries the authoritative body.
-                    let text = if result.content.is_empty() {
-                        full
-                    } else {
-                        result.content
-                    };
+                    // `result` is now the authoritative BODY itself rather than
+                    // a struct carrying it — `run_with_attachments` projects
+                    // `.content` upstream. The preference is unchanged: the
+                    // events carry deltas, this carries the body.
+                    let text = if result.is_empty() { full } else { result };
                     sink.on_complete(text);
                 }
                 Ok(Err(e)) => sink.on_error(e.to_string()),
@@ -3057,5 +3159,336 @@ mod tests {
             !phone_agents_body(None).contains(DESKTOP_MARKER),
             "phone body reproduces the desktop claim it replaces"
         );
+    }
+
+    // ========================================================================
+    // E1 — the vision channel
+    // ========================================================================
+
+    /// This file's PRODUCTION half: comments stripped, and the test module cut
+    /// off entirely at `mod tests`.
+    ///
+    /// Both halves are load-bearing and the second was learned the hard way.
+    /// Stripping comments is not enough here: a leg that asserts a token is
+    /// ABSENT from production must name that token, and naming it puts a live
+    /// code occurrence of it inside the test module — so the census finds its
+    /// own needle and reds on a correct tree. Use-vs-mention, arriving where
+    /// the `codeOnly` strip from the Swift side cannot reach it, because the
+    /// occurrence is genuinely code rather than prose.
+    ///
+    /// Callers MUST assert a known-present production token before trusting a
+    /// negative: a split that ate the file makes every `!contains` vacuous.
+    fn production_code() -> String {
+        let src = include_str!("lib.rs");
+        let prod = src
+            .split("\nmod tests {")
+            .next()
+            .expect("split always yields a first element");
+        assert!(
+            prod.len() < src.len(),
+            "the test-module cut found no boundary — the census would read its \
+             own assertions as production code"
+        );
+        prod.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A synthetic `ImageAttachment` reaches the REAL dialect encoding.
+    ///
+    /// Not a mock: `zeus_llm::multimodal` is `pub mod` (lib.rs:26, and there is
+    /// no `pub use` re-export — measured, so the path is the full one), which
+    /// means this leg calls the same formatter the provider call does. A leg
+    /// asserting against a local copy of the JSON shape would be a second
+    /// source for the fact it claims to check, and it would stay green through
+    /// an upstream change of exactly the kind it exists to catch.
+    ///
+    /// The bridge's own conversion is what is under test — mime and bytes in,
+    /// a `zeus_core::Attachment` the formatter accepts out.
+    #[test]
+    fn an_image_attachment_reaches_the_dialect_encoding_as_base64() {
+        // 1x1 PNG. The bytes matter: `resolve_image_mime` sniffs, so a body
+        // that is not actually a PNG could be re-labelled underneath us.
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52,
+        ];
+        let staged = ImageAttachment {
+            mime_type: "image/png".to_string(),
+            bytes: png.clone(),
+        };
+
+        let core_attachment =
+            zeus_core::Attachment::from_data(staged.mime_type.clone(), staged.bytes.clone());
+        assert!(
+            core_attachment.is_image(),
+            "the core predicate must accept what the bridge lets through"
+        );
+
+        let encoded = zeus_llm::multimodal::format_anthropic_attachment(&core_attachment)
+            .expect("an image must produce a content part, not None");
+
+        assert_eq!(
+            encoded["type"], "image",
+            "the dialect emitted a part that is not an image part"
+        );
+        assert_eq!(
+            encoded["source"]["type"], "base64",
+            "the image crossed as something other than base64 — a path or URL \
+             would be exactly the stage()-to-a-path defect this channel replaces"
+        );
+        assert_eq!(encoded["source"]["media_type"], "image/png");
+
+        // The bytes SURVIVE. An encoder that emitted a well-formed envelope
+        // around an empty payload satisfies every assertion above.
+        let b64 = encoded["source"]["data"]
+            .as_str()
+            .expect("base64 payload is a string");
+        assert!(!b64.is_empty(), "envelope is correct and carries nothing");
+
+        // Vacuity control: the same call on a NON-image must not produce a
+        // part at all. Without this, the assertions above are consistent with
+        // a formatter that returns a fixed image part for any input.
+        let text = zeus_core::Attachment::from_data("text/plain", b"not an image".to_vec());
+        assert!(
+            zeus_llm::multimodal::format_anthropic_attachment(&text).is_none(),
+            "the formatter answered for a non-image — the leg above proves nothing"
+        );
+    }
+
+    /// A non-image is refused AT THE DOOR, with the core's predicate.
+    ///
+    /// The formatters return `None` below us, which drops the attachment and
+    /// lets the turn read as though the model saw it. This is the `NotAnImage`
+    /// arm existing to make that refusal audible, and the error must NAME the
+    /// mime so the operator learns which file was refused.
+    #[test]
+    fn a_non_image_is_refused_by_the_bridge_not_dropped_below_it() {
+        for (mime, expected_ok) in [
+            ("application/pdf", false),
+            ("text/plain", false),
+            ("image/png", true),
+            ("image/jpeg", true),
+        ] {
+            let a = zeus_core::Attachment::from_data(mime, b"body".to_vec());
+            assert_eq!(
+                a.is_image(),
+                expected_ok,
+                "the core predicate disagrees with the gate this bridge relies on for {mime}"
+            );
+        }
+
+        // 🔴 THE LEG THAT MATTERS, and it exists because the first version of
+        // this test did NOT have it: deleting the gate from the conversion left
+        // the suite fully green. Asserting the predicate and the error text
+        // says nothing about whether the SEND PATH calls either — the gate was
+        // correct, live, and structurally unreachable from any leg, which is
+        // the defect class this app has now met four times.
+        let refused = into_core_attachments(vec![ImageAttachment {
+            mime_type: "application/pdf".to_string(),
+            bytes: b"%PDF-1.4".to_vec(),
+        }]);
+        match refused {
+            Err(BridgeError::NotAnImage(mime)) => assert_eq!(mime, "application/pdf"),
+            Err(other) => panic!("refused with the wrong arm: {other}"),
+            Ok(_) => panic!(
+                "a PDF crossed the vision gate — it will be dropped by the \
+                 dialect formatter below and the turn will read as though the \
+                 model saw it"
+            ),
+        }
+
+        // And the converse, so the leg is not satisfied by a function that
+        // refuses everything.
+        let png = into_core_attachments(vec![ImageAttachment {
+            mime_type: "image/png".to_string(),
+            bytes: vec![0x89, 0x50, 0x4E, 0x47],
+        }])
+        .expect("an image must cross the gate");
+        assert_eq!(png.len(), 1, "the image was refused or silently dropped");
+        assert_eq!(png[0].data, vec![0x89, 0x50, 0x4E, 0x47], "bytes did not survive");
+
+        // A mixed batch fails as a WHOLE. Partial acceptance would send a turn
+        // carrying some of what the operator picked, with nothing said about
+        // the rest — the silent-drop defect moved up one layer.
+        assert!(
+            into_core_attachments(vec![
+                ImageAttachment { mime_type: "image/png".into(), bytes: vec![1] },
+                ImageAttachment { mime_type: "text/plain".into(), bytes: vec![2] },
+            ])
+            .is_err(),
+            "a mixed batch was partially accepted"
+        );
+
+        let refusal = BridgeError::NotAnImage("application/pdf".to_string());
+        let rendered = refusal.to_string();
+        assert!(
+            rendered.contains("application/pdf"),
+            "the refusal does not name the mime it refused: {rendered}"
+        );
+        assert!(
+            rendered.contains("not an image"),
+            "the refusal does not say why: {rendered}"
+        );
+    }
+
+    /// The send path calls the attachment-carrying entry point, not the one
+    /// that hardcodes an empty vector.
+    ///
+    /// Structural, and it has to be: `send` needs a live provider and a network
+    /// round trip, so no hermetic leg can execute the swap. What CAN be
+    /// measured is that the call site names the function that threads
+    /// attachments — and that the one which cannot is absent from the file.
+    ///
+    /// POS control below is a token known present in the same source; without
+    /// it a read that returned nothing would satisfy every `assert!(!contains)`
+    /// vacuously.
+    #[test]
+    fn the_send_path_names_the_attachment_carrying_entry_point() {
+        let code = production_code();
+
+        assert!(
+            code.contains("pub fn send("),
+            "POS control absent — the source read produced nothing, so the \
+             negative assertions below are vacuous"
+        );
+        assert!(
+            code.contains("agent.run_with_attachments(&text, attachments)"),
+            "the send path no longer threads attachments into the turn"
+        );
+        assert_eq!(
+            code.matches("agent.run_structured(").count(),
+            0,
+            "run_structured hardcodes vec![] at agent_loop:1223 — an image \
+             cannot reach a formatter through it"
+        );
+    }
+
+    /// The authoritative body is still preferred over the streamed join.
+    ///
+    /// The swap changed the turn's return type from `TurnResult` to `String`,
+    /// and the fallback had to be rewritten with it. This is the leg that reds
+    /// if a future edit drops the preference and takes the join unconditionally
+    /// — the events carry DELTAS, and a tool-only turn joins to nothing.
+    #[test]
+    fn the_turn_body_is_preferred_over_an_empty_streamed_join() {
+        // The production expression, extracted so it is testable at all. Both
+        // orderings compile and only one is correct.
+        fn choose(body: String, joined: String) -> String {
+            if body.is_empty() {
+                joined
+            } else {
+                body
+            }
+        }
+
+        // The load-bearing case: the join is EMPTY and the body is not.
+        assert_eq!(
+            choose("authoritative".to_string(), String::new()),
+            "authoritative",
+            "an empty streamed join replaced a non-empty body"
+        );
+        // And the reverse, so the leg is not satisfied by a function that
+        // returns its first argument always.
+        assert_eq!(
+            choose(String::new(), "streamed".to_string()),
+            "streamed",
+            "an empty body did not fall back to the join"
+        );
+        assert_ne!(
+            choose("a".to_string(), "b".to_string()),
+            choose(String::new(), "b".to_string()),
+            "the two arms are indistinguishable — the leg cannot detect a swap"
+        );
+
+        // Production half only — the needle below is an expression, so reading
+        // the whole file would find this very assertion and pass on a tree
+        // where `send` had been rewritten.
+        let code = production_code();
+        assert!(
+            code.contains("pub fn send("),
+            "POS control absent — the production read produced nothing"
+        );
+        assert!(
+            code.contains("if result.is_empty() { full } else { result }"),
+            "the production site no longer matches the expression this leg guards"
+        );
+    }
+
+    /// No doc comment in this crate can unbalance the Swift block comment it
+    /// is rendered into.
+    ///
+    /// 🔴 Incident, cost one build: `BridgeError::NotAnImage`'s prose said
+    /// `image` followed by a slash-star glob. UniFFI renders every doc comment
+    /// into a Swift block comment, and Swift block comments NEST — so that
+    /// token opened a comment that was never closed and the compiler reported
+    /// "Unterminated comment" and "Expected '}' at end of enum" **1700 lines
+    /// away**, in generated code, naming a symbol that was not at fault.
+    ///
+    /// The defect is invisible in Rust: `cargo test` was fully green with the
+    /// glob in place, because Rust's `///` has no nesting to unbalance. Only
+    /// the Swift build could see it, and only as a misattributed error. This
+    /// leg moves the detection back to the crate that causes it.
+    #[test]
+    fn no_doc_comment_can_unbalance_the_generated_swift_block() {
+        let src = include_str!("lib.rs");
+
+        let docs: Vec<&str> = src
+            .lines()
+            .map(|l| l.trim_start())
+            .filter(|l| l.starts_with("///"))
+            .collect();
+
+        assert!(
+            docs.len() > 100,
+            "POS control: this crate is documented, so a near-empty doc list \
+             means the filter broke and the assertions below are vacuous"
+        );
+
+        let open = ['/', '*'];
+        let close = ['*', '/'];
+        for line in docs {
+            let has_open = line
+                .as_bytes()
+                .windows(2)
+                .any(|w| w[0] == open[0] as u8 && w[1] == open[1] as u8);
+            let has_close = line
+                .as_bytes()
+                .windows(2)
+                .any(|w| w[0] == close[0] as u8 && w[1] == close[1] as u8);
+            assert!(
+                !has_open && !has_close,
+                "a doc comment carries a block-comment delimiter, which nests \
+                 in the Swift UniFFI renders it into and will unbalance the \
+                 whole generated file: {line}"
+            );
+        }
+    }
+
+    /// `ImageAttachment` carries bytes and mime and nothing that has one legal
+    /// value on a phone.
+    ///
+    /// A Record mirroring `zeus_core::Attachment` would export `source_url`,
+    /// which a `PhotosPicker` result can never populate — a field Swift must
+    /// pass and can only pass as nil is a question with one answer.
+    #[test]
+    fn the_image_record_is_the_two_fields_a_phone_can_supply() {
+        let a = ImageAttachment {
+            mime_type: "image/heic".to_string(),
+            bytes: vec![1, 2, 3],
+        };
+        let core = zeus_core::Attachment::from_data(a.mime_type.clone(), a.bytes.clone());
+        assert_eq!(core.mime_type, "image/heic");
+        assert_eq!(core.data, vec![1, 2, 3]);
+        assert!(
+            core.source_url.is_none(),
+            "the bridge invented a URL reference the phone cannot produce"
+        );
+        assert!(
+            core.has_data(),
+            "bytes did not survive the crossing into the core type"
+        );
+        assert!(!core.is_url_ref());
     }
 }
