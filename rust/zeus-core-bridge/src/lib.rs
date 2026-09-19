@@ -183,6 +183,108 @@ fn into_core_attachments(
 }
 
 // ============================================================================
+// Attachment classification
+// ============================================================================
+
+/// What channel a picked file belongs on.
+///
+/// EXHAUSTIVE and without a wildcard, for the `CredentialShape` reason: a fifth
+/// kind must be a compile error at every match site rather than a silent route
+/// through a `_` arm. A misrouted attachment is invisible — the turn reads as
+/// though the file was seen.
+#[derive(uniffi::Enum, Debug, PartialEq, Eq)]
+pub enum AttachmentKind {
+    /// The core's `Attachment::is_image` said yes. Belongs on the vision
+    /// channel — which, at this commit, Swift cannot address (the
+    /// `SessionTransport` seam carries prose only), so the door refuses it
+    /// HONESTLY rather than staging it as a file the model would read as
+    /// garbage. E2a-ii widens the seam and flips this to a route.
+    Image { mime_type: String },
+    /// `zeus_agent::document_extract::extract_by_path` has an arm for this
+    /// extension — pdf, docx, odt, xlsx, epub, rtf and the rest. Staged; the
+    /// model's own `read_file` does the extraction.
+    Document { extension: String },
+    /// No extractor arm, but the bytes are text `read_file` will return
+    /// verbatim. `.txt` and `.md` live HERE, not in `Document`: they are in no
+    /// extension list anywhere in the stack, so an extension-driven classifier
+    /// would refuse the two formats most likely to be attached.
+    Text,
+    /// Neither. `reason` names the extension when there is one and falls back
+    /// to the file name when there is not — an extensionless binary has no
+    /// extension to name, and "unsupported file" with no subject is the silent
+    /// drop wearing a refusal's clothes.
+    Unsupported { reason: String },
+}
+
+/// Is this byte string something `read_file`'s plain path returns verbatim?
+///
+/// BYTES, not an extension allow-list, and the rule is not ours: `read_file`
+/// (tools.rs:1566) falls through to `read_to_string`, so the question it will
+/// actually ask of this file is "is it UTF-8". The NUL check is the same
+/// discrimination the workspace index already makes — a workspace is full of
+/// extensionless text, and an allow-list refuses all of it.
+fn is_plain_text(bytes: &[u8]) -> bool {
+    !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok()
+}
+
+/// Classify a picked file into the channel that can actually carry it.
+///
+/// ONE crossing, and in Rust rather than Swift because every predicate here is
+/// core-owned. `is_image` is a METHOD on `zeus_core::Attachment`, so the only
+/// honest way to ask it is to construct one — a Swift `hasPrefix("image/")`
+/// reimplements a core predicate, which is the mime allow-list ban applying to
+/// a prefix test as much as to a list. `extract_by_path` dispatches on the
+/// extension BEFORE it touches bytes, so `&[]` is a cheap `Some(Err(..))` we
+/// never unwrap: we are reading its arm table, not asking it to extract.
+///
+/// `mime_type` comes from the SYSTEM (`UTType.preferredMIMEType`) and is
+/// `None` when the UTI table has no mapping. It is passed rather than inferred
+/// because inferring it here would mean a hand-written extension table in this
+/// crate — the banned allow-list relocated, not removed. Nothing on this side
+/// decides what an image IS; the core decides, on a value the system named.
+///
+/// Ordered. Image first because a `.png` is a document to nobody; document
+/// before text because a `.docx` is a zip and would fail the UTF-8 test for
+/// the wrong reason.
+#[uniffi::export]
+pub fn classify_attachment(
+    file_name: String,
+    mime_type: Option<String>,
+    bytes: Vec<u8>,
+) -> AttachmentKind {
+    let path = std::path::Path::new(&file_name);
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+
+    // Empty bytes: `from_data` is a constructor and `is_image` reads only
+    // `mime_type`, so this probe allocates nothing and copies no payload.
+    if let Some(mime) = mime_type {
+        if zeus_core::Attachment::from_data(mime.clone(), Vec::new()).is_image() {
+            return AttachmentKind::Image { mime_type: mime };
+        }
+    }
+
+    if zeus_agent::document_extract::extract_by_path(path, &[]).is_some() {
+        return AttachmentKind::Document {
+            extension: extension.unwrap_or_default(),
+        };
+    }
+
+    if is_plain_text(&bytes) {
+        return AttachmentKind::Text;
+    }
+
+    AttachmentKind::Unsupported {
+        reason: match extension {
+            Some(e) => format!(".{e}"),
+            None => file_name,
+        },
+    }
+}
+
+// ============================================================================
 // Streaming callback
 // ============================================================================
 
@@ -3490,5 +3592,97 @@ mod tests {
             "bytes did not survive the crossing into the core type"
         );
         assert!(!core.is_url_ref());
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+
+    /// ROUTE 1 — the core's predicate decides, on a mime the SYSTEM named.
+    ///
+    /// Reds under a mutant that drops the image arm (a `.png` then falls to
+    /// `Text` or `Unsupported` and the vision channel becomes unreachable).
+    #[test]
+    fn an_image_is_routed_by_the_cores_own_predicate() {
+        let k = classify_attachment(
+            "shot.png".into(),
+            Some("image/png".into()),
+            vec![0x89, b'P', b'N', b'G', 0],
+        );
+        assert_eq!(k, AttachmentKind::Image { mime_type: "image/png".into() });
+
+        // VACUITY CONTROL: the same bytes with no system mime are NOT an image.
+        // Without this, an arm that returned `Image` unconditionally would pass
+        // the assertion above.
+        assert_ne!(
+            classify_attachment("shot.png".into(), None, vec![0x89, 0]),
+            AttachmentKind::Image { mime_type: "image/png".into() }
+        );
+    }
+
+    /// ROUTE 2 — `extract_by_path` has an arm, so `read_file` will extract.
+    ///
+    /// The bytes are deliberately NOT a real PDF: the predicate dispatches on
+    /// the extension before touching them, which is the property that makes
+    /// this a cheap table read rather than an extraction.
+    #[test]
+    fn a_document_extension_is_routed_to_the_staging_channel() {
+        for (name, ext) in [("report.pdf", "pdf"), ("brief.docx", "docx"), ("s.odt", "odt")] {
+            assert_eq!(
+                classify_attachment(name.into(), None, vec![b'x']),
+                AttachmentKind::Document { extension: ext.into() },
+                "{name}"
+            );
+        }
+    }
+
+    /// ROUTE 3 — `.txt` and `.md` are in NO extension list in the stack.
+    ///
+    /// They reach the model through `read_file`'s plain `read_to_string`, so
+    /// the predicate is bytes. The extensionless case is the one an
+    /// extension-driven classifier silently loses.
+    #[test]
+    fn plain_text_is_routed_by_its_bytes_not_its_extension() {
+        assert_eq!(classify_attachment("notes.txt".into(), None, b"zebraquorum".to_vec()), AttachmentKind::Text);
+        assert_eq!(classify_attachment("README.md".into(), None, b"# title".to_vec()), AttachmentKind::Text);
+        assert_eq!(classify_attachment("LICENSE".into(), None, b"MIT".to_vec()), AttachmentKind::Text);
+        assert_eq!(classify_attachment("a.json".into(), None, b"{}".to_vec()), AttachmentKind::Text);
+    }
+
+    /// ROUTE 4 — neither channel can carry it, so it is REFUSED with a subject.
+    ///
+    /// The extensionless binary is the reason `reason` falls back to the file
+    /// name: there is no extension to name, and a refusal with no subject is
+    /// the silent drop wearing a refusal's clothes.
+    #[test]
+    fn an_unsupported_file_is_refused_with_a_nameable_subject() {
+        assert_eq!(
+            classify_attachment("bundle.zip".into(), None, vec![b'P', b'K', 3, 0, 4]),
+            AttachmentKind::Unsupported { reason: ".zip".into() }
+        );
+        assert_eq!(
+            classify_attachment("song.mp3".into(), None, vec![0xFF, 0xFB, 0]),
+            AttachmentKind::Unsupported { reason: ".mp3".into() }
+        );
+        // No extension to name → the file name IS the subject.
+        assert_eq!(
+            classify_attachment("blob".into(), None, vec![0, 1, 2]),
+            AttachmentKind::Unsupported { reason: "blob".into() }
+        );
+    }
+
+    /// The document route must beat the text route for a format that is a ZIP.
+    ///
+    /// A `.docx` fails the UTF-8 test, so an ordering that ran `is_plain_text`
+    /// first would still reach `Document` — but a `.rtf` is ASCII and WOULD be
+    /// captured as `Text`, losing the extractor. Order is load-bearing; this
+    /// leg is what says so.
+    #[test]
+    fn an_ascii_document_format_still_takes_the_extractor_route() {
+        assert_eq!(
+            classify_attachment("memo.rtf".into(), None, br"{\rtf1\ansi hello}".to_vec()),
+            AttachmentKind::Document { extension: "rtf".into() }
+        );
     }
 }

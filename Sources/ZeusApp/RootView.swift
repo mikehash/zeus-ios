@@ -1,4 +1,7 @@
 import SwiftUI
+// `UTType` only — the SYSTEM's UTI table, which names a candidate mime the
+// CORE then judges. No mime list of ours lives on this side.
+import UniformTypeIdentifiers
 
 /// The tabs.
 ///
@@ -829,6 +832,25 @@ extension RootView {
                                                             stagedCount: data.count) {
             return .failed(why)
         }
+        // (d) ROUTE BY KIND, before the stage. Every predicate is core-owned
+        // and asked ACROSS the bridge in one crossing: `is_image` is a method
+        // on `zeus_core::Attachment`, `extract_by_path` is the extractor's own
+        // arm table, and "is it text" is the byte question `read_file` will
+        // ask. A Swift classifier would have to reimplement one of the three.
+        //
+        // `preferredMIMEType` is the SYSTEM's UTI table, not an allow-list of
+        // ours: it NAMES a candidate mime and the core decides whether that
+        // mime is an image. When the table has no mapping this is `nil`, and
+        // the file falls to the document or text route on its own merits.
+        //
+        // The disposition lives in `AttachRoute` rather than here, because a
+        // decision inside a private view func has no caller a test can be.
+        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+        let kind = classifyAttachment(fileName: url.lastPathComponent, mimeType: mime, bytes: data)
+        if let why = AttachRoute.refusal(for: kind) {
+            return .failed(why)
+        }
+
         do {
             return .staged(try caps.stageAttachmentSync(fileName: url.lastPathComponent,
                                                          bytes: data))
