@@ -72,6 +72,23 @@ enum TransportError: LocalizedError, Equatable {
     /// (`EmbeddedTransport.describe`) rather than a category.
     case embedded(detail: String)
 
+    /// The core WORKED and declined — a typed refusal, not a fault.
+    ///
+    /// The first inhabitant of this enum that is not a failure of anything.
+    /// `NotAnImage` means the bridge read the mime, applied the core's own
+    /// `is_image` predicate and said no; nothing broke. It has its own arm
+    /// because `.embedded`'s rendering opens with the literal words
+    /// `LOCAL CORE ERROR`, and routing a refusal through it tells the operator
+    /// their local core is broken when what actually happened is they attached
+    /// a PDF. That is the same wrong-subject class `.embedded`'s own doc
+    /// comment names for `.unreachable`, one arm over.
+    ///
+    /// Carries the bridge's sentence VERBATIM and adds no envelope: the
+    /// refusal already names the mime and the channel that does work
+    /// (`EmbeddedTransport.describe`), and a prefix here would be a second
+    /// voice explaining a sentence that is already complete.
+    case refused(detail: String)
+
     var errorDescription: String? {
         switch self {
         case .unconfigured:
@@ -95,6 +112,14 @@ enum TransportError: LocalizedError, Equatable {
         case let .embedded(detail):
             return "LOCAL CORE ERROR — \(detail). "
                  + "The gateway runs in this app; no network was involved."
+        case let .refused(detail):
+            // NO envelope, and that is the whole point of the arm. Every other
+            // case here prefixes a category because the underlying error is a
+            // symbol; a refusal arrives as a finished sentence that already
+            // names what was refused and what to do instead. Adding
+            // "LOCAL CORE ERROR" in front of it would render the honest answer
+            // as a fault — which is the defect this case was cut to remove.
+            return detail
         }
     }
 }

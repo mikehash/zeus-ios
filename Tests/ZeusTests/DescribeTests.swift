@@ -129,10 +129,32 @@ final class DescribeTests: XCTestCase {
 
         // It must not read as a breakage. The honest answer is "wrong channel",
         // not "the app failed" — same discipline as the empty-pick sentence.
+        //
+        // MEASURED ON THE COMPOSED SENTENCE, not on `describe`'s fragment.
+        // This assertion was green for an entire arc while the operator read
+        // "LOCAL CORE ERROR — APPLICATION/PDF ISN'T AN IMAGE…", because the
+        // fragment is honest and the envelope `.embedded` wraps it in is not.
+        // Right substring, wrong scope. What reaches the transcript is
+        // `TransportError.errorDescription`, so that is what is asserted.
+        let composed = EmbeddedTransport
+            .transportError(for: BridgeError.NotAnImage("application/pdf"))
+            .errorDescription ?? ""
+        XCTAssertTrue(composed.contains("APPLICATION/PDF"),
+                      "the composed sentence lost the mime: \(composed)")
         for alarm in ["ERROR", "FAILED", "UNAVAILABLE"] {
-            XCTAssertFalse(text.contains(alarm),
-                           "a channel mismatch is rendered as a fault: \(text)")
+            XCTAssertFalse(composed.contains(alarm),
+                           "a channel mismatch is rendered as a fault: \(composed)")
         }
+
+        // POS control on the strip above: the same walk over a genuine FAULT
+        // must FIND an alarm word. Without this, the loop passes identically
+        // against an empty `composed`, and the leg would be vacuous in exactly
+        // the direction that looks like success.
+        let fault = EmbeddedTransport
+            .transportError(for: BridgeError.Core("workspace is read-only"))
+            .errorDescription ?? ""
+        XCTAssertTrue(fault.contains("ERROR"),
+                      "a real core fault stopped shouting — the strip is vacuous: \(fault)")
 
         // Vacuity control: a DIFFERENT mime must render differently, or the
         // assertions above are consistent with a fixed string.

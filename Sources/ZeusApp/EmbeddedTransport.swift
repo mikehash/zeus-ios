@@ -118,7 +118,14 @@ struct EmbeddedTransport: SessionTransport {
                     // terminate the stream, or the consumer awaits forever.
                     // Both paths are funnelled through the sink so the
                     // "finish exactly once" rule has ONE owner.
-                    sink.onError(message: Self.describe(error))
+                    // TYPED, not stringified. `onError(message:)` erases the
+                    // BridgeError to a String and hardcodes `.embedded`, so a
+                    // refusal routed through it is indistinguishable from a
+                    // core fault by the time anything downstream could select
+                    // an arm. `onFailure` carries the classified error and
+                    // goes through the SAME `claimFinish()`, so "finish
+                    // exactly once" still has one owner.
+                    sink.onFailure(Self.transportError(for: error))
                 }
             }
         }
@@ -151,6 +158,36 @@ struct EmbeddedTransport: SessionTransport {
     /// printing — `String(describing:)` on it yields `NoProvider`, which is a
     /// symbol rather than a sentence. Named arms get named text; anything else
     /// falls back to the raw description rather than to a friendly lie.
+    /// Classifies a thrown error into the `TransportError` arm that says what
+    /// actually happened.
+    ///
+    /// Separate from `describe` because they answer different questions:
+    /// `describe` produces the SENTENCE, this chooses the ENVELOPE the sentence
+    /// arrives in. Keeping them fused is how the defect happened — the honesty
+    /// assertion in `DescribeTests` measured the fragment while the operator
+    /// read `LOCAL CORE ERROR — <honest sentence>`, so the leg was green on a
+    /// composed string it never saw.
+    ///
+    /// A REFUSAL is the core working. A FAULT is the core failing. Only the
+    /// second deserves alarm words. `.NotAnImage` is the only refusal today;
+    /// `.NoProvider`/`.NoBaseUrl` are configuration states that already route
+    /// through their own surfaces and keep their existing envelope rather than
+    /// being reclassified in the same commit that introduces the arm.
+    static func transportError(for error: Error) -> TransportError {
+        guard let bridge = error as? BridgeError else {
+            return .embedded(detail: describe(error))
+        }
+        switch bridge {
+        case .NotAnImage:
+            return .refused(detail: describe(bridge))
+        case .NoProvider, .NoBaseUrl, .Unsupported, .EmptyAttachment, .Core:
+            return .embedded(detail: describe(bridge))
+        }
+        // Deliberately no `default:`. Same reason as `describe`: `BridgeError`
+        // is GENERATED, and a catch-all here would classify the next new arm
+        // as a fault by omission — silently, and in the direction that shouts.
+    }
+
     static func describe(_ error: Error) -> String {
         guard let bridge = error as? BridgeError else {
             return String(describing: error)
@@ -250,8 +287,23 @@ private final class StreamSink: TokenSink, @unchecked Sendable {
     }
 
     func onError(message: String) {
+        // The CORE reporting an in-band fault. This channel is a String by
+        // the FFI's shape — there is no type left to classify — and everything
+        // arriving on it genuinely is an embedded failure, so it keeps the
+        // envelope that shouts.
         guard claimFinish() else { return }
         continuation.finish(throwing: TransportError.embedded(detail: message))
+    }
+
+    /// Terminates with an ALREADY-CLASSIFIED error.
+    ///
+    /// Exists because `onError(message:)` erases the type one line before any
+    /// arm could be selected. Not a second terminator: it takes the same
+    /// `claimFinish()`, so the "finish exactly once" invariant still has a
+    /// single owner and a race between the two is provably dropped.
+    func onFailure(_ error: TransportError) {
+        guard claimFinish() else { return }
+        continuation.finish(throwing: error)
     }
 
     /// Returns true exactly once, for the first caller.

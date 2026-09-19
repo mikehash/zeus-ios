@@ -330,6 +330,62 @@ final class SessionEngineFailureTests: XCTestCase {
             + "a fresh box per turn omits session_id from the request, which is "
             + "byte-identical to a legitimate first turn: silent amnesia.")
     }
+
+    // MARK: - A typed refusal reaching the operator
+
+    /// A refusal must reach the TRANSCRIPT, and must not arrive wearing a
+    /// fault's clothes.
+    ///
+    /// The instrument this leg replaces measured `EmbeddedTransport.describe`
+    /// in isolation and was green for a whole arc while the operator read
+    /// `LOCAL CORE ERROR — APPLICATION/PDF ISN'T AN IMAGE…`. The fragment was
+    /// honest; the envelope was not. So this drives the REAL path — a
+    /// synchronous `BridgeError.NotAnImage` out of the core, through
+    /// `EmbeddedTransport`, into a `SessionEngine` — and asserts on
+    /// `messages.last.text`, which is the string a human actually sees.
+    ///
+    /// The settle assertion is not decoration: a refusal that leaves the caret
+    /// blinking forever is silent in the way that matters, because the operator
+    /// reads a hung turn as the app still thinking.
+    func testATypedRefusalReachesTheTranscriptWithoutAFaultEnvelope() async {
+        let core = RefusingCore(.NotAnImage("application/pdf"))
+        let engine = SessionEngine(
+            transport: EmbeddedTransport(core: core, sessionID: SessionIDBox()),
+            seed: []
+        )
+
+        engine.send("look at this")
+        await awaitTurn(engine, slots: 2)
+
+        let shown = engine.messages[1].text
+
+        XCTAssertTrue(shown.contains("APPLICATION/PDF"),
+                      "the operator is not told WHICH file was refused: \(shown)")
+        XCTAssertTrue(shown.contains("FILE"),
+                      "the refusal names no channel that does work: \(shown)")
+
+        for alarm in ["ERROR", "FAILED", "UNAVAILABLE"] {
+            XCTAssertFalse(shown.contains(alarm),
+                           "a refusal is rendered to the operator as a fault: \(shown)")
+        }
+
+        // POS control for the strip above — the same journey with a GENUINE
+        // core fault must still shout. Without it, every `XCTAssertFalse` is
+        // satisfied by a transcript that lost the reason entirely.
+        let faulting = RefusingCore(.Core("workspace is read-only"))
+        let faultEngine = SessionEngine(
+            transport: EmbeddedTransport(core: faulting, sessionID: SessionIDBox()),
+            seed: []
+        )
+        faultEngine.send("write something")
+        await awaitTurn(faultEngine, slots: 2)
+        XCTAssertTrue(faultEngine.messages[1].text.contains("LOCAL CORE ERROR"),
+                      "a real fault stopped shouting — the refusal arm absorbed it")
+
+        XCTAssertFalse(engine.messages[1].streaming,
+                       "a refusal left the caret blinking — silent where it counts")
+        XCTAssertEqual(engine.state, .ambient)
+    }
 }
 
 // MARK: - Frame routing
@@ -625,4 +681,38 @@ final class SessionSeedTests: XCTestCase {
         XCTAssertFalse(codeLines(session).contains("convenience init(transport: SessionTransport) {"),
                        "a seed-less convenience lets a call site omit the transcript silently")
     }
+
+}
+
+/// A core that throws a chosen `BridgeError` synchronously out of `send`.
+///
+/// Distinct from `EmbeddedTransportTests.FakeCore` on purpose: this leg is
+/// about the ENGINE, so it lives beside the engine legs and drives the real
+/// transport rather than a double of it.
+private final class RefusingCore: ZeusCoreProtocol, @unchecked Sendable {
+    private let error: BridgeError
+    init(_ error: BridgeError) { self.error = error }
+
+    func send(sessionId: String, text: String, images: [ImageAttachment], sink: TokenSink) throws {
+        throw error
+    }
+
+    func stageAttachment(fileName: String, bytes: Data) throws -> String {
+        "attachments/stub-\(fileName)"
+    }
+
+    // The rest of the protocol. Unreached by this leg and answering with the
+    // emptiest honest value — none of them can be called on a turn that throws
+    // out of `send`, and a plausible-looking fixture here would be a made-up
+    // measurement in a file whose subject is a refusal.
+    func hasProvider() -> Bool { true }
+    func indexSize() -> UInt32 { 0 }
+    func listModels(id: String, key: String, baseUrl: String?) throws -> [String] {
+        throw BridgeError.Unsupported("RefusingCore answers for no provider")
+    }
+    func messages(sessionId: String) throws -> [TurnMessage] { [] }
+    func remember(fact: String) throws {}
+    func search(query: String) -> [SearchHit] { [] }
+    func sessions() throws -> [SessionInfo] { [] }
+    func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {}
 }
