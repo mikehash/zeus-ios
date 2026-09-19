@@ -50,8 +50,8 @@ final class DeepLinkTests: XCTestCase {
 
     /// THE NO-FALLBACK RULE. An unknown host must not land on any tab.
     func testUnknownHostRefuses() {
-        XCTAssertNil(parse("zeus://settings"))
         XCTAssertNil(parse("zeus://node/kitchen"))
+        XCTAssertNil(parse("zeus://provider"))
     }
 
     func testForeignSchemeRefuses() {
@@ -93,7 +93,12 @@ final class DeepLinkTests: XCTestCase {
     /// a fourth tab fails HERE rather than shipping a dead link — the leg is
     /// structural, not a list someone has to remember to extend.
     func testEveryTabIsReachable() {
-        XCTAssertEqual(Tab.allCases.count, 3, "floor: the enum still has 3 tabs")
+        // 3 → 4 at the SETTINGS arc. `zeus://settings` was an example of a
+        // REFUSED host one commit ago and is a working link now, which is why
+        // this leg is structural: the exhaustive walk below turned the tab
+        // into a reachable link the moment the case was added, and the
+        // refusal example above had to move off it in the same commit.
+        XCTAssertEqual(Tab.allCases.count, 4, "floor: the enum still has 4 tabs")
         for t in Tab.allCases {
             XCTAssertEqual(parse("zeus://\(t.rawValue)"), .tab(t),
                            "tab \(t.rawValue) has no working deep link")

@@ -214,16 +214,30 @@ final class RoutePickerCensusTests: XCTestCase {
     }
 
     /// NODES RAISES AND DOES NOT COMMIT.
-    func testNodesRaisesTheSheetAndWritesNoCommission() throws {
-        let code = codeLines(try source("NodesView.swift"))
+    /// RE-ANCHORED at the SETTINGS arc. The provider row MOVED, so the raise
+    /// this leg was written to guard now happens on SETTINGS — reading
+    /// `onOpenRoutes()` on NODES would have been a POS needle asserting the
+    /// opposite of its intent. The RAISE-ONLY claim is unchanged and is now
+    /// asserted where the row lives; NODES is held to a stronger bar in the
+    /// same invocation: it raises nothing about routes at all.
+    func testSettingsRaisesTheSheetAndWritesNoCommission() throws {
+        let code = codeLines(try source("SettingsView.swift"))
         let joined = code.joined(separator: "\n")
         XCTAssertTrue(joined.contains("onOpenRoutes()"),
                       "POS: the provider row raises")
         XCTAssertEqual(code.filter { $0.contains("recordRoutesChoice") }.count, 0,
-                       "NODES must not write the record: it cannot re-arm the core, "
-                       + "so a commit here would half-happen")
+                       "SETTINGS must not write the record: it cannot re-arm the "
+                       + "core, so a commit here would half-happen")
         XCTAssertEqual(code.filter { $0.contains("keys.setProviderKey(") }.count, 0,
                        "nor write a key")
+
+        // NODES, same invocation: the row is gone, not mirrored. A second
+        // raiser would be a second door onto one write path.
+        let nodes = codeLines(try source("NodesView.swift"))
+        XCTAssertEqual(nodes.filter { $0.contains("onOpenRoutes()") }.count, 0,
+                       "NODES still raises the picker — the row moved but a door stayed")
+        XCTAssertTrue(nodes.joined(separator: "\n").contains("onOpenSettings()"),
+                      "VOID: the NODES walk read nothing — the absence above is vacuous")
     }
 
     // MARK: - readers

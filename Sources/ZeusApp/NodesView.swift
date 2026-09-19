@@ -58,26 +58,6 @@ import SwiftUI
 /// silently accepted.
 struct NodesView: View {
 
-    /// :711 — `route.name`.
-    ///
-    /// FETCHED, not vendored. This was `RouteCatalog.fallback` — one of eight
-    /// hardcoded rows carrying model versions (see `Route.swift`; the strings
-    /// are not repeated here — the leg greps this directory for them). The
-    /// catalogue now comes from `GET /v1/providers`, so there is no local
-    /// default to fall back to and **no selection until the operator makes
-    /// one**: the row reads the gateway's ACTIVE provider when nothing is
-    /// selected, and says so.
-    /// RECEIVED, not owned. It was `@StateObject private var routes =
-    /// RouteCatalogStore()` — a construction inside a view body, which has no
-    /// commission store in scope and so could only ever resolve from the
-    /// environment. `RootView` builds it from the one resolution and hands it
-    /// down; `@ObservedObject` because the lifetime belongs to the parent.
-    @ObservedObject var routes: RouteCatalogStore
-
-    /// `:410` — the route sheet. The revoke sheet that used to sit beside
-    /// it was the kitchen block's only raiser and went with it in (d).
-    @State private var routeSheet = false
-
     /// C1 — the MEMORY SEARCH field's text (`FIND A FILE` until `d5619c8`).
     @State private var findQuery: String = ""
 
@@ -114,40 +94,20 @@ struct NodesView: View {
 
     let onToast: (String) -> Void
 
-    /// Opens the gateway editor for the arm this console was built from.
-    /// The row's label is computed from that arm; the action is the same
-    /// sheet for every arm — "switchable anytime" is the product ruling,
-    /// and the row must exist for the operator who most needs the switch:
-    /// the one already looking at a LOCAL console.
-    /// No default — ②'s enumeration rule: `RootView` must pass it, and a
-    /// defaulted closure would let a future call site ship the row dead.
-    var onOpenGatewayEditor: (GatewayConfig) -> Void
-
-    /// Opens the ROUTE PICKER — the surface that was reachable only during
-    /// onboarding, which is why `TURNS 0` had no fix on a commissioned phone.
+    /// THE BREADCRUMB. Provider, Gateway and Route MOVED to SETTINGS at this
+    /// commit; this row raises that tab and does nothing else.
     ///
-    /// RAISED, NOT HANDLED. This view could render `RoutePicker` itself, but
-    /// it could not finish the act: committing a provider means writing the
-    /// commission AND re-arming the core from it, and `AppState.commission`
-    /// republishing does NOT re-run `RootView.init` — `configSource` is a
-    /// `@StateObject`, and the `.task` that adopts an armed resolution has no
-    /// `id:`, so it does not re-fire on a value change. Committing from here
-    /// would leave the pill and the AGENT tile reading `NO PROVIDER` until
-    /// the next launch: a control that narrates an act that half-happened.
-    /// `RootView` owns the store, the keys and the resolution, so the raise
-    /// goes there — the same seam, for the same reason, as
-    /// `onOpenGatewayEditor` one field up.
-    var onOpenRoutes: () -> Void
+    /// RAISE-ONLY, and that is the whole point. A mirrored row here would be a
+    /// second write path over the same three preferences — the duplication
+    /// hole Arc B closed by extracting `RoutePicker` rather than pasting a
+    /// copy. The operator who met those rows in 192 still reaches them from
+    /// where he left them, and there is still exactly one place they are set.
+    var onOpenSettings: () -> Void
 
     /// The arm the console was built from. RECEIVED, not re-derived —
     /// `RootView` measured it once at `init`; a second resolver call over
     /// the same store here would be two pictures of one decision.
     var resolution: GatewayConfig.Resolution
-
-    /// The provider id on the commission, handed down. RECEIVED, not
-    /// re-derived: `RootView` reads the store once, and a second read here
-    /// would be two pictures of one record.
-    var commissionedProvider: String?
 
     /// The core handle this pane reads `index_size()` from.
     ///
@@ -169,6 +129,7 @@ struct NodesView: View {
         ScrollView {
             VStack(spacing: 0) {
                 mobileNode
+                settingsBreadcrumb
                 findPanel
                 enrollButton
                 Text("ZEUS · NOVAXAI")
@@ -186,11 +147,6 @@ struct NodesView: View {
         .task { await readIndexSize() }
         // :754-812 — the sheet layer, drawn OVER the scroll view rather than
         // inside it. Inside, the panel would scroll away with the content.
-        .overlay {
-            if routeSheet { routeSelectSheet }
-        }
-        .animation(.easeOut(duration: 0.28), value: routeSheet)
-        .task { await routes.load() }
     }
 
     // MARK: - The gateway row (label by arm)
@@ -273,60 +229,38 @@ struct NodesView: View {
             : "MNEMOSYNE — \(n) FILES INDEXED"
     }
 
-    /// The provider row's value. Reads the RECORD, not a guess: nil provider
-    /// is a real state and it says so rather than naming a default nobody
-    /// chose — the same rule the Route row above follows for its own nil.
-    private var providerRowValue: String {
-        guard let id = commissionedProvider else { return "TAP TO SET" }
-        return ProviderCatalog.label(for: id).uppercased()
-    }
+    // MARK: - The settings breadcrumb
 
-    private var gatewayRowLabel: String  { Self.gatewayRowLabel(for: resolution.config) }
-    private var gatewayRowValue: String? { Self.gatewayRowValue(for: resolution.config) }
-
-    // MARK: - :754-790  route select
-
-    private var routeSelectSheet: some View {
-        SheetLayer(isPresented: $routeSheet,
-                   title: "ROUTE SELECT",
-                   subtitle: routes.state.subtitle) {
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(routes.state.routes) { rt in
-                        RouteRow(route: rt, selected: rt.id == routes.selected?.id) {
-                            let toast = routes.select(rt)
-                            routeSheet = false
-                            onToast(toast)
-                        }
-                    }
-                    // NO VENDORED FALLBACK. When the fetch failed or the
-                    // gateway is unconfigured there are zero rows and this
-                    // line names WHY — rather than a stale hardcoded list,
-                    // which would reintroduce the literal-model defect on the
-                    // one path nobody tests.
-                    if let reason = routes.state.emptyReason {
-                        Text(reason)
-                            .font(Theme.mono(8.5))
-                            .tracking(0.8)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(Theme.w(0.35))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 22)
-                    }
-                }
+    /// Provider, Gateway and Route LEFT this pane at this commit. This row is
+    /// the one thing that stayed: it raises the SETTINGS tab and writes
+    /// nothing.
+    ///
+    /// 🔴 WHY A ROW AND NOT A MIRROR. The rows could have been rendered in both
+    /// places. Two doors onto one write is the duplication hole Arc B closed —
+    /// a pasted surface inherits none of the censuses anchored on the original,
+    /// so a second Provider row could gate the model field on `.listed` or
+    /// hardcode an id with every migrated leg still green. One canonical home,
+    /// one breadcrumb, no second write path.
+    private var settingsBreadcrumb: some View {
+        VStack(spacing: 0) {
+            NodeRow(icon: "slider.horizontal.3", label: "Provider, gateway & route",
+                    value: "IN SETTINGS", last: true) {
+                onOpenSettings()
             }
-            Button {
-                routeSheet = false
-            } label: {
-                Text("CLOSE")
-                    .font(Theme.display(9.5, .bold))
-                    .tracking(1.9)
-                    .foregroundStyle(Theme.w(0.4))
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: Theme.controlSize)
-            }
-            .buttonStyle(.plain)
         }
+        .padding(.vertical, 5)
+        .background(
+            LinearGradient(colors: [Theme.r(0.07), Theme.w(0.02)],
+                           startPoint: .init(x: 0.25, y: 0.0),
+                           endPoint: .init(x: 0.75, y: 1.0))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.r(0.18), lineWidth: Theme.hairline)
+        )
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
     }
 
     // MARK: - :671-686  mobile node (the core)
@@ -366,39 +300,19 @@ struct NodesView: View {
                 // fabrication rather than a stale label, so the tap now
                 // re-reads and reports what it found — including the abstention
                 // when there is no core to ask.
+                // 🔴 `last: true` LANDED HERE, it was not deleted. Before this
+                // commit three consecutive rows each passed it — Route,
+                // Provider and Gateway — so the divider was suppressed three
+                // times where it was wanted twice, and Mnemosyne, which is now
+                // the pane's terminal row, passed nothing at all. The flag is a
+                // position, so it MOVES with the rows rather than dying with
+                // them: deleting the two dead ones and stopping would have left
+                // NODES with no terminal row and SETTINGS with three.
                 NodeRow(icon: "cylinder.split.1x2", label: "Mnemosyne",
-                        value: mnemosyneValue) {
+                        value: mnemosyneValue, last: true) {
                     onToast(indexReading.inFlight
                             ? "READING"
                             : Self.mnemosyneToast(indexSize: indexReading.value))
-                }
-                // No selection yet renders the gateway's own word for its
-                // state, not an invented default.
-                NodeRow(icon: "wifi", label: "Route",
-                        value: routes.selected?.name ?? "TAP TO SELECT",
-                        last: true) {
-                    routeSheet = true
-                }
-                // THE PROVIDER ROW. Distinct from Route above: that one picks
-                // among the routes a GATEWAY offers, this one sets the
-                // provider the CORE arms from. A phone with no gateway has
-                // only this one, and until this cut it had neither.
-                NodeRow(icon: "key.horizontal", label: "Provider",
-                        value: providerRowValue,
-                        last: true) {
-                    onOpenRoutes()
-                }
-                // THE GATEWAY ROW — present under EVERY config arm, labelled
-                // by arm (the four-arm leg asserts the four labels differ).
-                // It sits OUTSIDE any per-arm conditional because
-                // "switchable anytime" is a product ruling about
-                // reachability, not a rendering decision this view gets to
-                // make: a row that exists only in `.absent` hides the switch
-                // from the operator running `.local`, who is exactly the one
-                // the ruling was made for.
-                NodeRow(icon: "globe", label: gatewayRowLabel,
-                        value: gatewayRowValue, last: true) {
-                    onOpenGatewayEditor(resolution.config)
                 }
             }
             .padding(.vertical, 5)

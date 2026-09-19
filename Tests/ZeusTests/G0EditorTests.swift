@@ -215,18 +215,18 @@ final class G0EditorTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/ZeusApp/NodesView.swift")
+            .appendingPathComponent("Sources/ZeusApp/SettingsView.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
 
-        let mobileRange = src.range(of: "private var mobileNode")
+        let mobileRange = src.range(of: "private var routingSection")
         let rowRange = src.range(of: #"icon: "globe""#)
-        let enrollRange = src.range(of: "private var enrollButton")
+        let enrollRange = src.range(of: "private var voiceSection")
 
         let posMobile = mobileRange != nil
         let posRow = rowRange != nil
         let posEnroll = enrollRange != nil
         XCTAssertTrue(posMobile && posRow && posEnroll,
-                      "POS control: mobileNode, the gateway row, and enrollButton all locate")
+                      "POS control: routingSection, the gateway row, and voiceSection all locate")
 
         let start = mobileRange!.lowerBound
         let rowStart = rowRange!.lowerBound
@@ -283,7 +283,11 @@ final class G0EditorTests: XCTestCase {
 
         // POS, same invocation: what the pane IS now.
         XCTAssertTrue(codeLines.contains("private var enrollButton"))
-        XCTAssertTrue(codeLines.contains(#"icon: "globe""#))
+        // Re-anchored at the SETTINGS arc: `icon: "globe"` was the gateway
+        // row's own needle and the row MOVED, so reading it here now asserts
+        // the opposite of what it was written to assert. The breadcrumb is
+        // what NODES renders in its place, and it is the live POS needle.
+        XCTAssertTrue(codeLines.contains(#"icon: "slider.horizontal.3""#))
     }
 
     // MARK: - The editor's read-back derivations

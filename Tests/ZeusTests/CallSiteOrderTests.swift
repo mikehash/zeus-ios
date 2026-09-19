@@ -169,6 +169,76 @@ final class CallSiteOrderTests: XCTestCase {
                            calledIn: "RootView.swift", minimumArity: 4)
     }
 
+    /// SETTINGS is the fourth subject, and it is the one the moved arity
+    /// lands on. Four labels DEPARTED `NodesView` at this commit — `routes`,
+    /// `onOpenRoutes`, `commissionedProvider`, `onOpenGatewayEditor` — and a
+    /// floor left only on NODES would be green on a tree where all four
+    /// evaporated instead of moving. The floor of 7 is the departed four plus
+    /// the three SETTINGS declares of its own (`onToast`, `resolution`,
+    /// `onToggleNarration` … `narrationOn` makes eight; 7 is the honest floor,
+    /// not the count).
+    func testSettingsViewCallSiteMatchesDeclaredOrder() throws {
+        try assertMonotone("SettingsView", declaredIn: "SettingsView.swift",
+                           calledIn: "RootView.swift", minimumArity: 7)
+    }
+
+    /// THE MOVE, ASSERTED AS A MOVE. The four departed labels are absent from
+    /// the NODES call site AND present on the SETTINGS one, read in a single
+    /// invocation so a walk that resolved nothing fails the present half
+    /// rather than passing the absent half by silence.
+    func testTheFourDepartedLabelsLandedOnSettings() throws {
+        let nodes = callLabels(to: "NodesView", in: try source("RootView.swift"))
+        let settings = callLabels(to: "SettingsView", in: try source("RootView.swift"))
+        let departed = ["routes", "onOpenRoutes", "commissionedProvider",
+                        "onOpenGatewayEditor"]
+        for label in departed {
+            XCTAssertFalse(nodes.contains(label),
+                           "`\(label)` is still passed to NodesView — the row moved but the operand did not")
+            XCTAssertTrue(settings.contains(label),
+                          "`\(label)` reached neither view — the arity evaporated instead of moving")
+        }
+        // POS control, same invocation: a label that legitimately STAYED is
+        // still on NODES, so the absences above are a property of the four
+        // and not of a walk that read an empty call site.
+        XCTAssertTrue(nodes.contains("resolution"),
+                      "VOID: the NodesView call walk read nothing — every absence above is vacuous")
+    }
+
+    /// (d) NEG, SECOND SUBJECT. `onOpenGatewayEditor` outlived its only body
+    /// call site when the gateway row left: the declaration kept a closure
+    /// nothing invoked, which is the `link:` hole exactly — invisible to the
+    /// monotone leg, because that leg only ever walks labels the CALL passes,
+    /// and a caller happily passing a dead operand is monotone.
+    func testNodesViewNoLongerDeclaresTheGatewayEditorOperand() throws {
+        let decl = try source("NodesView.swift")
+        let declCode = decl.split(separator: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }
+            .joined(separator: "\n")
+        XCTAssertFalse(declCode.contains("var onOpenGatewayEditor"),
+                       "NodesView still declares `onOpenGatewayEditor` with no body call site")
+        XCTAssertFalse(declCode.contains("gatewayRowLabel(for:"),
+                       "the private row computeds outlived the row they fed")
+        // POS control: the needle is alive on the view that DID take the row.
+        let settings = try source("SettingsView.swift")
+        XCTAssertTrue(settings.contains("var onOpenGatewayEditor"),
+                      "VOID: the operand is on neither view — it was deleted, not moved")
+        // The pure functions stay put: `G0EditorTests` calls them as
+        // `NodesView.gatewayRowLabel`, and moving the type would move four
+        // green legs onto a symbol nothing renders.
+        XCTAssertTrue(decl.contains("static func gatewayRowLabel"),
+                      "the arm-label functions left NodesView — G0EditorTests' subject moved under it")
+    }
+
+    /// The one BEHAVIOURAL line in the move: the catalogue load was a `.task`
+    /// on NODES and is now a `.task` on SETTINGS. A row rendered on a pane
+    /// that never loads the store shows an empty catalogue forever.
+    func testTheRouteCatalogueLoadsWhereTheRowNowLives() throws {
+        XCTAssertFalse(try source("NodesView.swift").contains("routes.load()"),
+                       "NODES still loads a catalogue for a row it no longer renders")
+        XCTAssertTrue(try source("SettingsView.swift").contains(".task { await routes.load() }"),
+                      "the ROUTE row moved without its loader — the picker opens empty")
+    }
+
     /// (d) NEG: `link` is gone from BOTH sides. An unused parameter left on
     /// the declaration is invisible to the monotone leg — it only ever walks
     /// the labels the CALL passes — so the arity floor alone cannot see a
@@ -182,8 +252,12 @@ final class CallSiteOrderTests: XCTestCase {
         let call = try String(contentsOf: root.appendingPathComponent("Sources/ZeusApp/RootView.swift"), encoding: .utf8)
 
         let declCode = decl.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }.joined(separator: "\n")
-        XCTAssertTrue(declCode.contains("var routes: RouteCatalogStore"),
-                      "POS control: the declaration still carries `routes` — needle alive")
+        // Re-anchored at the SETTINGS arc: `routes` MOVED to SettingsView, so
+        // reading it here asserted the opposite of what it was written for.
+        // `resolution` is the label that legitimately stayed, and it is the
+        // live POS needle on both sides.
+        XCTAssertTrue(declCode.contains("var resolution: GatewayConfig.Resolution"),
+                      "POS control: the declaration still carries `resolution` — needle alive")
         XCTAssertFalse(declCode.contains("let link: LinkState"),
                        "NodesView still declares `link` — an unused parameter is a hole a future caller fills wrongly")
 
@@ -191,7 +265,7 @@ final class CallSiteOrderTests: XCTestCase {
             return XCTFail("VOID: no NodesView call site in RootView.swift")
         }
         let site = String(call[siteRange.lowerBound...].prefix(400))
-        XCTAssertTrue(site.contains("routes:"), "POS control: the call site passes `routes`")
+        XCTAssertTrue(site.contains("resolution:"), "POS control: the call site passes `resolution`")
         XCTAssertFalse(site.contains("link:"),
                        "RootView still passes `link:` to NodesView")
     }
@@ -212,6 +286,14 @@ final class CallSiteOrderTests: XCTestCase {
         XCTAssertNotEqual(home, nodes, "two subjects resolved to the same label list — the walk is reading a constant")
         XCTAssertNotEqual(nodes, editor, "two subjects resolved to the same label list — the walk is reading a constant")
         XCTAssertNotEqual(home, editor, "two subjects resolved to the same label list — the walk is reading a constant")
+
+        // The fourth subject joins the control: SETTINGS took four of NODES's
+        // labels, so "distinct" is a claim worth re-asserting on the pair that
+        // now shares the most.
+        let settings = declaredLabels(of: "SettingsView", in: try source("SettingsView.swift"))
+        XCTAssertNotEqual(settings, nodes, "SETTINGS and NODES resolved to the same label list")
+        XCTAssertNotEqual(settings, home, "SETTINGS and HOME resolved to the same label list")
+        XCTAssertNotEqual(settings, editor, "SETTINGS and the editor resolved to the same label list")
     }
 
     /// THE MUTATION, RESIDENT. The three legs assert a property of the tree;

@@ -1,15 +1,21 @@
 import SwiftUI
 
-/// The three tabs the prototype declares at ZeusApp.jsx:835-837.
+/// The tabs.
 ///
-/// Exhaustive over the source: `grep -nE "label: *'"` returns exactly three
-/// lines at that ref, so this enum is the whole set and not a prefix of it.
-/// Being an enum rather than an array means a fourth tab cannot be added
-/// without every `switch` over it failing to compile.
+/// THREE came from the prototype (ZeusApp.jsx:835-837 — `grep -nE "label: *'"`
+/// returns exactly three lines at that ref). SETTINGS is the fourth and it is
+/// NOT in the prototype: merakizzz asked for it on build 192, having failed to
+/// find the config controls that shipped in the bottom half of NODES.
+///
+/// Being an enum rather than an array means the fourth case could not be added
+/// without every `switch` over it failing to compile — neither of the two
+/// switches below carries a `default:`, so this was a compile error until each
+/// was answered, rather than a silent arm inheriting the wrong glyph.
 enum Tab: String, CaseIterable, Identifiable {
     case zeus
     case session
     case nodes
+    case settings
 
     var id: String { rawValue }
 
@@ -19,6 +25,7 @@ enum Tab: String, CaseIterable, Identifiable {
         case .zeus:    return "ZEUS"
         case .session: return "SESSION"
         case .nodes:   return "NODES"
+        case .settings: return "SETTINGS"
         }
     }
 
@@ -29,6 +36,7 @@ enum Tab: String, CaseIterable, Identifiable {
         case .zeus:    return "house"
         case .session: return "message"
         case .nodes:   return "cpu"
+        case .settings: return "slider.horizontal.3"
         }
     }
 }
@@ -667,21 +675,12 @@ struct RootView: View {
                 }
             )
         case .nodes:
-            NodesView(routes: routes, onToast: showToast,
-                      onOpenGatewayEditor: { config in
-                          gatewayEditorConfig = config
-                          gatewayEditor = true
-                      },
-                      // THE SECOND PRODUCTION RAISER OF THE PICKER, and the
-                      // first one reachable in a shipped build: the other is
-                      // `CommissioningView`, which is gone after onboarding.
-                      // Not `#if DEBUG`-gated — the census asserts exactly
-                      // that, because an arity count would have passed on the
-                      // build where the only other caller was a release-nil
-                      // debug seam.
-                      onOpenRoutes: { routesSheet = true },
+            NodesView(onToast: showToast,
+                      // THE BREADCRUMB. Provider, gateway and route moved to
+                      // SETTINGS; NODES raises the tab and writes nothing, so
+                      // there is exactly one place those three are set.
+                      onOpenSettings: { tab = .settings },
                       resolution: configSource.resolution,
-                      commissionedProvider: store.load()?.provider,
                       // MIGRATED. `search` and `indexSize` are implemented on
                       // the gateway conformer as of this commit, so the
                       // mnemosyne row and the find pane read the backend the
@@ -689,6 +688,31 @@ struct RootView: View {
                       // remote gateway searched the LOCAL workspace index.
                       core: makeCapabilities(for: configSource.config,
                                              credentials: credentials))
+        case .settings:
+            SettingsView(routes: routes, onToast: showToast,
+                         onOpenGatewayEditor: { config in
+                             gatewayEditorConfig = config
+                             gatewayEditor = true
+                         },
+                         // THE SECOND PRODUCTION RAISER OF THE PICKER, and the
+                         // first one reachable in a shipped build: the other is
+                         // `CommissioningView`, which is gone after onboarding.
+                         // Not `#if DEBUG`-gated — the census asserts exactly
+                         // that, because an arity count would have passed on
+                         // the build where the only other caller was a
+                         // release-nil debug seam.
+                         onOpenRoutes: { routesSheet = true },
+                         resolution: configSource.resolution,
+                         commissionedProvider: store.load()?.provider,
+                         // THE ONE NARRATOR, read and written through the view
+                         // that owns it. A `Narrator()` of this screen's own
+                         // would persist to the same key and keep a stale
+                         // `@Published` — it would compile, render, and lie.
+                         narrationOn: replyNarrator.voiceOn,
+                         onToggleNarration: {
+                             replyNarrator.voiceOn.toggle()
+                             if !replyNarrator.voiceOn { replyNarrator.stop() }
+                         })
         }
     }
 }
