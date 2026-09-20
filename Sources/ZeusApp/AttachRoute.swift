@@ -19,15 +19,20 @@ enum AttachRoute {
     /// caller that might wrap them.
     static func refusal(for kind: AttachmentKind) -> String? {
         switch kind {
-        case .image(let mimeType):
-            // HONEST, not silent. The vision channel exists at the bridge door
-            // (`send(images:)`); nothing in Swift can reach it, because
-            // `SessionTransport.stream` carries prose only. Staging a PNG
-            // would hand `read_file` a binary the model reads as garbage while
-            // the transcript claims the file was attached — the silent drop
-            // this whole arc exists to retire. Named, with the reason.
-            return Theme.joined(["\(mimeType.uppercased()) NEEDS THE VISION CHANNEL",
-                                 "NOT WIRED ON THIS BUILD YET"])
+        case .image:
+            // ROUTES NOW. The vision corridor exists end to end as of this
+            // cut: `OutboundImage` from the door, through `StageOutcome`, the
+            // composer, `send(_:images:)` and `stream(prompt:images:)`, to the
+            // single FFI mapping at `EmbeddedTransport`. The refusal that used
+            // to live here was honest about a wall that is gone; leaving it
+            // would refuse a file the app can now carry.
+            //
+            // The transport that CANNOT carry it refuses at its own door
+            // (`HTTPTransport`), because whether images travel is a property
+            // of the wire in use, not of the file — and this function cannot
+            // see which transport the turn will take.
+            return nil
+
         case .unsupported(let reason):
             // The subject is NAMED: the extension when there is one, the file
             // name when there is not. "UNSUPPORTED FILE" with no subject is a

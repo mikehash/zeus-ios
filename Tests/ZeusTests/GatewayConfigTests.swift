@@ -235,7 +235,7 @@ final class GatewayConfigTests: XCTestCase {
             var yielded: [SessionFrame] = []
             var threw = false
             do {
-                for try await delta in makeTransport(for: config, sessionID: SessionIDBox(), credentials: StubCredentialProvider()).stream(prompt: "p") {
+                for try await delta in makeTransport(for: config, sessionID: SessionIDBox(), credentials: StubCredentialProvider()).stream(prompt: "p", images: []) {
                     yielded.append(delta)
                 }
             } catch {
@@ -255,7 +255,7 @@ final class GatewayConfigTests: XCTestCase {
                             file: StaticString = #filePath,
                             line: UInt = #line) async -> String {
         do {
-            for try await _ in transport.stream(prompt: "probe") {}
+            for try await _ in transport.stream(prompt: "probe", images: []) {}
             XCTFail("transport completed without error", file: file, line: line)
             return "<no error>"
         } catch {

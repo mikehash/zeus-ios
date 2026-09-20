@@ -15,7 +15,7 @@ import XCTest
 /// and stays that way — widening a test helper's access to reach it from a
 /// second file couples two suites that share nothing but a protocol.
 private struct SilentTransport: SessionTransport {
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { $0.finish() }
     }
 }
@@ -193,7 +193,7 @@ private struct BoxWritingTransport: SessionTransport {
     let box: SessionIDBox
     let id: String
 
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         box.set(id)                      // API at HTTPTransport.swift:164
         return AsyncThrowingStream { continuation in
             continuation.yield(.token("ok"))

@@ -110,8 +110,26 @@ struct HTTPTransport: SessionTransport {
         base.appendingPathComponent("v1").appendingPathComponent("chat")
     }
 
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
-        AsyncThrowingStream { continuation in
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
+        // 🔴 REFUSES, never drops. `/v1/chat` has no image field on its wire
+        // (`routes.rs`), so there is no encoding of these bytes this transport
+        // could send. Ignoring the parameter would make the turn read as if
+        // the picture had been seen — the silent drop this arc exists to
+        // retire, and the reason the protocol has ONE widened signature rather
+        // than an optional vision sub-protocol a conformer can decline to
+        // adopt in silence.
+        //
+        // `.refused` and not `.unreachable`/`.httpStatus`: nothing failed. The
+        // gateway is fine and is being asked for a capability it does not have,
+        // which is the second inhabitant of the arm `NotAnImage` opened.
+        if !images.isEmpty {
+            return AsyncThrowingStream<SessionFrame, Error> {
+                $0.finish(throwing: TransportError.refused(
+                    detail: Theme.joined(["THIS GATEWAY CAN'T CARRY IMAGES",
+                                          "SWITCH TO THE LOCAL CORE TO SEND A PICTURE"])))
+            }
+        }
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let text = try await send(prompt)

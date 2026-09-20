@@ -54,12 +54,21 @@ final class VisionChannelTests: XCTestCase {
     func testTheEmbeddedTransportThreadsTheImagesParameter() throws {
         let code = Self.codeOnly(try Self.source("Sources/ZeusApp/EmbeddedTransport.swift"))
 
-        XCTAssertTrue(code.contains("func stream(prompt: String)"),
+        XCTAssertTrue(code.contains("func stream(prompt: String, images: [OutboundImage])"),
                       "POS control absent — the source read produced nothing, "
                       + "so every negative below is vacuous")
 
-        XCTAssertTrue(code.contains("core.send(sessionId: id, text: prompt, images:"),
+        XCTAssertTrue(code.contains("try core.send(sessionId: id,"),
                       "the send call no longer threads images")
+
+        // 🔴 THE EMPTY LITERAL IS GONE. It was the whole reason the corridor
+        // was dark: a value no caller could influence. Its absence is the
+        // structural half of "real bytes travel"; the behavioural half is
+        // `testTheCorridorCarriesBytesFromThePickToTheTransport`.
+        XCTAssertFalse(code.contains("images: []"),
+                       "the hardcoded empty image list is back")
+        XCTAssertTrue(code.contains("ImageAttachment(mimeType: $0.mimeType, bytes: $0.bytes)"),
+                      "the app type no longer maps to the FFI record here")
 
         // There must be exactly ONE call. A second would be the text-arm /
         // image-arm pair we deliberately did not build: two sides whose

@@ -10,20 +10,26 @@ import XCTest
 /// misclassification, and only this layer can see it.
 final class AttachRouteTests: XCTestCase {
 
-    /// ROUTE 1 — an image is REFUSED, and the refusal says why and names the
-    /// mime. Not staged: `read_file` on a PNG returns garbage while the
-    /// transcript claims the file was attached.
-    func testAnImageIsRefusedHonestlyUntilTheSeamCarriesIt() throws {
-        let why = try XCTUnwrap(AttachRoute.refusal(for: .image(mimeType: "image/png")),
-                                "an image must not fall through to the stage")
-        XCTAssertTrue(why.contains("IMAGE/PNG"), "the mime is the subject: \(why)")
-        XCTAssertTrue(why.contains("VISION CHANNEL"), "the reason names the channel: \(why)")
-        // NOT a fault. `StageOutcome.failed` renders verbatim, so an alarm word
-        // here reads to the operator as a broken app rather than a file we
-        // cannot yet carry — the `LOCAL CORE ERROR` defect one commit back.
-        for alarm in ["ERROR", "FAILED", "CRASH"] {
-            XCTAssertFalse(why.contains(alarm), "a refusal is not a fault: \(why)")
-        }
+    /// 🔴 RED 1 — ROUTE 1 NOW ROUTES. The image arm returns `nil`, which is
+    /// this layer's word for "proceed", and the corridor below it is what
+    /// makes that honest. The previous form of this leg asserted the OPPOSITE
+    /// and was correct then: the seam carried prose only, so a PNG had nowhere
+    /// to go and refusing was the truthful answer. It is kept inverted rather
+    /// than deleted because the inversion is the whole claim of this cut.
+    ///
+    /// The vacuity risk is real — `nil` is also what a deleted arm returns —
+    /// so the leg pairs with the two kinds that MUST still refuse, in the same
+    /// invocation. A `refusal` that returned `nil` for everything passes the
+    /// first assertion and fails the next two.
+    func testAnImageRoutesRatherThanRefusing() throws {
+        XCTAssertNil(AttachRoute.refusal(for: .image(mimeType: "image/png")),
+                     "an image must reach the vision channel, not a refusal")
+        XCTAssertNil(AttachRoute.refusal(for: .image(mimeType: "image/jpeg")))
+
+        // NEG controls, same invocation: the function still says no to the
+        // things it must, so the `nil` above is a decision and not a stub.
+        XCTAssertNotNil(AttachRoute.refusal(for: .unsupported(reason: ".zip")),
+                        "VOID: refusal() returns nil for everything")
     }
 
     /// ROUTE 4 — unsupported is refused with a NAMEABLE subject, both when
@@ -93,7 +99,8 @@ final class AttachRouteTests: XCTestCase {
         // POS CONTROL, same invocation: a literal that IS present, so a census
         // reading an empty corpus cannot pass this vacuously.
         let route = try XCTUnwrap(try Self.sourceFiles().first { $0.name == "AttachRoute.swift" })
-        XCTAssertTrue(route.body.contains("VISION CHANNEL"))
+        XCTAssertTrue(route.body.contains("AttachmentKind"),
+                      "VOID: the corpus read produced nothing")
     }
 
     // MARK: - Corpus

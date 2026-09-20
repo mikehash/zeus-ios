@@ -616,7 +616,7 @@ struct RootView: View {
                 // printed the literal "SESSION-01" while this value existed.
                 sessionID: session.sessionLabel,
                 prefill: $pendingPrompt,
-                onSend: session.send,
+                onSend: { session.send($0, images: $1) },
                 // :660 — voice hands control back to the ZEUS tab, then runs
                 // the query. The tab switch is the part that is real here.
                 // NO LONGER A TAB SWITCH. `:660`'s prototype hands control
@@ -849,6 +849,19 @@ extension RootView {
         let kind = classifyAttachment(fileName: url.lastPathComponent, mimeType: mime, bytes: data)
         if let why = AttachRoute.refusal(for: kind) {
             return .failed(why)
+        }
+        // 🔴 AN IMAGE IS NOT STAGED. The document route works BECAUSE the file
+        // becomes a workspace path `read_file` opens; a PNG through that door
+        // is a binary the model reads as garbage. Vision is the opposite shape
+        // — bytes in band on the model wire, no file — so the image arm returns
+        // before the stage rather than after it.
+        //
+        // The mime is the one the core already judged, taken out of the kind
+        // rather than re-derived, so exactly one value decided "image" and it
+        // was the core's.
+        if case .image(let mimeType) = kind {
+            return .attachedImage(OutboundImage(mimeType: mimeType, bytes: data),
+                                  name: url.lastPathComponent)
         }
 
         do {

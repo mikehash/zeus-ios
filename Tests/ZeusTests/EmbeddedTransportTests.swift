@@ -123,7 +123,7 @@ final class EmbeddedTransportTests: XCTestCase {
     ) async -> (frames: [SessionFrame], error: Error?) {
         var frames: [SessionFrame] = []
         do {
-            for try await frame in transport.stream(prompt: prompt) {
+            for try await frame in transport.stream(prompt: prompt, images: []) {
                 frames.append(frame)
             }
             return (frames, nil)

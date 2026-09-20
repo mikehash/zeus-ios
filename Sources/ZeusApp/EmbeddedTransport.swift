@@ -91,7 +91,7 @@ struct EmbeddedTransport: SessionTransport {
         self.queue = queue
     }
 
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         let core = self.core
         let queue = self.queue
         let id = resolvedSessionID()
@@ -111,7 +111,18 @@ struct EmbeddedTransport: SessionTransport {
                     // `run_structured` behaviour, so there is no text-arm /
                     // image-arm pair here whose two sides a mutation could
                     // not tell apart.
-                    try core.send(sessionId: id, text: prompt, images: [], sink: sink)
+                    // 🔴 THE ONLY FFI CROSSING FOR A VISION PAYLOAD, and the
+                    // line that used to read `images: []` — a literal no caller
+                    // could change, which is why the whole corridor above it was
+                    // dark. The app type maps here and nowhere else: one site, so
+                    // a uniffi regeneration cannot ripple into the protocol's
+                    // twelve conformers.
+                    try core.send(sessionId: id,
+                                  text: prompt,
+                                  images: images.map {
+                                      ImageAttachment(mimeType: $0.mimeType, bytes: $0.bytes)
+                                  },
+                                  sink: sink)
                 } catch {
                     // A throw from `send` itself (BridgeError) — as opposed to
                     // an error delivered through `onError` — still has to

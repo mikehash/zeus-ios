@@ -20,7 +20,7 @@ private struct ScriptedTransport: SessionTransport {
     let frames: [SessionFrame]
     let thrown: Error?
 
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 for d in frames {
@@ -36,7 +36,7 @@ private struct ScriptedTransport: SessionTransport {
 /// Never finishes. The only way out of a turn on this transport is cancellation,
 /// so it is the instrument that proves the `defer` runs on the cancel path.
 private struct HangingTransport: SessionTransport {
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 continuation.yield(.token("partial"))
@@ -271,7 +271,7 @@ final class SessionEngineFailureTests: XCTestCase {
     private struct BoxRecordingTransport: SessionTransport {
         let reply: String
 
-        func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+        func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
             AsyncThrowingStream { continuation in
                 continuation.yield(.token(reply))
                 continuation.finish()
@@ -577,7 +577,7 @@ final class SessionFrameRoutingTests: XCTestCase {
 /// file, so the seed legs carry their own rather than widening a fixture's
 /// visibility for a neighbour.
 private struct MuteTransport: SessionTransport {
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { $0.finish() }
     }
 }

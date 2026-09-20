@@ -10,6 +10,14 @@ import SwiftUI
 /// what is on screen.
 enum StageOutcome: Equatable {
     case staged(String)
+
+    /// An image, held for the vision channel rather than written to the
+    /// workspace. A THIRD CASE rather than a staged path with a flag: the two
+    /// outcomes have different destinations (`read_file` on a path vs bytes on
+    /// the wire), and collapsing them is what forced the image route to refuse
+    /// in the previous cut.
+    case attachedImage(OutboundImage, name: String)
+
     case failed(String)
 }
 
@@ -63,7 +71,7 @@ struct SessionView: View {
     /// tap target, indistinguishable from working software until an operator
     /// tries it. `prefill` above keeps its default for the opposite reason: a
     /// binding to nothing is a VALUE, not an unwired affordance.
-    var onSend: (String) -> Void
+    var onSend: (String, [OutboundImage]) -> Void
 
     /// What the voice affordance is doing right now.
     ///
@@ -171,7 +179,7 @@ struct SessionView: View {
     /// something else. It is composed onto the turn at SEND time, which is also
     /// why a staged file survives a `NoProvider` — the copy already happened,
     /// and the reference rides the next turn that has somewhere to go.
-    @State private var stagedPath: String? = nil
+    @State private var attachment: OutboundAttachment? = nil
 
     /// Why the last pick failed, if it did. An empty file, a read refusal, or a
     /// staging error — said rather than swallowed, because a silent pick reads
@@ -390,8 +398,8 @@ struct SessionView: View {
                     .padding(.top, 6)
                     .accessibilityLabel(why)
             }
-            if let staged = stagedPath {
-                Text(SessionView.stagedLine(path: staged, armed: providerArmed))
+            if let attachment {
+                Text(attachment.line(armed: providerArmed))
                     .font(Theme.mono(10))
                     .tracking(1.2)
                     .foregroundStyle(Theme.w(0.45))
@@ -446,7 +454,8 @@ struct SessionView: View {
             case .success(let urls):
                 guard let url = urls.first else { return }
                 switch onStage(url) {
-                case .staged(let rel): stagedPath = rel
+                case .staged(let rel): attachment = .staged(rel)
+                case .attachedImage(let img, let name): attachment = .image(img, name: name)
                 case .failed(let why): stageError = why
                 }
             }
@@ -896,11 +905,12 @@ struct SessionView: View {
         // bytes. `attachmentReference` is the bridge's own builder, so the
         // marker is one literal with two readers rather than a string this
         // file retypes.
-        onSend(SessionView.turnText(typed: t, stagedPath: stagedPath))
+        onSend(SessionView.turnText(typed: t, stagedPath: attachment?.stagedPath),
+               attachment?.images ?? [])
         // Consumed: a staged file rides exactly ONE turn. Leaving it set would
         // silently re-attach it to every subsequent message, which the operator
         // never asked for and the transcript would not explain.
-        stagedPath = nil
+        attachment = nil
         input = ""
     }
 }

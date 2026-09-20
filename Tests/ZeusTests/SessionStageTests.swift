@@ -405,13 +405,18 @@ final class SessionStageTests: XCTestCase {
         // `send()`.
         let slice = Self.codeOnly(try Self.slice(from: "private func send() {",
                                                  to: "@State private var on = true"))
-        XCTAssertTrue(slice.contains("onSend(SessionView.turnText(typed: t, stagedPath: stagedPath))"),
+        XCTAssertTrue(slice.contains("onSend(SessionView.turnText(typed: t, stagedPath: attachment?.stagedPath)"),
                       "POS: send must compose the reference, not pass the raw text")
+        // 🔴 AND THE IMAGES. The same call now carries the vision half, so a
+        // composer that composed the text correctly and dropped the bytes —
+        // the exact defect one layer down that this arc found — reds here.
+        XCTAssertTrue(slice.contains("attachment?.images ?? []"),
+                      "POS: send must carry the image bytes, not only the text")
         XCTAssertFalse(slice.contains("onSend(t)"),
                        "NEG: passing the typed text alone drops the staged file silently")
         // Consumed after sending: a staged file rides exactly ONE turn.
         // Without this, the reference re-attaches to every later message.
-        XCTAssertTrue(slice.contains("stagedPath = nil"),
+        XCTAssertTrue(slice.contains("attachment = nil"),
                       "POS: the staged file is consumed, not left to re-attach")
         XCTAssertFalse(slice.contains("zzzNoSuchCall"),
                        "NEG control: the slice did not escape its anchors")

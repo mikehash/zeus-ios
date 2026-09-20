@@ -23,7 +23,12 @@ protocol SessionTransport: Sendable {
     /// The element type was `String` until the frame cut. It is `SessionFrame`
     /// because four of the gateway's seven in-band names are NOT prose, and a
     /// prose channel can only render them as agent speech. See `SessionFrame`.
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error>
+    /// `images` is EMPTY for every prose turn and non-empty only when the
+    /// operator attached one. It is a parameter rather than a second method
+    /// because a conformer must not be able to implement the prose half and
+    /// silently ignore the vision half — with one signature, a transport that
+    /// cannot carry images has to say so out loud (see `HTTPTransport`).
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error>
 }
 
 enum TransportError: LocalizedError, Equatable {
@@ -134,7 +139,7 @@ enum TransportError: LocalizedError, Equatable {
 /// it exercises the engine's error path on every send — so the path that is
 /// hardest to reach in a wired build is the one that runs by default here.
 struct UnconfiguredTransport: SessionTransport {
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { $0.finish(throwing: TransportError.unconfigured) }
     }
 }
@@ -144,7 +149,7 @@ struct UnconfiguredTransport: SessionTransport {
 /// scheme is not http or https` is actionable; "connection failed" is not.
 struct MisconfiguredTransport: SessionTransport {
     let detail: String
-    func stream(prompt: String) -> AsyncThrowingStream<SessionFrame, Error> {
+    func stream(prompt: String, images: [OutboundImage]) -> AsyncThrowingStream<SessionFrame, Error> {
         AsyncThrowingStream { $0.finish(throwing: TransportError.misconfigured(detail: detail)) }
     }
 }
@@ -315,13 +320,13 @@ final class SessionEngine: ObservableObject {
     /// Begin a turn. Empty and whitespace-only prompts are refused here rather
     /// than at the button, so the refusal holds for every caller — the view's
     /// send/mic swap is presentation, not the guard.
-    func send(_ raw: String) {
+    func send(_ raw: String, images: [OutboundImage] = []) {
         let prompt = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
 
         turn?.cancel()                                  // invariant 3
         messages.append(Message(role: .user, text: prompt))
-        turn = Task { [weak self] in await self?.run(prompt) }
+        turn = Task { [weak self] in await self?.run(prompt, images) }
     }
 
     /// Abandon the in-flight turn. Cleanup runs through the same `defer` as a
@@ -331,7 +336,7 @@ final class SessionEngine: ObservableObject {
         turn = nil
     }
 
-    private func run(_ prompt: String) async {
+    private func run(_ prompt: String, _ images: [OutboundImage]) async {
         state = .thinking
 
         let slot = messages.count
@@ -345,7 +350,7 @@ final class SessionEngine: ObservableObject {
         }
 
         do {
-            for try await frame in makeTransport(self.sessionID).stream(prompt: prompt) {
+            for try await frame in makeTransport(self.sessionID).stream(prompt: prompt, images: images) {
                 if Task.isCancelled { return }
                 if state != .responding { state = .responding }
                 absorb(frame, into: slot)               // invariant 1
