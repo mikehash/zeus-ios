@@ -72,9 +72,22 @@ final class AttachRouteTests: XCTestCase {
         XCTAssertEqual(definitions.count, 1, "one definition, found: \(definitions.map(\.name))")
         XCTAssertEqual(definitions.first?.name, "AttachRoute.swift")
 
-        let root = try XCTUnwrap(sources.first { $0.name == "RootView.swift" })
-        XCTAssertTrue(root.body.contains("AttachRoute.refusal(for: kind)"),
+        // 🔴 THE SUBJECT MOVED ONE LAYER, and the leg follows it rather than
+        // being deleted. `RootView` no longer asks the disposition directly:
+        // the photo road reaches the same decision without a URL, so BOTH
+        // roads now go through `AttachDoor`, which is the single asker. The
+        // invariant is unchanged — the view does not carry its own copy — and
+        // the site that proves it is the door.
+        let door = try XCTUnwrap(sources.first { $0.name == "AttachDoor.swift" })
+        XCTAssertTrue(door.body.contains("AttachRoute.refusal(for: kind)"),
                       "the pick path must ask the shared decision")
+
+        let root = try XCTUnwrap(sources.first { $0.name == "RootView.swift" })
+        XCTAssertFalse(root.body.contains("AttachRoute.refusal("),
+                       "the view asks the disposition directly again — two askers is "
+                       + "how the file and photo roads drift apart")
+        XCTAssertTrue(root.body.contains("AttachDoor.outcome("),
+                      "the view must still reach the disposition THROUGH the door")
         // The view must not re-derive a kind by hand. POS control below proves
         // the strip did not eat the body.
         XCTAssertFalse(root.body.contains("hasPrefix(\"image/\")"),

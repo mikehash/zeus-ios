@@ -273,9 +273,27 @@ final class SessionStageTests: XCTestCase {
         // so exactly one picker exists and the fabrications above stay banned.
         XCTAssertGreaterThan(Self.count(of: "fileImporter", in: code), 0,
                              "POS: the real picker is present — attach is no longer terminal")
-        for invented in ["PHPicker", "UIImagePickerController", "PhotosPicker"] {
+        // 🔴 `PhotosPicker` LEAVES THIS LIST, and the reason is that the list's
+        // subject was never "how many pickers" — it was "is any picker
+        // INVENTED", i.e. present in source while attaching nothing. When this
+        // leg was written all three named APIs were absent and the attach
+        // control was terminal-disabled, so banning them was banning a mock.
+        // `PhotosPicker` is now a REAL ingest path with bytes reaching the
+        // vision corridor, which is the same standing this leg granted
+        // `fileImporter` when it flipped from banned to required.
+        //
+        // The two UIKit spellings stay banned on their merits, and they are
+        // not a stylistic preference: `UIImagePickerController` and
+        // `PHPickerViewController` (wrapped) run IN PROCESS and require
+        // `NSPhotoLibraryUsageDescription` — a permission prompt this build
+        // does not need. The manifest pin in `VisionChannelTests` is the other
+        // half of that statement.
+        XCTAssertGreaterThan(Self.count(of: "PhotosPicker(selection:", in: code), 0,
+                             "POS: the photo road is present — a picked image is a real ingest")
+        for invented in ["PHPicker", "UIImagePickerController"] {
             XCTAssertEqual(Self.count(of: invented, in: code), 0,
-                           "NEG: '\(invented)' is a second picker nobody asked for")
+                           "NEG: '\(invented)' is an in-process picker that would demand a "
+                           + "photo-library permission this app does not request")
         }
         // POS control in the SAME invocation, a code token: proves the strip
         // left real code to count, so the zeros are absences and not an

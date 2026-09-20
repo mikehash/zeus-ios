@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 /// What a pick produced: a staged path, or a reason it did not.
 ///
@@ -172,6 +173,15 @@ struct SessionView: View {
     /// Whether the document picker is up.
     @State private var showPicker: Bool = false
 
+    /// The photo the operator chose, before its bytes have been loaded.
+    ///
+    /// `PhotosPicker` binds to an ITEM, not to a presentation flag: the sheet
+    /// is presented by the control itself, out of process, and the selection
+    /// arrives asynchronously. Cleared on receipt so picking the same photo
+    /// twice is two intents — the same single-shot reason `prefill` is a
+    /// binding this view nils.
+    @State private var photoItem: PhotosPickerItem? = nil
+
     /// The workspace-relative path of the staged file, if one is waiting.
     ///
     /// Owned here rather than pushed straight into `input`: the reference is
@@ -198,6 +208,15 @@ struct SessionView: View {
     /// Returns the workspace-relative path on success. `nil` means the stage
     /// failed and `stageError` carries the reason.
     var onStage: (URL) -> StageOutcome = { _ in .failed("NO CORE ON THIS DEVICE") }
+
+    /// Stage bytes that arrived without a URL — the photo road.
+    ///
+    /// A SECOND seam rather than a URL the picker does not have: a
+    /// `PhotosPickerItem` is loaded out-of-process and yields `Data`, and
+    /// faking a `file://` URL to reuse `onStage` would send the security-scope
+    /// and ubiquitous-status guards after a file that does not exist. Both
+    /// seams meet again at `AttachDoor`, which is where they must not differ.
+    var onStagePhoto: (String, Data) -> StageOutcome = { _, _ in .failed("NO CORE ON THIS DEVICE") }
 
     /// Whether the orb is currently allowed to speak replies.
     ///
@@ -437,6 +456,7 @@ struct SessionView: View {
             applyPrefill()
             applyVoiceCommit()
         }
+        .onChange(of: photoItem) { _, item in receivePhoto(item) }
         .onChange(of: prefill.wrappedValue) { _, _ in applyPrefill() }
         .onChange(of: voiceCommit.wrappedValue) { _, _ in applyVoiceCommit() }
         // `.fileImporter` over a hand-rolled `UIDocumentPickerViewController`
@@ -483,6 +503,39 @@ struct SessionView: View {
         voiceCommit.wrappedValue = nil
         input = spoken
         send()
+    }
+
+    /// Load a picked photo's bytes and push them through the shared door.
+    ///
+    /// ASYNC because `loadTransferable` is: the item is a reference into
+    /// another process and the bytes have to be fetched. The `Task` is why the
+    /// selection is cleared inside it rather than at the call — clearing first
+    /// would nil the item this closure is about to read.
+    ///
+    /// A nil load is SAID, not swallowed. An iCloud photo that is not on the
+    /// device returns nothing, and a picker that visibly did nothing reads as
+    /// "the app ignored my photo" — the same rule the file road's
+    /// `stageError` follows.
+    private func receivePhoto(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        stageError = nil
+        Task {
+            defer { photoItem = nil }
+            guard let data = try? await item.loadTransferable(type: Data.self), !data.isEmpty else {
+                stageError = "COULDN'T LOAD THAT PHOTO — IT MAY NOT BE ON THIS DEVICE"
+                return
+            }
+            // The name is for the OPERATOR's line; the bytes are the message.
+            // Its extension still matters, because it is what the UTI table
+            // reads to name a candidate mime for the core to judge.
+            let name = item.supportedContentTypes.first?.preferredFilenameExtension
+                .map { "PHOTO.\($0)" } ?? "PHOTO.JPG"
+            switch onStagePhoto(name, data) {
+            case .staged(let rel): attachment = .staged(rel)
+            case .attachedImage(let img, let nm): attachment = .image(img, name: nm)
+            case .failed(let why): stageError = why
+            }
+        }
     }
 
     /// Move a pending prefill into the composer, then clear it.
@@ -682,6 +735,27 @@ struct SessionView: View {
                          label: SessionView.attachReason,
                          enabled: SessionView.attachEnabled,
                          action: { showPicker = true })
+
+            // PHOTOS — beside the file importer, never instead of it. A
+            // `PhotosPicker` and not a `UIImagePickerController`: it runs
+            // OUT OF PROCESS, so the app never gains photo-library access and
+            // `NSPhotoLibraryUsageDescription` stays absent from the manifest.
+            // Adding that key would be a permission prompt for a capability
+            // this build does not have and does not need — pinned absent by a
+            // leg for exactly that reason.
+            //
+            // Not wrapped in `accentButton`: that helper builds a `Button`,
+            // and `PhotosPicker` IS the control that presents the sheet. A
+            // button that set a flag would need a second presentation path.
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Image(systemName: "photo")
+                    .font(Theme.display(19, .bold))
+                    .foregroundStyle(Theme.onAccent)
+                    .frame(minWidth: Theme.controlSize, minHeight: Theme.controlSize)
+                    .background(Theme.accentGradient)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
+            }
+            .accessibilityLabel("Attach a photo")
 
             // COMMS is the hero: the one control the screen exists for.
             accentButton(symbol: voiceSymbol,

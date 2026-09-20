@@ -665,6 +665,8 @@ struct RootView: View {
                 // takes `Data`, because a sandbox URL means nothing to a remote
                 // gateway and the bytes would have to cross the wire regardless.
                 onStage: stage,
+                // The photo road: bytes with no URL, same door.
+                onStagePhoto: stagePhoto(fileName:bytes:),
                 // The glyph reads the narrator that actually speaks, and the
                 // toggle writes it — one owner, one preference, persisted.
                 narrationOn: replyNarrator.voiceOn,
@@ -775,7 +777,7 @@ extension RootView {
     /// The gateway conformer throws rather than blocking, so no network call
     /// hides behind this.
     private func stage(_ url: URL) -> StageOutcome {
-        guard let caps = EmbeddedCapabilities.shared() else {
+        guard let caps = Self.stagingCore() else {
             return .failed("NO CORE ON THIS DEVICE — CANNOT STAGE")
         }
         let scoped = url.startAccessingSecurityScopedResource()
@@ -824,52 +826,86 @@ extension RootView {
         if readError != nil { return .failed("COULD NOT READ THAT FILE") }
         if let failure { return .failed(failure) }
 
-        guard !data.isEmpty else { return .failed("THAT FILE IS EMPTY — NOTHING STAGED") }
         // (c) COHERENCE POST-CONDITION. A streaming provider extension can
         // report `.current` and still hand back a fragment, so the precondition
-        // does not subsume this.
+        // does not subsume this. Runs BEFORE the shared door because it is a
+        // question about this URL's provider, which a photo pick does not have.
         if case .refuse(let why) = AttachCoherence.coherence(declaredTotal: declaredTotal,
                                                             stagedCount: data.count) {
             return .failed(why)
         }
-        // (d) ROUTE BY KIND, before the stage. Every predicate is core-owned
-        // and asked ACROSS the bridge in one crossing: `is_image` is a method
-        // on `zeus_core::Attachment`, `extract_by_path` is the extractor's own
-        // arm table, and "is it text" is the byte question `read_file` will
-        // ask. A Swift classifier would have to reimplement one of the three.
+        // (d) ROUTE BY KIND, through the SHARED DOOR. Every predicate is
+        // core-owned and asked ACROSS the bridge in one crossing: `is_image` is
+        // a method on `zeus_core::Attachment`, `extract_by_path` is the
+        // extractor's own arm table, and "is it text" is the byte question
+        // `read_file` will ask. A Swift classifier would reimplement one of the
+        // three.
         //
         // `preferredMIMEType` is the SYSTEM's UTI table, not an allow-list of
         // ours: it NAMES a candidate mime and the core decides whether that
         // mime is an image. When the table has no mapping this is `nil`, and
         // the file falls to the document or text route on its own merits.
         //
-        // The disposition lives in `AttachRoute` rather than here, because a
-        // decision inside a private view func has no caller a test can be.
-        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
-        let kind = classifyAttachment(fileName: url.lastPathComponent, mimeType: mime, bytes: data)
-        if let why = AttachRoute.refusal(for: kind) {
-            return .failed(why)
-        }
-        // 🔴 AN IMAGE IS NOT STAGED. The document route works BECAUSE the file
-        // becomes a workspace path `read_file` opens; a PNG through that door
-        // is a binary the model reads as garbage. Vision is the opposite shape
-        // — bytes in band on the model wire, no file — so the image arm returns
-        // before the stage rather than after it.
-        //
-        // The mime is the one the core already judged, taken out of the kind
-        // rather than re-derived, so exactly one value decided "image" and it
-        // was the core's.
-        if case .image(let mimeType) = kind {
-            return .attachedImage(OutboundImage(mimeType: mimeType, bytes: data),
-                                  name: url.lastPathComponent)
-        }
+        // 🔴 THE DISPOSITION IS NOT WRITTEN HERE. `AttachDoor.outcome` holds
+        // it, because the photo picker reaches the same decision by another
+        // road and two copies of one decision drift. A branch inside this
+        // private view func also has no caller a leg can be — the shape that
+        // left the bridge's `is_image` gate green under deletion one arc ago.
+        return AttachDoor.outcome(fileName: url.lastPathComponent,
+                                  bytes: data,
+                                  kind: Self.classify(fileName: url.lastPathComponent,
+                                                      pathExtension: url.pathExtension,
+                                                      bytes: data),
+                                  stage: caps.stageAttachmentSync(fileName:bytes:))
+    }
 
-        do {
-            return .staged(try caps.stageAttachmentSync(fileName: url.lastPathComponent,
-                                                         bytes: data))
-        } catch {
-            return .failed("STAGING FAILED — \(EmbeddedTransport.describe(error).uppercased())")
+    /// The embedded handle the staging roads share — ONE holder, not two.
+    ///
+    /// Both roads stage into the workspace the MODEL reads from, which on a
+    /// gateway is another machine with no upload route in the pin: that is why
+    /// this cannot go through `makeCapabilities`, and it is one reason, so it
+    /// is stated once. A second `EmbeddedCapabilities.shared()` added for the
+    /// photo road would have moved the un-migrated census by a site that
+    /// carries no new justification — the census reds on an UNEXPLAINED move,
+    /// and "I needed the same thing twice" is not an explanation.
+    private static func stagingCore() -> EmbeddedCapabilities? {
+        EmbeddedCapabilities.shared()
+    }
+
+    /// Classify a pick by asking the core, naming the candidate mime with the
+    /// system's UTI table.
+    ///
+    /// Static and extension-parameterised so the photo path — which has a file
+    /// NAME but no URL — reaches the identical crossing. `UTType` is exempt
+    /// from the mime-allow-list ban by construction: it proposes, the core
+    /// disposes.
+    private static func classify(fileName: String,
+                                 pathExtension: String,
+                                 bytes: Data) -> AttachmentKind {
+        let mime = UTType(filenameExtension: pathExtension)?.preferredMIMEType
+        return classifyAttachment(fileName: fileName, mimeType: mime, bytes: bytes)
+    }
+
+    /// Stage bytes that arrived WITHOUT a URL — the photo-library path.
+    ///
+    /// `PhotosPicker` hands back a `PhotosPickerItem`, not a file: there is no
+    /// security scope to open, no ubiquitous status to precondition on, and no
+    /// declared total to compare against, because there is no provider and no
+    /// file. Those three guards are URL-shaped and are CORRECTLY absent here
+    /// rather than stubbed with a passing value — a coherence check fed a
+    /// declared total it invented would be an instrument measuring itself.
+    ///
+    /// Everything downstream of the bytes is the SAME door.
+    private func stagePhoto(fileName: String, bytes: Data) -> StageOutcome {
+        guard let caps = Self.stagingCore() else {
+            return .failed("NO CORE ON THIS DEVICE — CANNOT STAGE")
         }
+        return AttachDoor.outcome(fileName: fileName,
+                                  bytes: bytes,
+                                  kind: Self.classify(fileName: fileName,
+                                                      pathExtension: (fileName as NSString).pathExtension,
+                                                      bytes: bytes),
+                                  stage: caps.stageAttachmentSync(fileName:bytes:))
     }
 
     private func remember(_ message: Message) {
