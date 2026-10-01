@@ -134,7 +134,8 @@ final class FrameworkProvenanceTests: XCTestCase {
             """)
     }
 
-    /// The manifest must also name the artifact's OWN commit, and both slices.
+    /// The manifest must also name the artifact's OWN commit, and all four
+    /// slices (iOS + visionOS, device + simulator each).
     /// Without the slice line a device-only build passes the pin check and then
     /// fails at embed time on the simulator, which reads as an Xcode fault.
     func testTheManifestRecordsBothSlicesAndItsOwnCommit() throws {
@@ -163,21 +164,30 @@ final class FrameworkProvenanceTests: XCTestCase {
         // Non-vacuity: the two slice assertions above both pass on a line that
         // reads "ios-arm64-simulator" alone, since it contains "ios-arm64" as a
         // prefix. Assert they are genuinely two entries.
-        XCTAssertEqual(slices.split(separator: " ").count, 2,
-            "`slices: \(slices)` must name exactly two slices — a substring " +
-            "match on the simulator entry satisfies both checks above")
+        // Since visionOS stage 1 (df26d95) the script builds FOUR slices.
+        // Exact-set equality, not `contains`: the substring trap above applies
+        // to "xros-arm64" / "xros-arm64-simulator" too, and a dropped or
+        // duplicated slice must red here, not at embed time on that platform.
+        let entries = slices.split(separator: " ").map(String.init)
+        XCTAssertEqual(entries.count, 4,
+            "`slices: \(slices)` must name exactly four slices — a substring " +
+            "match on a simulator entry satisfies a `contains` check")
+        XCTAssertEqual(Set(entries),
+            ["ios-arm64", "ios-arm64-simulator", "xros-arm64", "xros-arm64-simulator"],
+            "`slices: \(slices)` is not the iOS + visionOS device/simulator set")
 
-        for key in ["device-sha", "sim-sha"] {
+        for key in ["device-sha", "sim-sha", "xros-sha", "xrsim-sha"] {
             guard let v = manifestValue(key, in: text) else {
                 return XCTFail("VOID: manifest carries no `\(key):` line")
             }
             XCTAssertEqual(v.count, 64,
                 "`\(key): \(v)` is not a sha256 of the built archive")
         }
-        XCTAssertNotEqual(manifestValue("device-sha", in: text),
-                          manifestValue("sim-sha", in: text),
-                          "device and simulator archives are byte-identical — " +
-                          "one slice was built twice")
+        let archiveShas = ["device-sha", "sim-sha", "xros-sha", "xrsim-sha"]
+            .compactMap { manifestValue($0, in: text) }
+        XCTAssertEqual(Set(archiveShas).count, 4,
+                       "two slice archives are byte-identical — " +
+                       "one slice was built twice: \(archiveShas)")
     }
 
     // MARK: - crate-tree
