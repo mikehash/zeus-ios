@@ -32,3 +32,8 @@ Any commit touching rust bridge/core: Zeus100 rebuilds it independently.
   app target stays iOS-only until gate 2 (destination + `TARGETED_DEVICE_FAMILY`
   change lands with the compile receipt, not before it). `bash -n` rc=0.
   No rust source touched.
+
+## Stage-2 pre-walk (22:07, while stage-1 xcframework runs)
+Files touching candidate iPhone-only APIs (AVAudioSession|SFSpeech|PhotosPicker|UNUserNotification|registerForRemoteNotifications|fileImporter|AudioServicesPlaySystemSound|UIApplication), per-file hit counts:
+Voice 15, PushSystem 10, SessionView 9, SpeechAudio 8, PushRegistrar 6, AttachDoor 3, Narrator 2, RootView 2, DeviceOrb 1, ZeusApp 1.
+Verdict comes from compiling for the xrsimulator destination, not from this list.
