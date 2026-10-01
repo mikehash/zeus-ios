@@ -142,16 +142,26 @@ struct SettingsView: View {
 
     // MARK: - Voice
 
+    @State private var speechRate = SpeechRatePreference.current()
+
     private var voiceSection: some View {
         VStack(spacing: 0) {
             sectionHeader("VOICE", "HEARD, THEN SPOKEN")
             VStack(spacing: 0) {
                 NodeRow(icon: narrationOn ? "speaker.wave.2" : "speaker.slash",
                         label: "Spoken replies",
-                        value: narrationOn ? "ON" : "MUTED",
-                        last: true) {
+                        value: narrationOn ? "ON" : "MUTED") {
                     onToggleNarration()
                     onToast(narrationOn ? "REPLIES MUTED" : "REPLIES SPOKEN")
+                }
+                NodeRow(icon: "speedometer",
+                        label: "Speech rate",
+                        value: speechRate.label,
+                        last: true) {
+                    let next = speechRate.next
+                    SpeechRatePreference.set(next)
+                    speechRate = next
+                    onToast(Theme.joined(["RATE", next.label]))
                 }
             }
             .padding(.vertical, 5)

@@ -47,6 +47,56 @@ enum NarrationPreference {
     }
 }
 
+// MARK: - speech rate, the second VOICE preference
+
+/// How fast the orb speaks, persisted beside the mute toggle.
+///
+/// Three named steps rather than a slider: each step is a value a leg can
+/// pin, and the Settings row cycles them with one tap. `normal` is
+/// `AVSpeechUtteranceDefaultSpeechRate` — the value every utterance used
+/// before this preference existed, so a fresh install sounds unchanged.
+enum SpeechRatePreference: String, CaseIterable {
+    case slow, normal, fast
+
+    static let key = "zeus.narration.rate"
+
+    var rate: Float {
+        switch self {
+        case .slow:   return AVSpeechUtteranceDefaultSpeechRate * 0.8
+        case .normal: return AVSpeechUtteranceDefaultSpeechRate
+        case .fast:   return AVSpeechUtteranceDefaultSpeechRate * 1.2
+        }
+    }
+
+    var label: String { rawValue.uppercased() }
+
+    /// The step after this one, wrapping — the Settings row's tap.
+    var next: SpeechRatePreference {
+        let all = Self.allCases
+        return all[(all.firstIndex(of: self)! + 1) % all.count]
+    }
+
+    static func current(_ defaults: UserDefaults = .standard) -> SpeechRatePreference {
+        defaults.string(forKey: key).flatMap(SpeechRatePreference.init(rawValue:)) ?? .normal
+    }
+
+    static func set(_ r: SpeechRatePreference, _ defaults: UserDefaults = .standard) {
+        defaults.set(r.rawValue, forKey: key)
+    }
+}
+
+/// The one place an utterance is shaped. `Narrator.speak()` calls this, so a
+/// leg that reads the returned utterance reads what the synthesizer is given.
+enum UtteranceShape {
+    static func make(_ line: String, pitch: Float,
+                     defaults: UserDefaults = .standard) -> AVSpeechUtterance {
+        let u = AVSpeechUtterance(string: line)
+        u.pitchMultiplier = pitch
+        u.rate = SpeechRatePreference.current(defaults).rate
+        return u
+    }
+}
+
 // MARK: - which reply the orb speaks, decided out here
 
 /// The pure half of reply narration.
@@ -150,8 +200,7 @@ final class Narrator: ObservableObject {
     private func speak(_ line: String) {
         synth.stopSpeaking(at: .immediate)
         SpeechAudio.prepare(AVAudioSession.sharedInstance())
-        let utterance = AVSpeechUtterance(string: line)
-        utterance.pitchMultiplier = Self.pitch
+        let utterance = UtteranceShape.make(line, pitch: Self.pitch)
         utterance.voice = Self.pickVoice()
         synth.speak(utterance)
     }
