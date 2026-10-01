@@ -10,7 +10,9 @@ options:
 targets:
   Zeus:
     type: application
-    platform: iOS
+    # visionOS gate 2: one target, two destinations (xcodegen supportedDestinations).
+    platform: auto
+    supportedDestinations: [iOS, visionOS]
     sources:
       - Sources/ZeusApp
       # The generated UniFFI Swift bindings. CHECKED IN, and compiled as app
@@ -88,7 +90,14 @@ targets:
         # bundle; they are not the shipping numbers.
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
-        TARGETED_DEVICE_FAMILY: "1"
+        # 1 = iPhone, 7 = Apple Vision. iPad (2) still excluded pending merakizzz.
+        TARGETED_DEVICE_FAMILY: "1,7"
+        # ZeusCore.xcframework ships arm64-only sim slices (ios-arm64-simulator,
+        # xros-arm64-simulator). A generic visionOS Simulator build also links
+        # x86_64 and fails at Ld (measured /tmp/vos-g2.log EXIT=65); arm64-only
+        # is EXIT=0 (/tmp/vos-g2b.log).
+        "EXCLUDED_ARCHS[sdk=xrsimulator*]": x86_64
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         # THE APP STORE CONNECT RECORD IS THE SOURCE; THIS LITERAL IS ITS NAME.
         # An app's bundle id is not a naming preference — it is the key an
         # existing ASC record is keyed by, and an archive whose id does not

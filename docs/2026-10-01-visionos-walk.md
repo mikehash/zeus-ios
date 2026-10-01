@@ -48,3 +48,9 @@ Verdict comes from compiling for the xrsimulator destination, not from this list
 - Bindings: `git diff` on `Sources/ZeusCoreFFI` is empty — regen is byte-identical to `dcdb42f`, so visionOS adds no FFI surface.
 - The xcframework is gitignored (`.gitignore:19`), so it's a local artifact; the receipt is this paragraph.
 - Next: gate 2 — visionOS destination in project.yml + xrsimulator app compile; verdicts for the stage-2 census come from that compile.
+
+## Gate 2 — visionOS destination + xrsimulator app compile (2026-10-01 23:3x +04, branch feat/visionos-gate2 off df26d95)
+- project.yml: Zeus target `platform: auto` + `supportedDestinations: [iOS, visionOS]`; `TARGETED_DEVICE_FAMILY "1,7"` (iPad still out); xcodegen 2.46.0 → pbxproj `SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator"`.
+- First compile, `generic/platform=visionOS Simulator`: EXIT=65. The single error is at Ld for **x86_64**, where the xcframework has arm64-only sim slices. Swift compiled clean, so this is not an API failure.
+- Re-run with `ARCHS=arm64`: **BUILD SUCCEEDED, EXIT=0, 0 `error:` lines** (/tmp/vos-g2b.log). The app's Swift, including every file in the stage-2 iPhone-only census, compiles for xrsimulator as-is, so the census has no compile-level verdicts. Unavailable-at-runtime behaviour (e.g. haptics or photos on visionOS) is a separate question; it is unanswered and needs a sim run.
+- Structural fix: `EXCLUDED_ARCHS[sdk=xrsimulator*|iphonesimulator*] = x86_64` in project.yml. The visionOS rebuild without the ARCHS override is the confirming leg.
