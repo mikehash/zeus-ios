@@ -37,3 +37,14 @@ Any commit touching rust bridge/core: Zeus100 rebuilds it independently.
 Files touching candidate iPhone-only APIs (AVAudioSession|SFSpeech|PhotosPicker|UNUserNotification|registerForRemoteNotifications|fileImporter|AudioServicesPlaySystemSound|UIApplication), per-file hit counts:
 Voice 15, PushSystem 10, SessionView 9, SpeechAudio 8, PushRegistrar 6, AttachDoor 3, Narrator 2, RootView 2, DeviceOrb 1, ZeusApp 1.
 Verdict comes from compiling for the xrsimulator destination, not from this list.
+
+## Gate 1 receipt — xcframework 4 slices (2026-10-01 23:22 +04)
+
+- Run: `scripts/build-xcframework.sh` in tmux `vos-xcf`, log `/tmp/vos-xcf.log`, `EXIT=0` (log line 603).
+- Built at crate-sha `1321913f` = `cbd941c` + docs-only commit (`git diff --stat cbd941c 1321913` touches only `docs/`), so the result holds for `cbd941c`'s script/project.
+- Core pin `d5a539bd78498954e1685989ce1c508b96d6a40e`; Xcode 26.5 (17F42); rustc 1.95.0; ios-min 17.0, xros-min 2.0.
+- `plutil` on `Frameworks/ZeusCore.xcframework/Info.plist` (checked independently, not from the script summary): `AvailableLibraries` = 4 —
+  `ios-arm64` (ios/device), `ios-arm64-simulator` (ios/simulator), `xros-arm64` (xros/device), `xros-arm64-simulator` (xros/simulator).
+- Bindings: `git diff` on `Sources/ZeusCoreFFI` is empty — regen is byte-identical to `dcdb42f`, so visionOS adds no FFI surface.
+- The xcframework is gitignored (`.gitignore:19`), so it's a local artifact; the receipt is this paragraph.
+- Next: gate 2 — visionOS destination in project.yml + xrsimulator app compile; verdicts for the stage-2 census come from that compile.
