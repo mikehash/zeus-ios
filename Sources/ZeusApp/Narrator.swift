@@ -149,6 +149,7 @@ final class Narrator: ObservableObject {
 
     private func speak(_ line: String) {
         synth.stopSpeaking(at: .immediate)
+        SpeechAudio.prepare(AVAudioSession.sharedInstance())
         let utterance = AVSpeechUtterance(string: line)
         utterance.pitchMultiplier = Self.pitch
         utterance.voice = Self.pickVoice()
