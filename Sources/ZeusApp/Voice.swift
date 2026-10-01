@@ -320,6 +320,7 @@ final class VoiceInput: ObservableObject {
         do {
             try beginTap()
             state = .listening
+            WakeChime.play()
         } catch {
             // A tap that will not install is not a denial and not a locale
             // problem — but the operator's only lever is the same one, so it

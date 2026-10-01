@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import AudioToolbox
 
 /// The narration engine for commissioning.
 ///
@@ -267,4 +268,37 @@ final class Narrator: ObservableObject {
         synth.speak(utterance)
     }
 
+}
+
+// MARK: - wake chime, the fourth VOICE preference
+
+/// A short system tone when the mic actually opens — the audible half of
+/// "I'm listening". Default OFF: a fresh install sounds exactly as it did
+/// before this row existed, and the operator opts in from Settings.
+enum WakeChimePreference {
+    static let key = "zeus.voice.wakeChime"
+
+    static func isOn(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? false
+    }
+
+    static func set(_ on: Bool, _ defaults: UserDefaults = .standard) {
+        defaults.set(on, forKey: key)
+    }
+}
+
+/// The one decision the mic makes: which tone, if any. Pure, so a leg can
+/// read it; `play` is the only caller of the system-sound API.
+enum WakeChime {
+    /// iOS `begin_record` tone.
+    static let tone: UInt32 = 1113
+
+    static func sound(_ defaults: UserDefaults = .standard) -> UInt32? {
+        WakeChimePreference.isOn(defaults) ? tone : nil
+    }
+
+    static func play(_ defaults: UserDefaults = .standard) {
+        guard let id = sound(defaults) else { return }
+        AudioServicesPlaySystemSound(SystemSoundID(id))
+    }
 }

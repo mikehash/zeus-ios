@@ -145,6 +145,7 @@ struct SettingsView: View {
 
     @State private var speechRate = SpeechRatePreference.current()
     @State private var voiceID = VoicePreference.storedID()
+    @State private var wakeChime = WakeChimePreference.isOn()
 
     private var voiceSection: some View {
         VStack(spacing: 0) {
@@ -163,6 +164,14 @@ struct SettingsView: View {
                     SpeechRatePreference.set(next)
                     speechRate = next
                     onToast(Theme.joined(["RATE", next.label]))
+                }
+                NodeRow(icon: wakeChime ? "bell" : "bell.slash",
+                        label: "Wake chime",
+                        value: wakeChime ? "ON" : "OFF") {
+                    let next = !wakeChime
+                    WakeChimePreference.set(next)
+                    wakeChime = next
+                    onToast(Theme.joined(["WAKE CHIME", next ? "ON" : "OFF"]))
                 }
                 NodeRow(icon: "person.wave.2",
                         label: "Voice",
