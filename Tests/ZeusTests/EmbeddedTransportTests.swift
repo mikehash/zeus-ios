@@ -102,6 +102,7 @@ private final class FakeCore: ZeusCoreProtocol, @unchecked Sendable {
     /// would be a fixture pretending to be a measurement.
     private(set) var setProviderCalls: [(id: String, model: String, key: String, baseUrl: String?)] = []
 
+    func setReplyLength(length: ReplyLength) throws {}
     func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {
         lock.lock()
         setProviderCalls.append((id, model, key, baseUrl))

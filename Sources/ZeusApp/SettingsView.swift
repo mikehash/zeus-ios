@@ -64,6 +64,10 @@ struct SettingsView: View {
 
     var onToggleNarration: () -> Void
 
+    /// Re-arm after a reply-length change. RootView owns the one arming act
+    /// (`armedResolution`), and that act is the setting's only road to the core.
+    var onReplyLengthChanged: () -> Void
+
     /// The route sheet raised by `onOpenRoutes` is `RootView`'s; this one is
     /// the catalogue picker that used to live in NODES.
     @State private var routeSheet = false
@@ -146,6 +150,7 @@ struct SettingsView: View {
     @State private var speechRate = SpeechRatePreference.current()
     @State private var voiceID = VoicePreference.storedID()
     @State private var wakeChime = WakeChimePreference.isOn()
+    @State private var replyLength = ReplyLengthPreference.current()
 
     private var voiceSection: some View {
         VStack(spacing: 0) {
@@ -172,6 +177,25 @@ struct SettingsView: View {
                     WakeChimePreference.set(next)
                     wakeChime = next
                     onToast(Theme.joined(["WAKE CHIME", next ? "ON" : "OFF"]))
+                }
+                if case .resolved = resolution.config {
+                    // Remote gateway: the prompt is built there, the phone's
+                    // AGENTS.md is never read — scope stated, no tap.
+                    NodeRow(icon: "text.alignleft",
+                            label: "Reply length",
+                            value: Theme.joined(["REPLY LENGTH", "ON-DEVICE CORE ONLY"])) {
+                        onToast(Theme.joined(["REPLY LENGTH", "ON-DEVICE CORE ONLY"]))
+                    }
+                } else {
+                    NodeRow(icon: "text.alignleft",
+                            label: "Reply length",
+                            value: replyLength.label) {
+                        let next = replyLength.next
+                        ReplyLengthPreference.set(next)
+                        replyLength = next
+                        onReplyLengthChanged()
+                        onToast(Theme.joined(["REPLY LENGTH", next.label]))
+                    }
                 }
                 NodeRow(icon: "person.wave.2",
                         label: "Voice",

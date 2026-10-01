@@ -275,6 +275,48 @@ final class Narrator: ObservableObject {
 /// A short system tone when the mic actually opens — the audible half of
 /// "I'm listening". Default OFF: a fresh install sounds exactly as it did
 /// before this row existed, and the operator opts in from Settings.
+/// VOICE → REPLY LENGTH. Persisted here, enforced in the core: the bridge
+/// writes the matching section into the phone's AGENTS.md, which heads the
+/// prompt `get_context` assembles. `normal` writes nothing, so a fresh install's
+/// prompt is unchanged. On a remote gateway the prompt is built server-side and
+/// this setting cannot fire — the row says so instead of pretending.
+enum ReplyLengthPreference: String, CaseIterable {
+    case brief, normal, detailed
+
+    static let key = "zeus.voice.replyLength"
+
+    var label: String { rawValue.uppercased() }
+
+    var next: ReplyLengthPreference {
+        let all = Self.allCases
+        return all[(all.firstIndex(of: self)! + 1) % all.count]
+    }
+
+    /// The bridge's value. Exhaustive, so a new case cannot compile unmapped.
+    var ffi: ReplyLength {
+        switch self {
+        case .brief:    return .brief
+        case .normal:   return .normal
+        case .detailed: return .detailed
+        }
+    }
+
+    static func current(_ defaults: UserDefaults = .standard) -> ReplyLengthPreference {
+        defaults.string(forKey: key).flatMap(ReplyLengthPreference.init(rawValue:)) ?? .normal
+    }
+
+    static func set(_ r: ReplyLengthPreference, _ defaults: UserDefaults = .standard) {
+        defaults.set(r.rawValue, forKey: key)
+    }
+
+    /// Hand the stored choice to the core. The ONE production caller is
+    /// `RootView.armedResolution`, which runs on app start and on every
+    /// re-arm — including the one the Settings row raises.
+    static func apply(to core: SessionCapabilities?, _ defaults: UserDefaults = .standard) {
+        try? core?.setReplyLength(current(defaults).ffi)
+    }
+}
+
 enum WakeChimePreference {
     static let key = "zeus.voice.wakeChime"
 

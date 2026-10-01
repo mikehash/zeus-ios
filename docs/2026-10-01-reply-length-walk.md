@@ -35,3 +35,10 @@ On `.resolved` (remote gateway), the prompt is built server-side, so the phone's
 - A stranger's AGENTS.md is untouched by `set_reply_length`.
 - Swift: the stored preference reaches `setReplyLength` on arm.
 - Mutations: drop the length arg at `set_provider` → leg 3 red; drop the re-render in `set_reply_length` → leg 2 red.
+
+## Cut (code commit)
+- Bridge: `ReplyLength` {Brief, Normal, Detailed}; `set_reply_length` stores it on the core and re-renders AGENTS.md; `set_provider` re-renders with the stored length. Normal appends nothing. Wording unified to "may be spoken aloud" (Zeus100 optional).
+- Swift: `ReplyLengthPreference` (UserDefaults, default normal) → `apply(to:)` called once, in `RootView.armedResolution`, BEFORE `CoreArming.arm`. Settings row cycles BRIEF→NORMAL→DETAILED and re-arms; on `.resolved` it shows `REPLY LENGTH · ON-DEVICE CORE ONLY` and does not write. Gateway conformer throws `unimplemented`.
+- Census counts moved by one for a stated reason: adopt sites 5→6, armed-helper entries 3→4 (the reply-length re-arm).
+- Gates: cargo 58/58; xcodebuild 734 tests, 0 failures, 1 skipped.
+- Mutations (each restored): bridge — drop re-render in `set_reply_length` → `set_reply_length_reaches_the_assembled_prompt` red; `set_provider` passes Normal → `set_provider_keeps_the_chosen_reply_length` red; renderer drops section → 3 legs red. Swift — delete `apply` in RootView → `testTheArmingSiteAppliesTheLengthBeforeTheArm` red; `ffi` maps brief→normal → 2 legs red.

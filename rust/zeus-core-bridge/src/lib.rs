@@ -339,6 +339,10 @@ pub struct ZeusCore {
     /// two halves — content tokens AND a re-index — and this is the second.
     index: std::sync::RwLock<FileIndex>,
     client: Mutex<Option<Arc<LlmClient>>>,
+    /// The operator's VOICE → REPLY LENGTH choice. Owned here so that
+    /// `set_provider`'s re-render of AGENTS.md carries it instead of
+    /// silently dropping the section the operator chose.
+    reply_length: std::sync::Mutex<ReplyLength>,
 }
 
 #[uniffi::export]
@@ -364,7 +368,7 @@ impl ZeusCore {
         // first, is a no-op that leaves the frozen one there). The model is
         // `None` here by necessity: `client` below starts as `None`, so at this
         // instant nothing is armed and there is no route to name.
-        rt.block_on(make_agents_honest(&workspace, None))?;
+        rt.block_on(make_agents_honest(&workspace, None, ReplyLength::Normal))?;
 
         // MEASURED, and the reason this scan exists: `FileIndex` has ZERO
         // production consumers in the pin — every `FileEntry::new` call site
@@ -406,6 +410,7 @@ impl ZeusCore {
             root: canonical_root,
             index: std::sync::RwLock::new(index),
             client: Mutex::new(None),
+            reply_length: std::sync::Mutex::new(ReplyLength::Normal),
         }))
     }
 
@@ -467,8 +472,34 @@ impl ZeusCore {
                 .ok_or(BridgeError::NoProvider)?;
             format!("{}/{}", c.provider().name(), c.model())
         };
+        let length = *self.reply_length.lock().unwrap_or_else(|e| e.into_inner());
         self.rt
-            .block_on(make_agents_honest(&self.workspace, Some(&armed)))?;
+            .block_on(make_agents_honest(&self.workspace, Some(&armed), length))?;
+        Ok(())
+    }
+
+    /// Set the operator's reply length and re-render AGENTS.md with it.
+    ///
+    /// The section lands in the phone instruction file — the head of the
+    /// prompt `get_context` assembles — never as text injected into a turn,
+    /// where the model could read it as the operator's own words. `Normal`
+    /// writes nothing, so a fresh install's prompt is byte-identical to the
+    /// body before this row existed. A stranger's AGENTS.md is left alone by
+    /// the same guard `init` and `set_provider` use.
+    ///
+    /// On a remote gateway the prompt is built server-side and this file is
+    /// never read; the Swift row says so rather than calling this.
+    pub fn set_reply_length(self: Arc<Self>, length: ReplyLength) -> Result<(), BridgeError> {
+        *self.reply_length.lock().unwrap_or_else(|e| e.into_inner()) = length;
+        let armed = self.rt.block_on(async {
+            self.client
+                .lock()
+                .await
+                .clone()
+                .map(|c| format!("{}/{}", c.provider().name(), c.model()))
+        });
+        self.rt
+            .block_on(make_agents_honest(&self.workspace, armed.as_deref(), length))?;
         Ok(())
     }
 
@@ -1032,7 +1063,7 @@ const AGENTS_FILE: &str = "AGENTS.md";
 /// write time the model is genuinely unknown, and a rendered guess would be the
 /// same class of lie in the opposite direction. `set_provider` re-renders with
 /// `Some`.
-fn phone_agents_body(model: Option<&str>) -> String {
+fn phone_agents_body(model: Option<&str>, length: ReplyLength) -> String {
     let mut s = String::from(
         "# Zeus — on this phone\n\n\
          You are **Zeus**, running EMBEDDED ON AN iOS DEVICE. This is not the \
@@ -1072,7 +1103,39 @@ fn phone_agents_body(model: Option<&str>) -> String {
              route picker on this device.\n",
         ),
     }
+    if let Some(section) = length.section() {
+        s.push_str("\n## Reply length\n\n");
+        s.push_str(section);
+    }
     s
+}
+
+/// VOICE → REPLY LENGTH. `Normal` is the default and adds NOTHING to the
+/// prompt, so a fresh install is unchanged.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyLength {
+    Brief,
+    Normal,
+    Detailed,
+}
+
+impl ReplyLength {
+    /// The prompt section for this choice, or `None` for `Normal`.
+    fn section(self) -> Option<&'static str> {
+        match self {
+            ReplyLength::Brief => Some(
+                "The operator chose BRIEF replies. Answer in one to three short \
+                 sentences unless they ask for more. Replies may be spoken aloud \
+                 on this device — no tables, no code blocks unless asked.\n",
+            ),
+            ReplyLength::Normal => None,
+            ReplyLength::Detailed => Some(
+                "The operator chose DETAILED replies. Give complete answers with \
+                 reasoning and steps where useful. Replies may be spoken aloud on \
+                 this device, so prefer prose over tables.\n",
+            ),
+        }
+    }
 }
 
 /// Make the on-disk `AGENTS.md` honest, or leave it entirely alone.
@@ -1178,6 +1241,7 @@ pub fn attachment_reference(rel_path: String) -> String {
 async fn make_agents_honest(
     workspace: &Workspace,
     model: Option<&str>,
+    length: ReplyLength,
 ) -> Result<bool, BridgeError> {
     let current = workspace
         .read(AGENTS_FILE)
@@ -1190,7 +1254,7 @@ async fn make_agents_honest(
         return Ok(false);
     }
     workspace
-        .write(AGENTS_FILE, &phone_agents_body(model))
+        .write(AGENTS_FILE, &phone_agents_body(model, length))
         .await
         .map_err(|e| BridgeError::Core(format!("write {AGENTS_FILE}: {e}")))?;
     Ok(true)
@@ -3014,7 +3078,7 @@ mod tests {
                 "fixture must start dishonest, else the NEG below is vacuous"
             );
 
-            assert!(make_agents_honest(&ws, None).await.unwrap(), "must replace");
+            assert!(make_agents_honest(&ws, None, ReplyLength::Normal).await.unwrap(), "must replace");
 
             let after = ws.get_context().await.unwrap();
             assert!(
@@ -3156,7 +3220,7 @@ mod tests {
     /// advertising five and every other leg green.
     #[test]
     fn the_phone_body_advertises_exactly_the_allowed_tools() {
-        let body = phone_agents_body(None);
+        let body = phone_agents_body(None, ReplyLength::Normal);
         for name in PHONE_TOOLS {
             assert!(body.contains(name), "prompt omits allowed tool `{name}`");
         }
@@ -3191,7 +3255,7 @@ mod tests {
             ws.write(AGENTS_FILE, mine).await.unwrap();
 
             assert!(
-                !make_agents_honest(&ws, None).await.unwrap(),
+                !make_agents_honest(&ws, None, ReplyLength::Normal).await.unwrap(),
                 "a stranger's file must not be claimed"
             );
             assert_eq!(
@@ -3217,7 +3281,7 @@ mod tests {
             let (_dir, ws) = planted_desktop("armed-model").await;
 
             // Leg 1: the init-shaped write, model unknown.
-            assert!(make_agents_honest(&ws, None).await.unwrap());
+            assert!(make_agents_honest(&ws, None, ReplyLength::Normal).await.unwrap());
             let unarmed = ws.get_context().await.unwrap();
             assert!(
                 !unarmed.contains("anthropic/claude-opus-4"),
@@ -3230,7 +3294,7 @@ mod tests {
 
             // Leg 2: the set_provider-shaped re-render over our OWN body.
             assert!(
-                make_agents_honest(&ws, Some("anthropic/claude-opus-4")).await.unwrap(),
+                make_agents_honest(&ws, Some("anthropic/claude-opus-4"), ReplyLength::Normal).await.unwrap(),
                 "re-render declined — the guard does not recognise its own body, \
                  so the armed model would never reach the prompt on a real launch"
             );
@@ -3246,6 +3310,106 @@ mod tests {
         });
     }
 
+    /// REPLY LENGTH, renderer level. `Normal` adds nothing; `Brief` and
+    /// `Detailed` are `Normal` plus exactly one appended section. Vacuity: the
+    /// three bodies are pairwise distinct, so a constant body cannot pass.
+    #[test]
+    fn reply_length_normal_adds_nothing_and_the_others_only_append() {
+        for model in [None, Some("ollama/qwen3:8b")] {
+            let normal = phone_agents_body(model, ReplyLength::Normal);
+            let brief = phone_agents_body(model, ReplyLength::Brief);
+            let detailed = phone_agents_body(model, ReplyLength::Detailed);
+            assert!(!normal.contains("## Reply length"), "NORMAL must add no section");
+            assert!(brief.starts_with(&normal), "BRIEF must only append to NORMAL");
+            assert!(detailed.starts_with(&normal), "DETAILED must only append to NORMAL");
+            assert!(brief.contains("BRIEF replies"));
+            assert!(detailed.contains("DETAILED replies"));
+            assert_ne!(normal, brief);
+            assert_ne!(normal, detailed);
+            assert_ne!(brief, detailed);
+        }
+    }
+
+    fn reply_length_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("zcb-rl-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn assembled(core: &Arc<ZeusCore>) -> String {
+        core.rt
+            .block_on(async { core.workspace.get_context().await })
+            .unwrap()
+    }
+
+    /// REPLY LENGTH reaches the prompt the CORE builds — read back through
+    /// `get_context`, the same assembly the agent loop sends — not merely the
+    /// renderer's output. This is the built-but-dark guard.
+    #[test]
+    fn set_reply_length_reaches_the_assembled_prompt() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = reply_length_dir("reach");
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).expect("init");
+
+        let before = assembled(&core);
+        assert!(!before.contains("BRIEF replies"), "vacuity: section present before choosing");
+
+        core.clone().set_reply_length(ReplyLength::Brief).expect("brief");
+        let brief = assembled(&core);
+        assert!(
+            brief.contains("The operator chose BRIEF replies"),
+            "BRIEF never reached the assembled prompt — built but dark"
+        );
+        assert_ne!(before, brief, "choosing BRIEF must change the assembled prompt");
+
+        core.clone().set_reply_length(ReplyLength::Normal).expect("normal");
+        let back = assembled(&core);
+        assert!(!back.contains("## Reply length"), "NORMAL must remove the section");
+        assert_eq!(before, back, "NORMAL must restore the exact unchosen prompt");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Choosing a provider AFTER a reply length must not drop it: `set_provider`
+    /// re-renders AGENTS.md, and the armed model and the length must both land.
+    #[test]
+    fn set_provider_keeps_the_chosen_reply_length() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = reply_length_dir("keep");
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).expect("init");
+
+        core.clone().set_reply_length(ReplyLength::Detailed).expect("detailed");
+        core.clone()
+            .set_provider("ollama".into(), "qwen3:8b".into(), "unused-by-ollama".into(), None)
+            .expect("ollama prefix resolves");
+        let prompt = assembled(&core);
+        assert!(prompt.contains("ollama/qwen3:8b"), "vacuity: re-render did run");
+        assert!(
+            prompt.contains("The operator chose DETAILED replies"),
+            "set_provider re-rendered AGENTS.md and dropped the reply length"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An operator-edited AGENTS.md is never overwritten by the setting.
+    #[test]
+    fn set_reply_length_leaves_a_strangers_agents_file_alone() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = reply_length_dir("stranger");
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).expect("init");
+        let path = dir.join(AGENTS_FILE);
+        assert!(path.exists(), "vacuity: the file under test exists");
+        let mine = "# My own instructions\n\nbe terse.\n";
+        std::fs::write(&path, mine).unwrap();
+
+        core.clone().set_reply_length(ReplyLength::Brief).expect("brief");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), mine, "operator file was rewritten");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The two markers are emitted by the body they claim to identify.
     ///
     /// `PHONE_MARKER` is a literal compared against another literal elsewhere;
@@ -3254,11 +3418,11 @@ mod tests {
     #[test]
     fn the_phone_marker_is_actually_in_the_phone_body() {
         assert!(
-            phone_agents_body(None).contains(PHONE_MARKER),
+            phone_agents_body(None, ReplyLength::Normal).contains(PHONE_MARKER),
             "guard marker absent from the body it guards"
         );
         assert!(
-            !phone_agents_body(None).contains(DESKTOP_MARKER),
+            !phone_agents_body(None, ReplyLength::Normal).contains(DESKTOP_MARKER),
             "phone body reproduces the desktop claim it replaces"
         );
     }

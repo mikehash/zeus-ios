@@ -31,6 +31,7 @@ private final class CatalogCore: ZeusCoreProtocol {
     init(refuse: Bool = false) { self.refuse = refuse }
 
     func hasProvider() -> Bool { armed }
+    func setReplyLength(length: ReplyLength) throws {}
     func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {
         setCalls.append((id, model, key, baseUrl))
         if refuse { throw NSError(domain: "test", code: 1) }

@@ -714,5 +714,6 @@ private final class RefusingCore: ZeusCoreProtocol, @unchecked Sendable {
     func remember(fact: String) throws {}
     func search(query: String) -> [SearchHit] { [] }
     func sessions() throws -> [SessionInfo] { [] }
+    func setReplyLength(length: ReplyLength) throws {}
     func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {}
 }

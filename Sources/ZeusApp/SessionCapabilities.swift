@@ -169,6 +169,9 @@ protocol SessionCapabilities: Sendable {
 
     /// Arm the backend with a provider.
     func setProvider(id: String, model: String, key: String, baseURL: String?) throws
+
+    /// Set the reply-length section of the on-device prompt.
+    func setReplyLength(_ length: ReplyLength) throws
 }
 
 /// The embedded conformer: the one in-process core the app links.
@@ -245,6 +248,10 @@ struct EmbeddedCapabilities: SessionCapabilities, @unchecked Sendable {
 
     func setProvider(id: String, model: String, key: String, baseURL: String?) throws {
         try core.setProvider(id: id, model: model, key: key, baseUrl: baseURL)
+    }
+
+    func setReplyLength(_ length: ReplyLength) throws {
+        try core.setReplyLength(length: length)
     }
 }
 

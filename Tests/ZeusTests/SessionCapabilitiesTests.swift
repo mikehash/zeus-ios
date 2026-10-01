@@ -41,6 +41,7 @@ final class SessionCapabilitiesTests: XCTestCase {
             return modelRows
         }
 
+        func setReplyLength(length: ReplyLength) throws {}
         func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {
             setCalls.append((id, model, key, baseUrl))
         }
@@ -153,6 +154,7 @@ final class SessionCapabilitiesTests: XCTestCase {
             func hasProvider() -> Bool { false }
             func indexSize() -> UInt32 { 0 }
             func listModels(id: String, key: String, baseUrl: String?) throws -> [String] { [] }
+            func setReplyLength(length: ReplyLength) throws {}
             func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {}
             func sessions() throws -> [SessionInfo] { [] }
             func remember(fact: String) throws {}

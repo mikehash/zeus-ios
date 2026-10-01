@@ -118,6 +118,11 @@ struct GatewayCapabilities: SessionCapabilities {
     func setProvider(id: String, model: String, key: String, baseURL: String?) throws {
         throw GatewayError.unimplemented(method: "setProvider")
     }
+    /// The gateway builds its prompt server-side; the phone's AGENTS.md is
+    /// never read there. Refuse rather than report a setting that cannot fire.
+    func setReplyLength(_ length: ReplyLength) throws {
+        throw GatewayError.unimplemented(method: "setReplyLength")
+    }
 
     // MARK: - memory, over REST
 

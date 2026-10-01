@@ -282,6 +282,9 @@ struct RootView: View {
         // build: a `.url` provider could never be armed with the operator's
         // endpoint no matter what ROUTES collected. The seed still wins when
         // present, because its whole job is to stand in for a record.
+        // Before the arm: `set_provider` re-renders AGENTS.md with the length
+        // the core holds, so setting it first means the arm's render carries it.
+        ReplyLengthPreference.apply(to: core)
         CoreArming.arm(commission: commissionForArming,
                        core: core,
                        providerKey: key,
@@ -717,6 +720,9 @@ struct RootView: View {
                          onToggleNarration: {
                              replyNarrator.voiceOn.toggle()
                              if !replyNarrator.voiceOn { replyNarrator.stop() }
+                         },
+                         onReplyLengthChanged: {
+                             Task { configSource.adopt(await RootView.armedResolution(store: store, keys: keys)) }
                          })
         }
     }

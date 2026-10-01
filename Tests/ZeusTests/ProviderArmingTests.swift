@@ -30,6 +30,7 @@ final class ProviderArmingTests: XCTestCase {
 
         func hasProvider() -> Bool { armed }
 
+        func setReplyLength(length: ReplyLength) throws {}
         func setProvider(id: String, model: String, key: String, baseUrl: String?) throws {
             setCalls.append((id, model, key, baseUrl))
             if setThrows { throw NSError(domain: "test", code: 1) }
@@ -563,8 +564,11 @@ final class ProviderArmingTests: XCTestCase {
         // `.task` has no `id:`, so a record write alone leaves the pill and
         // the AGENT tile reading NO PROVIDER until relaunch. The number moved
         // for a stated reason; the leg still reds on an UNEXPLAINED move.
-        XCTAssertEqual(lines.filter { $0.contains("armedResolution(store: store, keys: keys)") }.count, 3,
-                       "VOID or drift: expected three entry points (init + gateway onSaved + routes commit) into the armed helper")
+        // FOUR as of the reply-length row: the Settings REPLY LENGTH tap
+        // re-enters the helper so the new length reaches the core's prompt
+        // (`ReplyLengthPreference.apply` sits inside the helper, before the arm).
+        XCTAssertEqual(lines.filter { $0.contains("armedResolution(store: store, keys: keys)") }.count, 4,
+                       "VOID or drift: expected four entry points (init + gateway onSaved + routes commit + reply length) into the armed helper")
 
         // The bare resolver may appear ONLY inside the helper — one call, and
         // it is the one the helper composes onto.

@@ -295,13 +295,18 @@ final class GatewayConfigSourceTests: XCTestCase {
         // the AGENT tile reading NO PROVIDER until relaunch. The number moved
         // with a reason stated; the leg still reds on an unexplained move, and
         // the FORM legs below are what keep a bump from admitting a swap.
+        // SIX as of the reply-length row: the Settings REPLY LENGTH tap
+        // re-arms (no invalidation — the provider is unchanged, only the
+        // prompt section is re-rendered), because `armedResolution` is the
+        // one act that hands the stored length to the core.
         let adopts = code(rootView).filter { $0.contains("configSource.adopt(") }
-        XCTAssertEqual(adopts.count, 5,
-                       "assignment sites: appearance read, and an invalidation + "
-                       + "re-arm for each of the two commit doors (gateway save, routes commit)")
+        XCTAssertEqual(adopts.count, 6,
+                       "assignment sites: appearance read, an invalidation + "
+                       + "re-arm for each of the two commit doors (gateway save, routes commit), "
+                       + "and the reply-length re-arm")
 
         let armed = adopts.filter { $0.contains("RootView.armedResolution(store: store, keys: keys)") }
-        XCTAssertEqual(armed.count, 3,
+        XCTAssertEqual(armed.count, 4,
                        "the re-resolve must read the store this view was handed, not a fresh one, "
                        + "and it must go through the ARMED helper: a bare `resolve` reverts the "
                        + "`.local` readiness arm to `commission.provider == nil` on every SAVE")
