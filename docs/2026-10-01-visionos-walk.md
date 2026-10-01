@@ -9,7 +9,7 @@ Base: zeus-ios origin/main at walk time; core pin mikehash/Zeus @ 8e19318c; crat
 - Error: `wasmtime-fiber 28.0.1` — `<inline asm>: unknown directive .hidden`. `wasmtime-asm-macros` picks Mach-O syntax only under `target_os = "macos"`; visionOS falls through to the ELF branch.
 - Why wasmtime is linked at all: zeus-skills gates wasmtime/wasmtime-wasi under `cfg(not(target_os = "ios"))`. visionOS reports `target_os = "visionos"`, so the iOS exclusion does not fire.
   - `cargo tree -e normal`: aarch64-apple-ios fiber=0, visionos-sim fiber=1 (control: tokio present on both, 37/38).
-- Census of the iOS gates in the pinned core: 29 sites of `target_os = "ios"` across zeus-agent (3), zeus-channels (1 toml + 19 rs), zeus-skills (1 toml... 2 lines + 4 rs). `visionos` appears 0 times. Same counts on Zeus origin/main (29 / 0).
+- Census of the iOS gates in the pinned core: 29 sites of `target_os = "ios"` across zeus-agent (3), zeus-channels (1 toml + 19 rs = 20), zeus-skills (2 toml + 4 rs) — 3+20+6=29. `visionos` appears 0 times. Same counts on Zeus origin/main (29 / 0).
 
 ## Consequence
 
