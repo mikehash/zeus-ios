@@ -243,7 +243,9 @@ targets:
           prompts are never sent to Apple or to any transcription service.
   ZeusTests:
     type: bundle.unit-test
-    platform: iOS
+    # visionOS gate 3: tests follow the host app's destinations.
+    platform: auto
+    supportedDestinations: [iOS, visionOS]
     sources: [Tests/ZeusTests]
     settings:
       base:

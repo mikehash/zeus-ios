@@ -193,11 +193,19 @@ final class BundleResourceTests: XCTestCase {
     func testTheBuiltProductClaimsIPhoneOnly() throws {
         let app = try hostAppBundle()
         let families = app.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int]
+        // project.yml says "1,7"; the build writes only the family of the
+        // platform it is building for. Exact equality per platform: iPad (2)
+        // is never accepted on either, and neither is the other platform's id.
+        #if os(visionOS)
+        let expected = [7]
+        #else
+        let expected = [1]
+        #endif
         XCTAssertEqual(
             families,
-            [1],
+            expected,
             "UIDeviceFamily=\(families.map(String.init(describing:)) ?? "absent") "
-                + "in the built product; project.yml says \"1\". The pbxproj is "
+                + "in the built product; project.yml says \"1,7\". The pbxproj is "
                 + "untracked, so this disagreement is invisible in a diff."
         )
     }

@@ -214,6 +214,10 @@ enum Theme {
         case .footnote:    return .footnote
         case .caption:     return .caption1
         case .caption2:    return .caption2
+        #if os(visionOS)
+        case .extraLargeTitle:  return .extraLargeTitle
+        case .extraLargeTitle2: return .extraLargeTitle2
+        #endif
         @unknown default:  return .body
         }
     }
