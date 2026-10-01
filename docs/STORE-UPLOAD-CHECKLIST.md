@@ -10,6 +10,15 @@ Verified against a specific sha. Record the sha when you tick a box.
 
 ## BLOCKING — do not upload with any of these open
 
+- [ ] **visionOS icon placeholder.** — OPEN. Archive gate (Zeus100).
+      `Sources/ZeusApp/Assets.xcassets/AppIcon.solidimagestack` carries
+      generated placeholder layers (`back-/middle-/front-PLACEHOLDER.png`:
+      brand red #ff5028 back, "VISIONOS" middle, "PLACEHOLDER" front).
+      Approved by merakizzz as a placeholder only. Replace all three layers
+      with merakizzz's visionOS artwork and record the sha here before any
+      TestFlight archive. Deliberately NOT a test leg: a leg red on
+      placeholder artwork would be red on main the day the placeholder lands.
+
 - [x] **Icon sha ≠ placeholder sha.** — CLOSED at `b66edce`+1.
       `AppIcon-1024-PLACEHOLDER.png` is deleted from the tree; the shipping
       file is `AppIcon.appiconset/AppIcon-1024.png`, Icon A, authored on

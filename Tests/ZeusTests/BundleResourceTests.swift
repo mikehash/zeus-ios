@@ -120,8 +120,13 @@ final class BundleResourceTests: XCTestCase {
         let app = try hostAppBundle()
         let topLevel = app.object(forInfoDictionaryKey: "CFBundleIconName") as? String
         let primary = (app.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any])
-            .flatMap { $0["CFBundlePrimaryIcon"] as? [String: Any] }
-            .flatMap { $0["CFBundleIconName"] as? String }
+            .flatMap { $0["CFBundlePrimaryIcon"] }
+            .flatMap { entry -> String? in
+                // iOS writes a dictionary carrying CFBundleIconName; visionOS
+                // writes the icon name as a bare string. Both NAME the icon.
+                if let dict = entry as? [String: Any] { return dict["CFBundleIconName"] as? String }
+                return entry as? String
+            }
 
         XCTAssertTrue(
             topLevel == "AppIcon" || primary == "AppIcon",
@@ -149,6 +154,28 @@ final class BundleResourceTests: XCTestCase {
     /// produced an image at all.
     func testTheCatalogRasterisedAnIcon() throws {
         let app = try hostAppBundle()
+        #if os(visionOS)
+        // visionOS ships no loose AppIcon*.png: the layered solidimagestack
+        // compiles ONLY into Assets.car (`assetutil --info` lists
+        // `SolidImageStack AppIcon` + `AppIcon/{Back,Middle,Front}/Content`).
+        // `Process` is unavailable in the simulator test host, and
+        // `UIImage(named: "AppIcon")` returns nil for a stack (measured), so
+        // the leg reads the compiled catalog's BYTES for the stack's layer
+        // rendition names. Control in the same read: a name never in any
+        // catalog must be absent, or the byte search proves nothing.
+        let car = try Data(contentsOf: app.bundleURL.appendingPathComponent("Assets.car"))
+        func has(_ s: String) -> Bool { car.range(of: Data(s.utf8)) != nil }
+        XCTAssertFalse(
+            has("ZEUS-NEVER-IN-A-CATALOG-7f3a"),
+            "byte search matched a never-present name — instrument is void"
+        )
+        let layers = ["AppIcon/Back/Content", "AppIcon/Middle/Content", "AppIcon/Front/Content"]
+        XCTAssertGreaterThanOrEqual(
+            layers.filter(has).count, 1,
+            "no AppIcon solidimagestack layer in the compiled Assets.car — the visionOS "
+                + "layered icon did not compile into the product"
+        )
+        #else
         let names = (try? FileManager.default.contentsOfDirectory(atPath: app.bundleURL.path)) ?? []
         let icons = names.filter { $0.hasPrefix("AppIcon") && $0.hasSuffix(".png") }
         XCTAssertFalse(
@@ -156,6 +183,7 @@ final class BundleResourceTests: XCTestCase {
             "no rasterised AppIcon*.png in the product — the icon set is "
                 + "named but no artwork compiled from it"
         )
+        #endif
     }
 
     /// The compiled catalog exists beside the plist.
