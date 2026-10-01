@@ -85,14 +85,78 @@ enum SpeechRatePreference: String, CaseIterable {
     }
 }
 
+// MARK: - which voice, the third VOICE preference
+
+/// The orb's voice, persisted as an `AVSpeechSynthesisVoice.identifier`.
+///
+/// Absent key = AUTO = the pre-existing pick (named preference → en-GB → en →
+/// system default), so a fresh install sounds unchanged. A stored identifier
+/// that is no longer installed (voice deleted, device restored) falls back to
+/// AUTO rather than to `nil`, so a stale choice can never silence or reshape
+/// the orb into something the user did not pick.
+enum VoicePreference {
+    static let key = "zeus.narration.voice"
+    static let preferredNames = ["Daniel", "Alex", "Aaron"]
+
+    /// The English voices the Settings row cycles through, stable-ordered.
+    static func choices(_ voices: [AVSpeechSynthesisVoice]) -> [AVSpeechSynthesisVoice] {
+        voices.filter { $0.language.hasPrefix("en") }
+              .sorted { ($0.name, $0.identifier) < ($1.name, $1.identifier) }
+    }
+
+    static func storedID(_ defaults: UserDefaults = .standard) -> String? {
+        defaults.string(forKey: key)
+    }
+
+    /// `nil` clears the key — AUTO.
+    static func set(_ id: String?, _ defaults: UserDefaults = .standard) {
+        if let id { defaults.set(id, forKey: key) } else { defaults.removeObject(forKey: key) }
+    }
+
+    static func auto(_ voices: [AVSpeechSynthesisVoice]) -> AVSpeechSynthesisVoice? {
+        for name in preferredNames {
+            if let hit = voices.first(where: { $0.name.localizedCaseInsensitiveContains(name) }) {
+                return hit
+            }
+        }
+        return voices.first { $0.language == "en-GB" }
+            ?? voices.first { $0.language.hasPrefix("en") }
+    }
+
+    static func resolve(defaults: UserDefaults = .standard,
+                        voices: [AVSpeechSynthesisVoice]) -> AVSpeechSynthesisVoice? {
+        if let id = storedID(defaults), let hit = voices.first(where: { $0.identifier == id }) {
+            return hit
+        }
+        return auto(voices)
+    }
+
+    /// AUTO → each choice in order → AUTO. An unknown stored id restarts at the first choice.
+    static func next(after id: String?, in voices: [AVSpeechSynthesisVoice]) -> String? {
+        let list = choices(voices)
+        guard !list.isEmpty else { return nil }
+        guard let id, let i = list.firstIndex(where: { $0.identifier == id }) else {
+            return list[0].identifier
+        }
+        return i + 1 < list.count ? list[i + 1].identifier : nil
+    }
+
+    static func label(_ id: String?, in voices: [AVSpeechSynthesisVoice]) -> String {
+        guard let id, let v = voices.first(where: { $0.identifier == id }) else { return "AUTO" }
+        return v.name.uppercased()
+    }
+}
+
 /// The one place an utterance is shaped. `Narrator.speak()` calls this, so a
 /// leg that reads the returned utterance reads what the synthesizer is given.
 enum UtteranceShape {
     static func make(_ line: String, pitch: Float,
-                     defaults: UserDefaults = .standard) -> AVSpeechUtterance {
+                     defaults: UserDefaults = .standard,
+                     voices: [AVSpeechSynthesisVoice] = AVSpeechSynthesisVoice.speechVoices()) -> AVSpeechUtterance {
         let u = AVSpeechUtterance(string: line)
         u.pitchMultiplier = pitch
         u.rate = SpeechRatePreference.current(defaults).rate
+        u.voice = VoicePreference.resolve(defaults: defaults, voices: voices)
         return u
     }
 }
@@ -168,7 +232,6 @@ final class Narrator: ObservableObject {
     /// deliberately sound different, so this constant is product identity
     /// and not a default to be tidied away.
     private static let pitch: Float = 0.9
-    private static let preferredVoices = ["Daniel", "Alex", "Aaron"]
 
     func narrate(_ line: String) {
         revealTask?.cancel()
@@ -201,21 +264,7 @@ final class Narrator: ObservableObject {
         synth.stopSpeaking(at: .immediate)
         SpeechAudio.prepare(AVAudioSession.sharedInstance())
         let utterance = UtteranceShape.make(line, pitch: Self.pitch)
-        utterance.voice = Self.pickVoice()
         synth.speak(utterance)
     }
 
-    /// Falls back through: named preference → any en-GB → any en → nil.
-    /// `nil` is legal and means "system default voice", so this cannot
-    /// throw and cannot leave the utterance unspeakable.
-    private static func pickVoice() -> AVSpeechSynthesisVoice? {
-        let voices = AVSpeechSynthesisVoice.speechVoices()
-        for name in preferredVoices {
-            if let hit = voices.first(where: { $0.name.localizedCaseInsensitiveContains(name) }) {
-                return hit
-            }
-        }
-        return voices.first { $0.language == "en-GB" }
-            ?? voices.first { $0.language.hasPrefix("en") }
-    }
 }

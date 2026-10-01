@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 /// SETTINGS — the config surface.
 ///
@@ -143,6 +144,7 @@ struct SettingsView: View {
     // MARK: - Voice
 
     @State private var speechRate = SpeechRatePreference.current()
+    @State private var voiceID = VoicePreference.storedID()
 
     private var voiceSection: some View {
         VStack(spacing: 0) {
@@ -156,12 +158,21 @@ struct SettingsView: View {
                 }
                 NodeRow(icon: "speedometer",
                         label: "Speech rate",
-                        value: speechRate.label,
-                        last: true) {
+                        value: speechRate.label) {
                     let next = speechRate.next
                     SpeechRatePreference.set(next)
                     speechRate = next
                     onToast(Theme.joined(["RATE", next.label]))
+                }
+                NodeRow(icon: "person.wave.2",
+                        label: "Voice",
+                        value: VoicePreference.label(voiceID, in: AVSpeechSynthesisVoice.speechVoices()),
+                        last: true) {
+                    let voices = AVSpeechSynthesisVoice.speechVoices()
+                    let next = VoicePreference.next(after: voiceID, in: voices)
+                    VoicePreference.set(next)
+                    voiceID = next
+                    onToast(Theme.joined(["VOICE", VoicePreference.label(next, in: voices)]))
                 }
             }
             .padding(.vertical, 5)
