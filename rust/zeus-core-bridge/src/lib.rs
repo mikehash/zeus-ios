@@ -1004,6 +1004,11 @@ const PREFIXES_WITH_A_LIVE_CATALOG: &[&str] = &[
     "qwen",
     "xai",
     "sakana",
+    // Canonical Provider::name() spellings of the kimi/mimo/glm arms, keyed
+    // alongside the aliases upstream since 4933540e (model_catalog.rs:318/371/407).
+    "moonshot",
+    "xiaomimimo",
+    "zai",
 ];
 
 fn resolve_provider(id: &str) -> Result<Provider, BridgeError> {

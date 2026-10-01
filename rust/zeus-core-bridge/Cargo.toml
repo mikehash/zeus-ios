@@ -18,7 +18,7 @@ name = "zeus_core_bridge"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
-# --- pinned to mikehash/Zeus @ 8e19318ccda7023a5c2ec59e4978c6a0855b8c50 ---------------------------------------
+# --- pinned to mikehash/Zeus @ d5a539bd7 ---------------------------------------
 # Re-pinned from 2bfc08aa (itself re-pinned from 2a2168cd). Each move is
 # FORWARD, not a fork: `merge-base --is-ancestor 2bfc08aa 8e19318c` rc=0,
 # measured before the edit. 213d4e7c is the commit that feature-gates
@@ -39,14 +39,14 @@ crate-type = ["staticlib", "lib"]
 # deliberately ABSENT: it pulls rusqlite `bundled`, a C sqlite amalgamation that
 # has never been cross-compiled against the iOS SDK here. Unmeasured C build !=
 # dependency of the first phone build. (Ruled by Zeus100, 2026-09-07.)
-zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
-zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
-zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
-zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50" }
+zeus-core = { git = "https://github.com/mikehash/Zeus", rev = "d5a539bd78498954e1685989ce1c508b96d6a40e" }
+zeus-llm = { git = "https://github.com/mikehash/Zeus", rev = "d5a539bd78498954e1685989ce1c508b96d6a40e" }
+zeus-session = { git = "https://github.com/mikehash/Zeus", rev = "d5a539bd78498954e1685989ce1c508b96d6a40e" }
+zeus-memory = { git = "https://github.com/mikehash/Zeus", rev = "d5a539bd78498954e1685989ce1c508b96d6a40e" }
 # zeus-agent at the same pin, default-features = false: its default set is
-# ["audio","matrix","voice","automation"] (8e19318ccda7023a5c2ec59e4978c6a0855b8c50 crates/zeus-agent/Cargo.toml:10)
+# ["audio","matrix","voice","automation"] (d5a539bd7 crates/zeus-agent/Cargo.toml:10)
 # and all four are host-surface — `automation` is the only gate on zeus-talos.
-zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "8e19318ccda7023a5c2ec59e4978c6a0855b8c50", default-features = false }
+zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "d5a539bd78498954e1685989ce1c508b96d6a40e", default-features = false }
 
 # FULL 40-char revs above, not abbreviations, and the reason is portability not
 # style: mikehash/Zeus carries BOTH `refs/heads/TUI` and

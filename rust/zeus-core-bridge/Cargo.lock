@@ -6804,7 +6804,7 @@ dependencies = [
 [[package]]
 name = "zeus-aegis"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -6834,7 +6834,7 @@ dependencies = [
 [[package]]
 name = "zeus-agent"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6877,7 +6877,7 @@ dependencies = [
 [[package]]
 name = "zeus-agora"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "chrono",
  "serde",
@@ -6893,7 +6893,7 @@ dependencies = [
 [[package]]
 name = "zeus-athena"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6912,7 +6912,7 @@ dependencies = [
 [[package]]
 name = "zeus-browser"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6932,7 +6932,7 @@ dependencies = [
 [[package]]
 name = "zeus-channels"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "aes",
  "async-imap",
@@ -6986,7 +6986,7 @@ dependencies = [
 [[package]]
 name = "zeus-core"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7024,7 +7024,7 @@ dependencies = [
 [[package]]
 name = "zeus-council"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7040,7 +7040,7 @@ dependencies = [
 [[package]]
 name = "zeus-economy"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -7055,7 +7055,7 @@ dependencies = [
 [[package]]
 name = "zeus-extensions"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7073,7 +7073,7 @@ dependencies = [
 [[package]]
 name = "zeus-hermes"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7087,7 +7087,7 @@ dependencies = [
 [[package]]
 name = "zeus-llm"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7115,7 +7115,7 @@ dependencies = [
 [[package]]
 name = "zeus-memory"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7130,7 +7130,7 @@ dependencies = [
 [[package]]
 name = "zeus-mnemosyne"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "chrono",
  "notify",
@@ -7150,7 +7150,7 @@ dependencies = [
 [[package]]
 name = "zeus-nous"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7170,7 +7170,7 @@ dependencies = [
 [[package]]
 name = "zeus-robot"
 version = "0.1.0"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "reqwest",
  "rppal",
@@ -7185,7 +7185,7 @@ dependencies = [
 [[package]]
 name = "zeus-session"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7204,7 +7204,7 @@ dependencies = [
 [[package]]
 name = "zeus-skills"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7231,7 +7231,7 @@ dependencies = [
 [[package]]
 name = "zeus-voice"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7255,7 +7255,7 @@ dependencies = [
 [[package]]
 name = "zeus-wallet"
 version = "0.1.4"
-source = "git+https://github.com/mikehash/Zeus?rev=8e19318ccda7023a5c2ec59e4978c6a0855b8c50#8e19318ccda7023a5c2ec59e4978c6a0855b8c50"
+source = "git+https://github.com/mikehash/Zeus?rev=d5a539bd78498954e1685989ce1c508b96d6a40e#d5a539bd78498954e1685989ce1c508b96d6a40e"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
