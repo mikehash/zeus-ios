@@ -54,3 +54,7 @@ Verdict comes from compiling for the xrsimulator destination, not from this list
 - First compile, `generic/platform=visionOS Simulator`: EXIT=65. The single error is at Ld for **x86_64**, where the xcframework has arm64-only sim slices. Swift compiled clean, so this is not an API failure.
 - Re-run with `ARCHS=arm64`: **BUILD SUCCEEDED, EXIT=0, 0 `error:` lines** (/tmp/vos-g2b.log). The app's Swift, including every file in the stage-2 iPhone-only census, compiles for xrsimulator as-is, so the census has no compile-level verdicts. Unavailable-at-runtime behaviour (e.g. haptics or photos on visionOS) is a separate question; it is unanswered and needs a sim run.
 - Structural fix: `EXCLUDED_ARCHS[sdk=xrsimulator*|iphonesimulator*] = x86_64` in project.yml. The visionOS rebuild without the ARCHS override is the confirming leg.
+- Confirming legs at 20caeeb, with no command-line ARCHS override:
+  - visionOS Simulator: BUILD SUCCEEDED, EXIT=0, 0 errors (/tmp/vos-g2c.log).
+  - iOS Simulator regression leg: BUILD SUCCEEDED, EXIT=0, 0 errors (/tmp/ios-g2d.log). The first attempt (/tmp/ios-g2c.log) ended `BUILD INTERRUPTED` because its tmux server died; it is VOID, not a failure.
+- Not yet measured: the visionOS device (xros) app build, and `xcodebuild test`.
