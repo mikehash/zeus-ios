@@ -499,8 +499,33 @@ final class ClipBudgetTests: XCTestCase {
     /// in-process. Line height is the closest honest instrument to the thing
     /// the sites claim.
     func testTheRealControlRowsAtAX5() {
-        // Composer: `body(14)` on `.body`. Strictly overflows the fixed row.
         let composer = Theme.lineHeight(14, relativeTo: .body, for: .accessibility5)
+        let resume = Theme.lineHeight(11, relativeTo: .caption, for: .accessibility5)
+
+        // The 44pt `minHeight` is justified DIFFERENTLY per platform, both measured:
+        // iOS — AX5 text overflows/fills 44 (46.9 / 41.8), so the floor prevents clipping;
+        // visionOS — AX5 caps at ~64% of iOS (33.4 / 28.6), text fits, so the floor is
+        // justified by the 44pt touch-target minimum and is what sizes the row.
+        #if os(visionOS)
+        // The FLOOR is the row: max(text, 44) == 44 for both sites. Fires the day
+        // visionOS AX5 text grows past 44 — then this platform has the iOS problem
+        // and the leg must be re-derived, not relaxed.
+        XCTAssertEqual(max(composer, Theme.controlSize), Theme.controlSize,
+            "visionOS composer line now exceeds the 44pt floor at AX5 — the floor "
+            + "no longer sizes the row; re-measure and re-justify: \(composer)")
+        XCTAssertEqual(max(resume, Theme.controlSize), Theme.controlSize,
+            "visionOS resume line now exceeds the 44pt floor at AX5 — the floor "
+            + "no longer sizes the row; re-measure and re-justify: \(resume)")
+        // VACUITY: AX5 must still SCALE on visionOS. A lineHeight that ignored the
+        // size class would satisfy "fits under 44" trivially.
+        XCTAssertGreaterThan(composer,
+            Theme.lineHeight(14, relativeTo: .body, for: .large),
+            "visionOS AX5 composer line is no taller than default — not scaling")
+        XCTAssertGreaterThan(resume,
+            Theme.lineHeight(11, relativeTo: .caption, for: .large),
+            "visionOS AX5 resume line is no taller than default — not scaling")
+        #else
+        // Composer: `body(14)` on `.body`. Strictly overflows the fixed row.
         XCTAssertGreaterThan(composer, Theme.controlSize,
             "the composer's line still fits a fixed 44pt row at AX5: \(composer)")
 
@@ -510,13 +535,13 @@ final class ClipBudgetTests: XCTestCase {
         // less than the 16pt horizontal padding's worth vertically, so any
         // padding at all clips. `minHeight` there is justified by the touch
         // target regardless, and this bound is what makes the margin visible.
-        let resume = Theme.lineHeight(11, relativeTo: .caption, for: .accessibility5)
         XCTAssertLessThan(resume, Theme.controlSize,
             "resume bar now overflows outright — the comment at the site "
             + "understates it and should be rewritten, not this bound relaxed: \(resume)")
         XCTAssertGreaterThan(resume, Theme.controlSize * 0.9,
             "resume bar no longer fills the row at AX5, so the minHeight edit "
             + "rests on the touch-target argument alone: \(resume)")
+        #endif
 
         // VACUITY FLOOR: at DEFAULT size both sit well inside the row, so the
         // leg above is about accessibility sizes and not about the sites being
