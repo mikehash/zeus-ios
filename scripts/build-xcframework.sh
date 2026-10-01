@@ -83,6 +83,8 @@ sdk_or_die() {
 }
 SDK_IOS="$(sdk_or_die iphoneos)"
 SDK_SIM="$(sdk_or_die iphonesimulator)"
+SDK_XROS="$(sdk_or_die xros)"
+SDK_XRSIM="$(sdk_or_die xrsimulator)"
 
 echo "=== toolchain ==="
 echo "  rustc:   $RUSTC_V"
@@ -90,6 +92,8 @@ echo "  cargo:   $CARGO_V"
 echo "  xcode:   $XCODE_V"
 echo "  sdk ios: $SDK_IOS"
 echo "  sdk sim: $SDK_SIM"
+echo "  sdk xros:  $SDK_XROS"
+echo "  sdk xrsim: $SDK_XRSIM"
 
 # ---------------------------------------------------------------------------
 # 1. Both slices, release.
@@ -115,15 +119,31 @@ IOS_MIN="$(grep -A2 'deploymentTarget:' "$REPO_ROOT/project.yml" | grep -oE 'iOS
 export IPHONEOS_DEPLOYMENT_TARGET="$IOS_MIN"
 echo "  ios-min: $IOS_MIN (from project.yml)"
 
+# Same measured reason as IOS_MIN, for the two visionOS slices: rustc would
+# otherwise stamp the SDK version (26.5) as the minimum. Read from the same
+# project.yml block so the app and the archive cannot drift.
+XROS_MIN="$(grep -A3 'deploymentTarget:' "$REPO_ROOT/project.yml" | grep -oE 'visionOS: *"[0-9.]+"' | grep -oE '[0-9.]+' | head -1)"
+[ -n "$XROS_MIN" ] || { echo "FATAL: could not read visionOS deploymentTarget from project.yml" >&2; exit 1; }
+export XROS_DEPLOYMENT_TARGET="$XROS_MIN"
+echo "  xros-min: $XROS_MIN (from project.yml)"
+
 echo "=== building device slice (aarch64-apple-ios) ==="
 cargo build --lib --release --target aarch64-apple-ios
 
 echo "=== building simulator slice (aarch64-apple-ios-sim) ==="
 cargo build --lib --release --target aarch64-apple-ios-sim
 
+echo "=== building visionOS device slice (aarch64-apple-visionos) ==="
+cargo build --lib --release --target aarch64-apple-visionos
+
+echo "=== building visionOS simulator slice (aarch64-apple-visionos-sim) ==="
+cargo build --lib --release --target aarch64-apple-visionos-sim
+
 DEVICE_LIB="$CRATE_DIR/target/aarch64-apple-ios/release/lib${LIB_NAME}.a"
 SIM_LIB="$CRATE_DIR/target/aarch64-apple-ios-sim/release/lib${LIB_NAME}.a"
-for lib in "$DEVICE_LIB" "$SIM_LIB"; do
+XROS_LIB="$CRATE_DIR/target/aarch64-apple-visionos/release/lib${LIB_NAME}.a"
+XRSIM_LIB="$CRATE_DIR/target/aarch64-apple-visionos-sim/release/lib${LIB_NAME}.a"
+for lib in "$DEVICE_LIB" "$SIM_LIB" "$XROS_LIB" "$XRSIM_LIB"; do
     [ -f "$lib" ] || { echo "FATAL: missing $lib" >&2; exit 1; }
 done
 
@@ -181,7 +201,8 @@ module ${LIB_NAME}FFI {
 MODULEMAP
 
 # ---------------------------------------------------------------------------
-# 3. The xcframework. Two -library flags, one per platform.
+# 3. The xcframework. Four -library flags, one per platform (iOS, iOS sim,
+#    visionOS, visionOS sim).
 # ---------------------------------------------------------------------------
 echo "=== creating $FRAMEWORK ==="
 mkdir -p "$OUT_DIR"
@@ -189,6 +210,8 @@ rm -rf "${OUT_DIR:?}/$FRAMEWORK"
 xcodebuild -create-xcframework \
     -library "$DEVICE_LIB" -headers "$HEADERS" \
     -library "$SIM_LIB"    -headers "$HEADERS" \
+    -library "$XROS_LIB"   -headers "$HEADERS" \
+    -library "$XRSIM_LIB"  -headers "$HEADERS" \
     -output "$OUT_DIR/$FRAMEWORK"
 
 # ---------------------------------------------------------------------------
@@ -204,13 +227,18 @@ MANIFEST="$OUT_DIR/$FRAMEWORK/zeus-build-manifest.txt"
     echo "xcode:      $XCODE_V"
     echo "sdk-ios:    $SDK_IOS"
     echo "sdk-sim:    $SDK_SIM"
+    echo "sdk-xros:   $SDK_XROS"
+    echo "sdk-xrsim:  $SDK_XRSIM"
     echo "crate-sha:  $(cd "$REPO_ROOT" && git rev-parse HEAD)"
     echo "dep-pin:    $DEP_PIN"
     echo "crate-tree: $CRATE_TREE"
     echo "ios-min:    $IOS_MIN"
-    echo "slices:     ios-arm64 ios-arm64-simulator"
+    echo "xros-min:   $XROS_MIN"
+    echo "slices:     ios-arm64 ios-arm64-simulator xros-arm64 xros-arm64-simulator"
     echo "device-sha: $(shasum -a 256 "$DEVICE_LIB" | cut -d' ' -f1)"
     echo "sim-sha:    $(shasum -a 256 "$SIM_LIB" | cut -d' ' -f1)"
+    echo "xros-sha:   $(shasum -a 256 "$XROS_LIB" | cut -d' ' -f1)"
+    echo "xrsim-sha:  $(shasum -a 256 "$XRSIM_LIB" | cut -d' ' -f1)"
 } > "$MANIFEST"
 
 echo "=== done ==="
