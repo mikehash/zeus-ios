@@ -59,7 +59,7 @@ Verified against a specific sha. Record the sha when you tick a box.
 
 ## Device family
 
-`TARGETED_DEVICE_FAMILY: "1"` — iPhone only, stated in `project.yml`.
+`TARGETED_DEVICE_FAMILY: "1,7"` — iPhone + Apple Vision Pro, stated in `project.yml` (since the visionOS bring-up, verified at `1c50e3d`).
 iPad is a **product question for merakizzz**; this is the default until he
 answers. If it ever becomes `"1,2"`, App Store Connect requires an iPad
 screenshot set, and nothing in `Sources` has laid out a large canvas
@@ -71,7 +71,8 @@ screenshot set, and nothing in `Sources` has laid out a large canvas
 build: `CFBundleIconName` present (top-level or nested under
 `CFBundleIcons.CFBundlePrimaryIcon`), a rasterised `AppIcon*.png` in the
 bundle, `Assets.car` beside the plist, `UILaunchScreen.UIColorName` naming
-the dark background, and `UIDeviceFamily` equal to `[1]`. Those are
+the dark background, and `UIDeviceFamily` equal to `[1]` on iPhone and `[7]`
+on visionOS (exact per platform; `project.yml` says `"1,7"`). Those are
 packaging facts and they have a reporter. Everything above does not.
 
 ## Screenshots — how the set is produced, and what it is NOT
