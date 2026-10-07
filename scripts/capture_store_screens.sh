@@ -39,6 +39,18 @@
 set -uo pipefail
 
 DEVICE="${ZEUS_CAPTURE_DEVICE:-iPhone 17 Pro Max}"
+# Seconds between `simctl launch` and `simctl io screenshot`.
+# Incident (2026-10-07): a fixed 4s was enough on iPhone but NOT on Vision Pro.
+# The visionOS window had not finished presenting at 4s, so all five frames were
+# the same launch state: pairwise ~4.5k px differ inside one 393x398 box. At 20s
+# the same pair differed by 152,328 px over a 1700x954 box (the app window).
+# Same argv, same build — only the wait changed. Per-device default, overridable.
+case "$DEVICE" in
+  *Vision*) SETTLE_DEFAULT=20 ;;
+  *)        SETTLE_DEFAULT=4 ;;
+esac
+SETTLE="${ZEUS_CAPTURE_SETTLE:-$SETTLE_DEFAULT}"
+case "$SETTLE" in ''|*[!0-9]*) echo "VOID: ZEUS_CAPTURE_SETTLE must be whole seconds, got '$SETTLE'" >&2; exit 2 ;; esac
 BUNDLE_ID="ai.novaxai.zeus.mobile"
 # Device slug folds the DEVICE identity into the default output path.
 # Incident (2026-09-08): the default was a fixed "build/store-screenshots" with no
@@ -79,6 +91,7 @@ print(hits[-1][1]["udid"])
 echo "device : $DEVICE"
 echo "udid   : $UDID"
 echo "out    : $OUT"
+echo "settle : ${SETTLE}s"
 
 xcrun simctl boot "$UDID" 2>/dev/null
 xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || true
@@ -93,7 +106,14 @@ xcodebuild -project "$REPO/Zeus.xcodeproj" -scheme Zeus -configuration Debug \
   -destination "id=$UDID" -derivedDataPath "$DD" build > "$DD.build.log" 2>&1 \
   || { tail -20 "$DD.build.log" >&2; die_instrument "build failed, see $DD.build.log"; }
 
-APP="$DD/Build/Products/Debug-iphonesimulator/Zeus.app"
+# The products dir is per-PLATFORM: a visionOS simulator build lands in
+# Debug-xrsimulator, not Debug-iphonesimulator. Hardcoding the iPhone dir made
+# a Vision Pro run install a STALE iPhone-sim app (or VOID with "no app").
+case "$DEVICE" in
+  *Vision*) PRODUCTS="Debug-xrsimulator" ;;
+  *)        PRODUCTS="Debug-iphonesimulator" ;;
+esac
+APP="$DD/Build/Products/$PRODUCTS/Zeus.app"
 [ -d "$APP" ] || die_instrument "no app at $APP"
 
 # The icon must be IN the artefact being photographed. A store set shot from a
@@ -135,7 +155,7 @@ for entry in "${FRAMES[@]}"; do
   # shellcheck disable=SC2086
   xcrun simctl launch "$UDID" "$BUNDLE_ID" $args >/dev/null 2>&1 \
     || die_instrument "launch failed for $name"
-  sleep 4
+  sleep "$SETTLE"
   xcrun simctl io "$UDID" screenshot "$OUT/$name.png" >/dev/null 2>&1 \
     || die_instrument "screenshot failed for $name"
   echo "captured $name.png"
@@ -170,7 +190,7 @@ for entry in "${FRAMES[@]:1}"; do
   # shellcheck disable=SC2086
   xcrun simctl launch "$UDID" "$BUNDLE_ID" $args >/dev/null 2>&1 \
     || die_instrument "AX5 launch failed for $name"
-  sleep 4
+  sleep "$SETTLE"
   xcrun simctl io "$UDID" screenshot "$AXOUT/$name.png" >/dev/null 2>&1 \
     || die_instrument "AX5 screenshot failed for $name"
   echo "captured ax5/$name.png"

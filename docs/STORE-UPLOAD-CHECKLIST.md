@@ -77,8 +77,10 @@ packaging facts and they have a reporter. Everything above does not.
 ## Screenshots — how the set is produced, and what it is NOT
 
 `scripts/capture_store_screens.sh` builds Debug, installs to an iPhone 17 Pro
-Max simulator (1320×2868, the 6.9" class App Store Connect requires for a
-`TARGETED_DEVICE_FAMILY = "1"` submission), and captures four frames:
+Max simulator (1320×2868, the 6.9" iPhone class App Store Connect requires;
+the app is `TARGETED_DEVICE_FAMILY = "1,7"`, so the submission also needs a
+Vision Pro set: run with `ZEUS_CAPTURE_DEVICE="Apple Vision Pro"`, 3840×2160,
+which defaults to a 20s settle — see the script header), and captures four frames:
 
 | frame | launch arguments | what it photographs |
 |---|---|---|
