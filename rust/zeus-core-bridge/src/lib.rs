@@ -734,6 +734,17 @@ impl ZeusCore {
     pub fn messages(self: Arc<Self>, session_id: String) -> Result<Vec<TurnMessage>, BridgeError> {
         let dir = self.sessions_dir.clone();
         self.rt.block_on(async move {
+            // Gap #3: a session the app has named but never sent on has no
+            // `<id>.jsonl` yet — nothing writes it before the first `send()`
+            // (`resume_or_create`). That is an EMPTY session, not an error.
+            // Decided by direct path existence, never by matching core's
+            // "Session not found" text (text-matching rots on a re-pin).
+            // Core's not-found stays an error for its other callers
+            // (zeus-api 404s, resume_or_create) — this is bridge-local.
+            // Anything that exists but fails to load still returns Err.
+            if !session_file_exists(&dir, &session_id) {
+                return Ok(Vec::new());
+            }
             let session = Session::load(&dir, &session_id).await?;
             Ok(flatten_messages(&session.messages))
         })
@@ -1617,6 +1628,14 @@ pub fn credential_shape(id: String) -> Result<CredentialShape, BridgeError> {
 /// functions inside an exported impl block — MEASURED, `error: associated
 /// functions are not currently supported`. A private helper is not part of
 /// the FFI surface, but the macro cannot know that.
+/// Same path rule core's `Session::load_with_report` uses
+/// (`<sessions_dir>/<id>.jsonl`). `exists()`, not `is_file()`: a directory or
+/// other non-file at that path must fall through to `load` and surface as an
+/// error, not be silently reported as an empty session.
+fn session_file_exists(sessions_dir: &std::path::Path, session_id: &str) -> bool {
+    sessions_dir.join(format!("{session_id}.jsonl")).exists()
+}
+
 fn flatten_messages(messages: &[zeus_core::Message]) -> Vec<TurnMessage> {
     // The nearest preceding assistant turn's calls. Reset on a user turn:
     // a new question means any unmatched calls from the previous turn are
@@ -3761,6 +3780,71 @@ mod tests {
             "bytes did not survive the crossing into the core type"
         );
         assert!(!core.is_url_ref());
+    }
+    /// Gap #3, two-sided on ONE core: a never-sent id yields `[]` (not Err),
+    /// and a session with saved rows still yields exactly those rows — so a
+    /// `messages()` that always returns `[]` cannot green this leg.
+    #[test]
+    fn gap3_never_sent_is_empty_and_saved_rows_still_load() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("zcb-gap3-a-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).unwrap();
+        let sessions_dir = core.sessions_dir.clone();
+
+        let never_sent = "gap3-never-sent";
+        assert!(
+            !sessions_dir.join(format!("{never_sent}.jsonl")).exists(),
+            "precondition: the never-sent session must have no file"
+        );
+        let empty = core.clone().messages(never_sent.into());
+        match &empty {
+            Ok(v) => assert!(v.is_empty(), "never-sent → Ok([]), got {} rows", v.len()),
+            Err(e) => panic!("never-sent → Ok([]), got Err({e})"),
+        }
+
+        let saved = "gap3-saved";
+        core.rt.block_on(async {
+            let mut s = Session::resume_or_create(&sessions_dir, saved).await;
+            s.add(zeus_core::Message::user("gap3 question")).await.unwrap();
+            s.add(zeus_core::Message::assistant("gap3 answer")).await.unwrap();
+        });
+        assert!(sessions_dir.join(format!("{saved}.jsonl")).exists());
+        let rows = core.clone().messages(saved.into()).expect("saved session loads");
+        assert_eq!(rows.len(), 2, "saved rows come back");
+        assert_eq!(rows[0].content, "gap3 question");
+        assert_eq!(rows[1].content, "gap3 answer");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Gap #3 bound: the fix is "absent file → empty", NOT "any error →
+    /// empty". A file that exists but cannot be parsed as a message, and a
+    /// non-file at the session path, must both still return Err.
+    #[test]
+    fn gap3_present_but_unloadable_session_still_errors() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("zcb-gap3-b-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let core = ZeusCore::init(dir.to_string_lossy().to_string()).unwrap();
+        let sessions_dir = core.sessions_dir.clone();
+
+        // Valid JSON, type "message", data that is not a Message → core's
+        // `Failed to parse message` Err. (A torn line would be SKIPPED by
+        // core #454, so it is not a usable corruption here.)
+        std::fs::write(
+            sessions_dir.join("gap3-corrupt.jsonl"),
+            "{\"type\":\"message\",\"data\":{\"role\":42}}\n",
+        )
+        .unwrap();
+        let corrupt = core.clone().messages("gap3-corrupt".into());
+        assert!(corrupt.is_err(), "corrupt session must error, got Ok");
+
+        std::fs::create_dir_all(sessions_dir.join("gap3-dir.jsonl")).unwrap();
+        let unreadable = core.clone().messages("gap3-dir".into());
+        assert!(unreadable.is_err(), "unreadable session must error, got Ok");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
