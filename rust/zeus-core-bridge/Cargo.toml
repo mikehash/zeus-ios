@@ -65,7 +65,18 @@ zeus-agent = { git = "https://github.com/mikehash/Zeus", rev = "9139388f9645d974
 # git grep + a tokio 38/39 positive control). This bridge is its first consumer.
 uniffi = { version = "0.28", features = ["cli"] }
 
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "fs", "net", "time"] }
+
+# Voice ② realtime session (src/realtime.rs). NOT new to the graph: the pinned
+# core already links tokio-tungstenite 0.23.1 with rustls-tls-webpki-roots
+# (via zeus-browser / zeus-channels) and futures-util 0.3. Same version + same
+# feature set, so cargo unifies onto the existing build — the lock file's
+# package list must not grow. Taken directly rather than through zeus-voice
+# because zeus-voice's one client socket is the Deepgram-specific session
+# (deepgram.rs:204, ruled out for ② on 09-21) and its only split() is the axum
+# server side (webhook.rs:228). Neither is a generic two-way client.
+tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
 anyhow = "1"
 thiserror = "2"
 chrono = "0.4"

@@ -7010,9 +7010,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "futures-util",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite 0.23.1",
  "uniffi",
  "zeus-agent",
  "zeus-core",
