@@ -79,7 +79,7 @@ enum LaunchArgs {
         #endif
     }
 
-    /// `-zeusStep welcome|fork|auth|routes|nodes|callsign|done` — open the
+    /// `-zeusStep welcome|fork|auth|routes|voice|nodes|callsign|done` — open the
     /// commissioning flow at a given step. Ignored when the gate is seeded,
     /// because a seeded commission means the flow is not on screen at all.
     static var initialStep: CommissioningStep {

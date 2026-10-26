@@ -26,7 +26,12 @@ enum CommissioningStep: String, CaseIterable {
     /// Adding a member here is deliberately load-bearing: the rail denominator
     /// is `allCases.count`, `narration` is a `switch` with NO `default`, and
     /// `Backstep` is index-derived. The compiler names every site.
-    case welcome, fork, auth, routes, nodes, callsign, done
+    ///
+    /// `voice` sits AFTER `routes` because the voice picker's KEY STORED
+    /// badges read the Keychain the routes step just wrote: a text key typed
+    /// one screen earlier makes that provider pickable here with no second
+    /// entry. It is skippable — voice is an enhancement, never a prerequisite.
+    case welcome, fork, auth, routes, voice, nodes, callsign, done
 
     /// `NARRATION` at :305-312, verbatim including the typographic
     /// apostrophes — they are in the source and the TTS pronounces them
@@ -64,6 +69,11 @@ enum CommissioningStep: String, CaseIterable {
             // first run of this cut. Same defect the auth branch warns about
             // at :339, committed within the hour of reading that warning.
             return "Now my brainstem. Give me a provider key and I reach the models direct."
+        case .voice:
+            // NAMES THE SKIP. The step is optional and the line must not
+            // read as a demand on an operator whose providers have no
+            // realtime API — text works either way.
+            return "Want to talk to me out loud? Pick a voice provider — or skip, text works without it."
         case .nodes:
             return "Any hardware to enroll? Scan a node — or skip. I run fine solo."
         case .callsign:
@@ -172,10 +182,33 @@ enum Backstep {
             next.commission.gatewayURL = nil
         case .nodes:
             next.commission.nodeEnrolled = false
-        case .welcome, .auth, .routes, .callsign, .done:
+        // `.voice` DISCARDS NOTHING. The voice choice is not in `Entry` at
+        // all — it lives in `RealtimeProviderPreference`, outside the
+        // record — and it is the same kind of answer as the route and the
+        // callsign, which survive every backward entry. A kept choice cannot
+        // go stale silently either: `resolved(in:)` reads nil once its key
+        // is gone.
+        case .welcome, .auth, .routes, .voice, .callsign, .done:
             break
         }
         return next
+    }
+}
+
+/// The voice step's one decision that is not layout: what its forward
+/// control says. Both labels do the same thing (advance, write nothing) —
+/// the wording only tells the operator whether they are leaving with a voice.
+enum VoiceStep {
+    static let skipTitle = "SKIP — TEXT ONLY"
+    static let continueTitle = "CONTINUE"
+
+    static func forwardTitle(_ state: VoiceProviderState,
+                             _ defaults: UserDefaults = .standard) -> String {
+        // No realtime provider at all: nothing to skip, so no SKIP wording
+        // on a step the operator could not have acted on.
+        if case .noRealtimeProvider = state { return continueTitle }
+        return RealtimeProviderPreference.resolved(in: state, defaults) == nil
+            ? skipTitle : continueTitle
     }
 }
 
@@ -473,6 +506,14 @@ struct CommissioningView: View {
         forkPick ?? commission.deployment ?? .local
     }
     @State private var scanning = false
+
+    /// The voice step's add-key sheet. The SAME value type Settings uses, so
+    /// `pick` stays the one write site for the voice choice
+    /// (`testThePreferenceIsWrittenOnlyByPick`); onboarding renders the list
+    /// inline, so only `keyOnlyProvider` drives a sheet here and
+    /// `pickerOpen` is unread.
+    @State private var voiceSheets = VoiceProviderSheets()
+
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
@@ -489,6 +530,22 @@ struct CommissioningView: View {
                 stepContent
                     .padding(.horizontal, 24)
                     .padding(.bottom, 28)
+            }
+
+            // KEY-ONLY, as in Settings: no `onCommit`, so a voice key typed
+            // here cannot repoint the route the previous step just recorded.
+            if let id = voiceSheets.keyOnlyProvider {
+                SheetLayer(isPresented: $voiceSheets.keyOnlyPresented,
+                           title: "ADD KEY",
+                           subtitle: "STORED ON THIS DEVICE · TEXT ROUTE UNCHANGED") {
+                    RoutePicker.KeyOnly(keys: keys,
+                                        providerID: id,
+                                        label: ProviderCatalog.label(for: id),
+                                        onSaved: { saved in voiceSheets.keySaved(saved) })
+                    .padding(.horizontal, 4)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(78)
             }
         }
         .preferredColorScheme(.dark)
@@ -710,6 +767,9 @@ struct CommissioningView: View {
         case .routes:
             routesStep
 
+        case .voice:
+            voiceStep
+
 
         case .nodes:
             VStack(spacing: 0) {
@@ -832,7 +892,28 @@ struct CommissioningView: View {
                                           model: model,
                                           baseURL: baseURL)
             commission.route = .byok
-            step = .nodes
+            step = .voice
+        }
+    }
+
+    /// The optional voice step. WRITES NOTHING ON ITS OWN: a row tap goes
+    /// through `voiceSheets.pick` (the one preference write site), add-key
+    /// raises the key-only sheet, and the forward control only advances —
+    /// skipping stores no choice, because voice never auto-picks.
+    private var voiceStep: some View {
+        let state = VoiceProviderPicker.state(catalog: ProviderCatalog.current, keys: keys)
+        return VStack(spacing: 10) {
+            ScrollView {
+                VoiceProviderPickerView(
+                    state: state,
+                    selectedId: RealtimeProviderPreference.resolved(in: state)?.id,
+                    onPick: { id in voiceSheets.pick(id) },
+                    onAddKey: { id in voiceSheets.addKey(id) })
+            }
+            .frame(maxHeight: 260)
+            PrimaryButton(VoiceStep.forwardTitle(state), glyph: "arrow.right") {
+                step = .nodes
+            }
         }
     }
 

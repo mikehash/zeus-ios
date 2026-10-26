@@ -32,7 +32,8 @@ final class BackstepTests: XCTestCase {
         XCTAssertEqual(Backstep.previous(of: .fork), .welcome)
         XCTAssertEqual(Backstep.previous(of: .auth), .fork)
         XCTAssertEqual(Backstep.previous(of: .routes), .auth)
-        XCTAssertEqual(Backstep.previous(of: .nodes), .routes)
+        XCTAssertEqual(Backstep.previous(of: .voice), .routes)
+        XCTAssertEqual(Backstep.previous(of: .nodes), .voice)
         XCTAssertEqual(Backstep.previous(of: .callsign), .nodes)
         XCTAssertEqual(Backstep.previous(of: .done), .callsign)
     }
@@ -68,7 +69,7 @@ final class BackstepTests: XCTestCase {
     }
 
     func testControlIsAvailableAtEveryStepBetween() {
-        for step in [CommissioningStep.auth, .routes, .nodes, .callsign] {
+        for step in [CommissioningStep.auth, .routes, .voice, .nodes, .callsign] {
             XCTAssertTrue(Backstep.isAvailable(at: step), "\(step) should offer back")
         }
     }
