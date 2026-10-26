@@ -446,6 +446,55 @@ mod tests {
         assert!(matches!(s.send_text("after peer close".into()), Err(RealtimeError::Closed)));
     }
 
+    /// Queue bound. `#[tokio::test]` is a current-thread runtime and
+    /// `send_*` is a synchronous `try_send`, so the writer task (spawned in
+    /// `open`, never yielded to here) cannot drain a single frame between
+    /// these calls. That makes the bound exact rather than "eventually":
+    /// sends 1..=SEND_QUEUE_DEPTH are admitted, the next is `QueueFull`.
+    /// Catches: depth changed, `Full` mapped to `Closed`, queue made unbounded.
+    #[tokio::test]
+    async fn queue_refuses_with_queue_full_one_past_depth() {
+        let (url, _h) = echo_server().await;
+        let (sink, _rx) = recorder();
+        let s = open(RealtimeConnect { url, headers: vec![] }, sink).await.expect("connect");
+
+        for i in 0..SEND_QUEUE_DEPTH {
+            assert!(s.send_text(format!("f{i}")).is_ok(), "send {} refused below depth", i + 1);
+        }
+        let over = s.send_text("one too many".into());
+        assert!(matches!(over, Err(RealtimeError::QueueFull)), "send {} got {over:?}", SEND_QUEUE_DEPTH + 1);
+        // Binary shares the queue and the bound.
+        assert!(matches!(s.send_binary(vec![0]), Err(RealtimeError::QueueFull)));
+        // Vacuity control: a full queue is not a closed session.
+        assert!(!s.is_closed());
+    }
+
+    /// `close()` jumps a full queue. Fill to the bound (writer not yet
+    /// polled, see above), then close. The echo server reflects every frame
+    /// it receives, so if close waited its turn behind the 256 queued frames
+    /// the sink would see `Text` echoes first. What must arrive is the close
+    /// terminal, first, within `next`'s 5s bound, and nothing after it.
+    /// Catches: close routed through the frame queue. Removing `biased` is
+    /// caught only probabilistically (fair select picks close first ~half the
+    /// time), so this is not a guard on `biased` alone.
+    #[tokio::test]
+    async fn close_with_full_queue_reaches_terminal_before_any_queued_frame() {
+        let (url, _h) = echo_server().await;
+        let (sink, mut rx) = recorder();
+        let s = open(RealtimeConnect { url, headers: vec![] }, sink).await.expect("connect");
+
+        for i in 0..SEND_QUEUE_DEPTH {
+            s.send_text(format!("queued {i}")).expect("below depth");
+        }
+        assert!(matches!(s.send_text("full".into()), Err(RealtimeError::QueueFull)));
+
+        s.close();
+        assert_eq!(next(&mut rx).await, Ev::Closed(Some(1000), String::new()));
+        quiet(&mut rx).await;
+        assert!(s.is_closed());
+        assert!(matches!(s.send_text("late".into()), Err(RealtimeError::Closed)));
+    }
+
     /// The latch, driven directly. The socket legs cannot force reader and
     /// writer to both observe one ending (it is an interleaving), so removing
     /// the latch SURVIVED every one of them — measured. This leg is where the
