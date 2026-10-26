@@ -288,8 +288,7 @@ struct RoutePicker: View {
                 // goes AFTER the commit for the same reason it used to go
                 // after the record write: a key must never be stored for a
                 // provider the caller did not take.
-                let secret = keyText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !secret.isEmpty { keys.setProviderKey(secret, for: id) }
+                Self.storeKey(keyText, for: id, in: keys)
             }
             .disabled(!Self.routesCTAEnabled(providerPick: providerPick,
                                              modelText: modelText,
@@ -311,6 +310,21 @@ struct RoutePicker: View {
                 if let m = seed.model { modelText = m }
             }
         }
+    }
+
+    /// THE ONE KEY WRITE SITE, SHARED BY BOTH CTAs.
+    ///
+    /// The route CTA and `KeyOnly`'s SAVE KEY both land here, so "exactly one
+    /// `keys.setProviderKey(` in this file" (`ProviderKeyStoreTests`) stays a
+    /// true count with two callers. Trims, refuses blank (the core would
+    /// refuse it anyway, and a stored blank reads as KEY STORED in the voice
+    /// picker), and reports whether it wrote.
+    @discardableResult
+    static func storeKey(_ typed: String, for id: String, in keys: ProviderKeyStoring) -> Bool {
+        let secret = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !secret.isEmpty else { return false }
+        keys.setProviderKey(secret, for: id)
+        return true
     }
 
     /// EXTRACTED BECAUSE THE VIEW BODY IS NOT OBSERVABLE IN THIS TARGET.
@@ -501,5 +515,77 @@ struct RoutePicker: View {
                 )
         )
         .accessibilityLabel("API key for \(row.label)")
+    }
+}
+
+// MARK: - Key-only mode
+
+extension RoutePicker {
+
+    /// KEY-ONLY MODE: store a key for a provider that is ALREADY CHOSEN, and
+    /// do nothing else.
+    ///
+    /// Reached from the voice picker's ADD KEY. The route sheet cannot serve
+    /// that tap: its CTA runs `onCommit` → `recordRoutesChoice` → `store.save`
+    /// → re-arm, so saving a key for VOICE would silently repoint TEXT chat.
+    /// This type has no `onCommit` at all — not one it declines to call, one
+    /// it does not have — so the text route and the commission cannot move
+    /// from here. No catalog, no model field, no poll: the provider is given.
+    struct KeyOnly: View {
+
+        /// Where the key lands. NO DEFAULT, same reason as `RoutePicker.keys`.
+        let keys: ProviderKeyStoring
+        /// The provider the caller already chose. Not editable here.
+        let providerID: String
+        let label: String
+        /// Called once, after the key is stored, with the provider id. NO
+        /// DEFAULT: a caller that forgets it leaves a sheet that never closes.
+        let onSaved: (String) -> Void
+
+        @State private var keyText: String = ""
+
+        /// The button's whole act, as a function the tests can call.
+        static func save(_ typed: String, for id: String,
+                         in keys: ProviderKeyStoring,
+                         onSaved: (String) -> Void) {
+            if RoutePicker.storeKey(typed, for: id, in: keys) { onSaved(id) }
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("API KEY · \(label.uppercased())")
+                    .font(Theme.mono(9))
+                    .tracking(1.4)
+                    .foregroundStyle(Theme.w(0.35))
+                SecureField("", text: $keyText, prompt:
+                    Text("PASTE KEY").font(Theme.mono(12)).foregroundStyle(Theme.w(0.2))
+                )
+                .font(Theme.mono(13))
+                .foregroundStyle(Theme.text)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .padding(.horizontal, 14)
+                .frame(height: 46)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.corner)
+                        .fill(Theme.w(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Theme.corner)
+                                .stroke(Theme.w(0.10), lineWidth: 1)
+                        )
+                )
+                .accessibilityLabel("API key for \(label)")
+
+                Text("SAVES THE KEY ONLY · TEXT ROUTE UNCHANGED")
+                    .font(Theme.mono(8.5))
+                    .tracking(1.0)
+                    .foregroundStyle(Theme.w(0.35))
+
+                PrimaryButton("SAVE KEY", glyph: "key.fill") {
+                    Self.save(keyText, for: providerID, in: keys, onSaved: onSaved)
+                }
+                .disabled(keyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
     }
 }
