@@ -1622,6 +1622,80 @@ pub fn credential_shape(id: String) -> Result<CredentialShape, BridgeError> {
     Ok(fold_shape(resolve_provider(&id)?.credential_shape()))
 }
 
+/// Which realtime voice wire protocol a provider speaks, if any.
+///
+/// The operator picks the provider and enters the credential at onboarding
+/// (merakizzz, 2026-10-26: provider-agnostic, user-entered). The PROTOCOL is
+/// not user-enterable: "tons of providers" collapse onto a handful of
+/// realtime wire dialects, and most text providers have no realtime voice
+/// API at all. This enum is that mapping; one codec per variant, never one
+/// per provider.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RealtimeDialect {
+    /// OpenAI Realtime WebSocket protocol (and wire-compatible servers
+    /// reached through a base-URL override).
+    OpenAiRealtime,
+    /// Gemini Live API (BidiGenerateContent over WebSocket).
+    GeminiLive,
+    /// No realtime voice API this app can speak. The voice picker hides it.
+    None,
+}
+
+/// EXHAUSTIVE, no `_ =>` arm — same rule as `fold_shape`: a provider added
+/// upstream must fail to compile here until someone decides its dialect,
+/// rather than defaulting silently to "no voice" (or worse, to a dialect).
+///
+/// Conservative by construction: a variant gets a dialect only when its
+/// realtime wire protocol is one this bridge will implement. Unverified
+/// claims (a provider "probably" being OpenAI-Realtime-compatible) are
+/// `None` until verified — a wrong `None` hides a row; a wrong dialect
+/// opens a socket that speaks the wrong protocol.
+fn realtime_dialect_of(p: Provider) -> RealtimeDialect {
+    match p {
+        Provider::OpenAI => RealtimeDialect::OpenAiRealtime,
+        Provider::Google => RealtimeDialect::GeminiLive,
+        // Azure OpenAI does serve the Realtime protocol, but on a
+        // deployment-specific endpoint behind a KeyAndEndpoint credential
+        // the app cannot collect yet (`fold_shape` -> Unsupported). Claiming
+        // a dialect here would advertise a row that cannot connect.
+        Provider::Azure => RealtimeDialect::None,
+        // Vertex serves a Live API, but with service-account auth
+        // (Unsupported) and a different setup envelope. Unverified -> None.
+        Provider::Vertex => RealtimeDialect::None,
+        Provider::Anthropic
+        | Provider::Ollama
+        | Provider::OpenRouter
+        | Provider::Groq
+        | Provider::Mistral
+        | Provider::Together
+        | Provider::Fireworks
+        | Provider::Bedrock
+        | Provider::DeepSeek
+        | Provider::XAI
+        | Provider::Cerebras
+        | Provider::GoogleGeminiCli
+        | Provider::Moonshot
+        | Provider::KimiCode
+        | Provider::GlmCoding
+        | Provider::MinimaxCoding
+        | Provider::Zai
+        | Provider::Qwen
+        | Provider::QwenCoding
+        | Provider::Minimax
+        | Provider::XiaomiMimo
+        | Provider::Sakana => RealtimeDialect::None,
+    }
+}
+
+/// The realtime dialect for one provider id.
+///
+/// Errors on an unknown id (via `resolve_provider`) rather than answering
+/// `None`: "no voice API" and "never heard of it" are opposite facts.
+#[uniffi::export]
+pub fn realtime_dialect(id: String) -> Result<RealtimeDialect, BridgeError> {
+    Ok(realtime_dialect_of(resolve_provider(&id)?))
+}
+
 /// The role/name flattening of `messages()`, separated so it is reachable
 /// from a `#[test]` without a session file on disk. `messages()` is the
 /// production caller; this carries the whole join.
@@ -2482,6 +2556,48 @@ mod tests {
             mimo.label, mimo.id,
             "the row that motivated label() must not render its wire id"
         );
+    }
+
+    /// The dialect map is not constant, and each claimed dialect is on the
+    /// provider it names. A map returning `None` for everything compiles and
+    /// hides voice entirely; one returning `OpenAiRealtime` for everything
+    /// opens OpenAI-protocol sockets to Gemini. Both fail here by name.
+    #[test]
+    fn realtime_dialect_names_each_supported_provider() {
+        assert_eq!(
+            realtime_dialect("openai".to_string()).unwrap(),
+            RealtimeDialect::OpenAiRealtime
+        );
+        assert_eq!(
+            realtime_dialect("google".to_string()).unwrap(),
+            RealtimeDialect::GeminiLive
+        );
+        assert_eq!(
+            realtime_dialect("anthropic".to_string()).unwrap(),
+            RealtimeDialect::None
+        );
+    }
+
+    /// Every id `list_providers()` publishes resolves to a dialect, and the
+    /// voice-capable set is exactly {openai, google}. The set is asserted
+    /// whole so a newly-claimed dialect is a visible, reviewed test change.
+    #[test]
+    fn realtime_dialect_covers_the_published_catalog() {
+        let rows = list_providers();
+        assert_eq!(rows.len(), Provider::ALL.len());
+        let mut capable: Vec<String> = rows
+            .iter()
+            .filter(|r| realtime_dialect(r.id.clone()).unwrap() != RealtimeDialect::None)
+            .map(|r| r.id.clone())
+            .collect();
+        capable.sort();
+        assert_eq!(capable, vec!["google".to_string(), "openai".to_string()]);
+    }
+
+    /// Unknown id is an error, not `None`.
+    #[test]
+    fn realtime_dialect_refuses_unknown_id() {
+        assert!(realtime_dialect("no-such-provider".to_string()).is_err());
     }
 
     /// The fold is not constant, and each arm is the arm it claims.
