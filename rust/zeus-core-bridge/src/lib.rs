@@ -1696,6 +1696,103 @@ pub fn realtime_dialect(id: String) -> Result<RealtimeDialect, BridgeError> {
     Ok(realtime_dialect_of(resolve_provider(&id)?))
 }
 
+/// Default realtime endpoints, one per dialect. A base-URL override replaces
+/// these wholesale (self-hosted / wire-compatible servers, or the user's own
+/// gateway); the path is the override's, not appended to it.
+const OPENAI_REALTIME_URL: &str = "wss://api.openai.com/v1/realtime";
+const GEMINI_LIVE_URL: &str =
+    "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+
+/// RFC 3986 unreserved set passes; every other byte is %XX. Hand-rolled to
+/// keep the bridge's direct dependency set unchanged for one query value.
+fn pct_encode(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    for b in v.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+fn with_query(base: &str, k: &str, v: &str) -> String {
+    let sep = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{sep}{k}={}", pct_encode(v))
+}
+
+/// Provider + user-entered credential (+ optional base URL) -> the
+/// `RealtimeConnect` the session takes verbatim. The ONLY place a dialect's
+/// auth shape lives; the session stays provider-blind.
+///
+/// - `OpenAiRealtime`: `Authorization: Bearer <credential>`, `?model=<model>`.
+/// - `GeminiLive`: `?key=<credential>` (the documented WS auth). The model is
+///   NOT in the URL — it rides the setup message, which is the codec's job.
+/// - `None`: refused with `Unsupported`, never a guessed dialect.
+///
+/// Refuses an empty credential (a socket that will 401 is a worse error than
+/// one raised here) and an override that is not `ws://`/`wss://`. Error text
+/// never contains the credential.
+#[uniffi::export]
+pub fn resolve_realtime(
+    provider_id: String,
+    credential: String,
+    model: String,
+    base_url_override: Option<String>,
+) -> Result<realtime::RealtimeConnect, BridgeError> {
+    let dialect = realtime_dialect_of(resolve_provider(&provider_id)?);
+    if dialect == RealtimeDialect::None {
+        return Err(BridgeError::Unsupported(format!(
+            "{provider_id} has no realtime voice API this app speaks"
+        )));
+    }
+    let credential = credential.trim();
+    if credential.is_empty() {
+        return Err(BridgeError::Core(format!(
+            "no credential entered for {provider_id} voice"
+        )));
+    }
+    let base = match base_url_override.as_deref().map(str::trim) {
+        Some(o) if !o.is_empty() => {
+            if !(o.starts_with("wss://") || o.starts_with("ws://")) {
+                return Err(BridgeError::Core(
+                    "realtime base URL must start with ws:// or wss://".to_string(),
+                ));
+            }
+            o.to_string()
+        }
+        _ => match dialect {
+            RealtimeDialect::OpenAiRealtime => OPENAI_REALTIME_URL.to_string(),
+            RealtimeDialect::GeminiLive => GEMINI_LIVE_URL.to_string(),
+            RealtimeDialect::None => unreachable!("refused above"),
+        },
+    };
+    let header = |name: &str, value: String| realtime::RealtimeHeader {
+        name: name.to_string(),
+        value,
+    };
+    Ok(match dialect {
+        RealtimeDialect::OpenAiRealtime => {
+            let model = model.trim();
+            if model.is_empty() {
+                return Err(BridgeError::Core(
+                    "OpenAI realtime needs a model name".to_string(),
+                ));
+            }
+            realtime::RealtimeConnect {
+                url: with_query(&base, "model", model),
+                headers: vec![header("Authorization", format!("Bearer {credential}"))],
+            }
+        }
+        RealtimeDialect::GeminiLive => realtime::RealtimeConnect {
+            url: with_query(&base, "key", credential),
+            headers: vec![],
+        },
+        RealtimeDialect::None => unreachable!("refused above"),
+    })
+}
+
 /// The role/name flattening of `messages()`, separated so it is reachable
 /// from a `#[test]` without a session file on disk. `messages()` is the
 /// production caller; this carries the whole join.
@@ -2598,6 +2695,57 @@ mod tests {
     #[test]
     fn realtime_dialect_refuses_unknown_id() {
         assert!(realtime_dialect("no-such-provider".to_string()).is_err());
+    }
+
+    fn rr(p: &str, c: &str, m: &str, o: Option<&str>) -> Result<realtime::RealtimeConnect, BridgeError> {
+        resolve_realtime(p.into(), c.into(), m.into(), o.map(Into::into))
+    }
+
+    /// Each dialect gets ITS auth shape, asserted by value: bearer header +
+    /// model query for OpenAI, key query and no header for Gemini.
+    #[test]
+    fn resolve_realtime_builds_each_dialects_auth_shape() {
+        let o = rr("openai", "sk-test", "gpt-realtime", None).unwrap();
+        assert_eq!(o.url, "wss://api.openai.com/v1/realtime?model=gpt-realtime");
+        assert_eq!(o.headers.len(), 1);
+        assert_eq!(o.headers[0].name, "Authorization");
+        assert_eq!(o.headers[0].value, "Bearer sk-test");
+
+        let g = rr("google", "AIza-k", "ignored-here", None).unwrap();
+        assert!(g.url.starts_with("wss://generativelanguage.googleapis.com/ws/"));
+        assert!(g.url.ends_with("BidiGenerateContent?key=AIza-k"));
+        assert!(g.headers.is_empty());
+        assert_ne!(o.url, g.url);
+    }
+
+    /// The override replaces the endpoint, keeps the dialect's auth, appends
+    /// with `&` when the override already has a query, and encodes the value.
+    #[test]
+    fn resolve_realtime_honours_override_and_encodes() {
+        let o = rr("openai", "k", "m 1", Some("ws://192.168.1.5:8080/rt?x=1")).unwrap();
+        assert_eq!(o.url, "ws://192.168.1.5:8080/rt?x=1&model=m%201");
+        assert_eq!(o.headers[0].value, "Bearer k");
+        let g = rr("google", "a&b=c", "", Some("wss://h/live")).unwrap();
+        assert_eq!(g.url, "wss://h/live?key=a%26b%3Dc");
+        // blank override = default endpoint, not an empty URL
+        let d = rr("openai", "k", "m", Some("  ")).unwrap();
+        assert!(d.url.starts_with("wss://api.openai.com/"));
+    }
+
+    /// Refusals: no-voice provider, unknown id, empty credential, empty
+    /// OpenAI model, non-ws override. None of the error strings carry the key.
+    #[test]
+    fn resolve_realtime_refuses_and_never_echoes_the_key() {
+        assert!(matches!(rr("anthropic", "secret-k", "m", None), Err(BridgeError::Unsupported(_))));
+        assert!(rr("no-such-provider", "secret-k", "m", None).is_err());
+        assert!(rr("openai", "  ", "m", None).is_err());
+        assert!(rr("openai", "secret-k", "", None).is_err());
+        for bad in ["https://api.openai.com/v1/realtime", "api.openai.com"] {
+            let e = rr("openai", "secret-k", "m", Some(bad)).unwrap_err();
+            assert!(!e.to_string().contains("secret-k"));
+        }
+        let e = rr("anthropic", "secret-k", "m", None).unwrap_err();
+        assert!(!e.to_string().contains("secret-k"));
     }
 
     /// The fold is not constant, and each arm is the arm it claims.
