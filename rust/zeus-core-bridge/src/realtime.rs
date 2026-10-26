@@ -518,6 +518,31 @@ mod tests {
         }
     }
 
+    /// `push()`'s own terminal check, isolated. On the socket self-close leg
+    /// the background task has already dropped the queue receiver, so
+    /// `try_send` returns `Closed` by itself and deleting the check SURVIVED
+    /// that leg — measured. Here the receiver is held alive, so the only
+    /// thing that can refuse the frame is the `is_fired()` early return.
+    #[tokio::test]
+    async fn push_refuses_after_terminal_with_receiver_still_alive() {
+        let (sink, mut ev) = recorder();
+        let (tx, mut queue) = mpsc::channel::<Outbound>(SEND_QUEUE_DEPTH);
+        let terminal = Arc::new(Terminal { sink, fired: AtomicBool::new(false) });
+        let s = RealtimeSession { tx, close: Arc::new(Notify::new()), terminal: terminal.clone() };
+
+        // Vacuity control: before the terminal, the same session accepts.
+        s.send_text("before".into()).unwrap();
+        assert!(matches!(queue.try_recv(), Ok(Outbound::Text(t)) if t == "before"));
+
+        terminal.closed(Some(1000), String::new());
+        assert_eq!(next(&mut ev).await, Ev::Closed(Some(1000), String::new()));
+        assert!(!s.tx.is_closed(), "receiver must be alive or this leg is vacuous");
+
+        assert!(matches!(s.send_text("late".into()), Err(RealtimeError::Closed)));
+        assert!(matches!(s.send_binary(vec![1]), Err(RealtimeError::Closed)));
+        assert!(queue.try_recv().is_err(), "a refused frame must not reach the queue");
+    }
+
     #[tokio::test]
     async fn dropped_tcp_without_close_frame_is_one_terminal() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
