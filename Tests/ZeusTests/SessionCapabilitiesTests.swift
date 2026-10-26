@@ -17,6 +17,12 @@ final class SessionCapabilitiesTests: XCTestCase {
     /// what ARRIVES, so a double that discarded its arguments would be unable
     /// to fail the test it exists for.
     private final class RecordingCore: ZeusCoreProtocol {
+        // Voice ② realtime: no fake core opens a socket. Throwing keeps the
+        // fake honest — nothing here can pretend a session exists.
+        func realtimeConnect(conn: RealtimeConnect, sink: RealtimeSink) throws -> RealtimeSession {
+            throw RealtimeError.Connect("fake core: no realtime")
+        }
+
     func stageAttachment(fileName: String, bytes: Data) throws -> String {
         "attachments/stub-\(fileName)"
     }
@@ -146,6 +152,12 @@ final class SessionCapabilitiesTests: XCTestCase {
     func testTheCoresOwnErrorReachesTheCaller() async throws {
         struct Named: Error, CustomStringConvertible { var description: String { "NO WORKSPACE AT /tmp/x" } }
         final class Throwing: ZeusCoreProtocol {
+            // Voice ② realtime: no fake core opens a socket. Throwing keeps the
+            // fake honest — nothing here can pretend a session exists.
+            func realtimeConnect(conn: RealtimeConnect, sink: RealtimeSink) throws -> RealtimeSession {
+                throw RealtimeError.Connect("fake core: no realtime")
+            }
+
     func stageAttachment(fileName: String, bytes: Data) throws -> String {
         "attachments/stub-\(fileName)"
     }

@@ -18,6 +18,12 @@ final class ProviderArmingTests: XCTestCase {
     /// only ever test one branch, and a one-branch readiness test passes
     /// against a constant.
     private final class ArmingCore: ZeusCoreProtocol {
+        // Voice ② realtime: no fake core opens a socket. Throwing keeps the
+        // fake honest — nothing here can pretend a session exists.
+        func realtimeConnect(conn: RealtimeConnect, sink: RealtimeSink) throws -> RealtimeSession {
+            throw RealtimeError.Connect("fake core: no realtime")
+        }
+
     func stageAttachment(fileName: String, bytes: Data) throws -> String {
         "attachments/stub-\(fileName)"
     }

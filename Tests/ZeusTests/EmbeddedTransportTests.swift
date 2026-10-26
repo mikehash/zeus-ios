@@ -40,6 +40,12 @@ private func makeNonisolated(core: ZeusCoreProtocol) -> EmbeddedTransport {
 /// These legs cover the adapter's edges (double-finish, error-after-token,
 /// sync throw) which a real provider cannot be asked to produce on demand.
 private final class FakeCore: ZeusCoreProtocol, @unchecked Sendable {
+    // Voice ② realtime: no fake core opens a socket. Throwing keeps the
+    // fake honest — nothing here can pretend a session exists.
+    func realtimeConnect(conn: RealtimeConnect, sink: RealtimeSink) throws -> RealtimeSession {
+        throw RealtimeError.Connect("fake core: no realtime")
+    }
+
     func stageAttachment(fileName: String, bytes: Data) throws -> String {
         "attachments/stub-\(fileName)"
     }

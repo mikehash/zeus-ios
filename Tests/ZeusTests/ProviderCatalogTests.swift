@@ -21,6 +21,12 @@ struct StubCatalog: ProviderCataloging {
 /// `private` to that class by design, and reaching for it would couple two
 /// suites through a fixture neither owns.
 private final class CatalogCore: ZeusCoreProtocol {
+    // Voice ② realtime: no fake core opens a socket. Throwing keeps the
+    // fake honest — nothing here can pretend a session exists.
+    func realtimeConnect(conn: RealtimeConnect, sink: RealtimeSink) throws -> RealtimeSession {
+        throw RealtimeError.Connect("fake core: no realtime")
+    }
+
     func stageAttachment(fileName: String, bytes: Data) throws -> String {
         "attachments/stub-\(fileName)"
     }

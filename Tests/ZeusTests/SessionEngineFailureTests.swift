@@ -690,6 +690,12 @@ final class SessionSeedTests: XCTestCase {
 /// about the ENGINE, so it lives beside the engine legs and drives the real
 /// transport rather than a double of it.
 private final class RefusingCore: ZeusCoreProtocol, @unchecked Sendable {
+    // Voice ② realtime: no fake core opens a socket. Throwing keeps the
+    // fake honest — nothing here can pretend a session exists.
+    func realtimeConnect(conn: RealtimeConnect, sink: RealtimeSink) throws -> RealtimeSession {
+        throw RealtimeError.Connect("fake core: no realtime")
+    }
+
     private let error: BridgeError
     init(_ error: BridgeError) { self.error = error }
 
