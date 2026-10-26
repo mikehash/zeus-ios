@@ -68,6 +68,16 @@ struct SettingsView: View {
     /// (`armedResolution`), and that act is the setting's only road to the core.
     var onReplyLengthChanged: () -> Void
 
+    /// The "Voice provider" row's value, derived by `RootView` from the stored
+    /// id and the current picker state (`VoiceProviderSheets.settingsValue`).
+    /// A plain string: this view holds no key store and reads no key.
+    var voiceProviderValue: String
+
+    /// Raises the voice-provider picker. RAISE-ONLY, and UN-DEFAULTED for the
+    /// same reason as `onOpenRoutes`: a defaulted closure ships the row dead.
+    /// The pick and the ADD KEY hand-off both live in `RootView`.
+    var onOpenVoiceProvider: () -> Void
+
     /// The route sheet raised by `onOpenRoutes` is `RootView`'s; this one is
     /// the catalogue picker that used to live in NODES.
     @State private var routeSheet = false
@@ -156,6 +166,11 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             sectionHeader("VOICE", "HEARD, THEN SPOKEN")
             VStack(spacing: 0) {
+                NodeRow(icon: "waveform",
+                        label: "Voice provider",
+                        value: voiceProviderValue) {
+                    onOpenVoiceProvider()
+                }
                 NodeRow(icon: narrationOn ? "speaker.wave.2" : "speaker.slash",
                         label: "Spoken replies",
                         value: narrationOn ? "ON" : "MUTED") {

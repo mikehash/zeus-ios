@@ -111,6 +111,11 @@ struct RootView: View {
     /// is open, raised from NODES because only this view can finish the act.
     @State private var routesSheet = false
 
+    /// The voice-provider picker and its key-only hand-off. ONE value, not two
+    /// flags: ADD KEY closes one sheet and opens the other in a single
+    /// mutation, so the two can never both be up. See `VoiceProviderSheets`.
+    @State private var voiceSheets = VoiceProviderSheets()
+
     @State private var gatewayEditor = false
     @State private var gatewayEditorConfig: GatewayConfig? = nil
 
@@ -448,6 +453,39 @@ struct RootView: View {
                 .zIndex(78)
             }
 
+            if voiceSheets.pickerOpen {
+                let state = VoiceProviderPicker.state(catalog: ProviderCatalog.current, keys: keys)
+                SheetLayer(isPresented: $voiceSheets.pickerPresented,
+                           title: "VOICE PROVIDER",
+                           subtitle: "THE REALTIME VOICE SESSION'S BACKEND") {
+                    VoiceProviderPickerView(
+                        state: state,
+                        selectedId: RealtimeProviderPreference.resolved(in: state)?.id,
+                        onPick: { id in voiceSheets.pick(id) },
+                        onAddKey: { id in voiceSheets.addKey(id) })
+                    .padding(.horizontal, 4)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(78)
+            }
+
+            if let id = voiceSheets.keyOnlyProvider {
+                SheetLayer(isPresented: $voiceSheets.keyOnlyPresented,
+                           title: "ADD KEY",
+                           subtitle: "STORED ON THIS DEVICE · TEXT ROUTE UNCHANGED") {
+                    // KEY-ONLY: no `onCommit`, so storing a voice key cannot
+                    // repoint text chat. No re-arm either — the text route's
+                    // commission is untouched, so there is nothing to re-arm.
+                    RoutePicker.KeyOnly(keys: keys,
+                                        providerID: id,
+                                        label: ProviderCatalog.label(for: id),
+                                        onSaved: { saved in voiceSheets.keySaved(saved) })
+                    .padding(.horizontal, 4)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(78)
+            }
+
             if let config = gatewayEditorConfig, gatewayEditor {
                 GatewayEditorSheet(config: config,
                                    resolution: configSource.resolution,
@@ -723,7 +761,10 @@ struct RootView: View {
                          },
                          onReplyLengthChanged: {
                              Task { configSource.adopt(await RootView.armedResolution(store: store, keys: keys)) }
-                         })
+                         },
+                         voiceProviderValue: VoiceProviderSheets.settingsValue(
+                             VoiceProviderPicker.state(catalog: ProviderCatalog.current, keys: keys)),
+                         onOpenVoiceProvider: { voiceSheets.open() })
         }
     }
 }

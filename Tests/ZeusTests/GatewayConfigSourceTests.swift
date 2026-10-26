@@ -325,7 +325,13 @@ final class GatewayConfigSourceTests: XCTestCase {
                           "the save must disarm to CHECKING before it re-reads, not after")
         XCTAssertEqual(code(editor).filter { $0.contains("onSaved()") }.count, 1,
                        "the editor must call back exactly once, after the write")
-        XCTAssertEqual(code(rootView).filter { $0.contains("onSaved:") }.count, 1,
+        // SCOPED at voice-wiring commit 3: RootView now has a SECOND `onSaved:`,
+        // the voice key-only sheet's (`voiceSheets.keySaved`), which stores a
+        // key and re-arms nothing by design. It is excluded BY NAME, so a third
+        // `onSaved:` still moves this count.
+        XCTAssertEqual(code(rootView).filter {
+                           $0.contains("onSaved:") && !$0.contains("voiceSheets.keySaved")
+                       }.count, 1,
                        "VOID: the editor is not handed a re-resolve at all")
     }
 }
