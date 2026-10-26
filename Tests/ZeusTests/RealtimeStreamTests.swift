@@ -88,4 +88,43 @@ final class RealtimeStreamTests: XCTestCase {
         XCTAssertNotNil(sinkSeen)
         sinkSeen?.onClosed(code: 1000, reason: "after refusal")
     }
+
+    // Contract point 4. A pointerless RealtimeSession subclass stands in for
+    // the Rust object (the generated deinit skips free on a nil pointer), so
+    // this exercises the real onTermination wiring with no socket.
+    func test_cancelling_the_consumer_closes_the_session() async {
+        let fake = CloseCountingSession()
+        let ch = try! openRealtime(RealtimeConnect(url: "ws://127.0.0.1:1", headers: []),
+                                   via: { _, _ in fake })
+        let consumer = Task { for await _ in ch.events {} }
+        consumer.cancel()
+        _ = await consumer.value
+        XCTAssertEqual(fake.closes.value, 1)
+    }
+
+    // A stream that ends on its own terminal must not echo a close back: the
+    // peer already closed, and a second close would be a protocol error.
+    func test_a_natural_terminal_does_not_close_the_session() async {
+        let fake = CloseCountingSession()
+        var sink: RealtimeSink!
+        let ch = try! openRealtime(RealtimeConnect(url: "ws://127.0.0.1:1", headers: []),
+                                   via: { _, s in sink = s; return fake })
+        sink.onClosed(code: 1000, reason: "peer done")
+        _ = await drain(ch.events)
+        XCTAssertEqual(fake.closes.value, 0)
+    }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    func bump() { lock.lock(); n += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+}
+
+private final class CloseCountingSession: RealtimeSession, @unchecked Sendable {
+    let closes = Counter()
+    init() { super.init(noPointer: NoPointer()) }
+    required init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) { fatalError() }
+    override func close() { closes.bump() }
 }
