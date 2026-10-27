@@ -98,6 +98,30 @@ if [ "$DRY_RUN" -eq 1 ] && [ "$TESTFLIGHT" -eq 0 ]; then
   an ignored --dry-run is indistinguishable from a --dry-run that was honoured."
 fi
 
+# ── 0. THE LINKED ARCHIVE MUST BE THE CRATE ON DISK ────────────────────────
+#
+# Frameworks/ZeusCore.xcframework is GITIGNORED: every box links whatever its
+# last `build-xcframework.sh` run left behind, and `git pull` never refreshes
+# it. The generated zeus_core_bridge.swift IS tracked, so after a pull that
+# adds UniFFI exports the Swift side references symbols the stale archive does
+# not carry. That surfaces as "cannot find uniffi_..._realtimesession_*" deep
+# in the archive log, minutes in, looking like a device-slice bug. (Incident
+# 2026-10-27: TestFlight dry-run on cda5f44 failed exactly so on the
+# coordinator's box while the same commit archived clean on .106.)
+#
+# check_crate_tree.sh already answers the question — manifest crate-tree ==
+# worktree tree of rust/zeus-core-bridge — but only check_all.sh ran it. Run
+# it here, BEFORE any signing or ASC refusal, so the cheap, local, credential-
+# free answer comes first. Its rc is propagated as-is: 1 = DRIFT (rebuild),
+# 2 = VOID (could not measure). Both stop the build.
+ct_rc=0
+"$REPO/scripts/check_crate_tree.sh" || ct_rc=$?
+if [ "$ct_rc" -ne 0 ]; then
+  echo "🔴 ZeusCore.xcframework does not match rust/zeus-core-bridge (check_crate_tree rc=$ct_rc)." >&2
+  echo "   Rebuild it first:  ./scripts/build-xcframework.sh" >&2
+  exit "$ct_rc"
+fi
+
 # ── 1. REFUSE LOUDLY ───────────────────────────────────────────────────────
 
 if [ -z "${ZEUS_TEAM_ID:-}" ]; then
